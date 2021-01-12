@@ -6,6 +6,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
+import styled from 'styled-components';
 
 import { useDeepEqualSelector } from '../../../../../common/hooks/use_selector';
 import { TimelineId, TimelineTabs } from '../../../../../../common/types/timeline';
@@ -22,6 +23,7 @@ import { ColumnRenderer } from '../renderers/column_renderer';
 import { RowRenderer } from '../renderers/row_renderer';
 import { isEventBuildingBlockType, getEventType } from '../helpers';
 import { NoteCards } from '../../../notes/note_cards';
+import { CONTEXT_MENU_BUTTON_CLASS_NAME } from '../../../../../detections/components/alerts_table/timeline_actions/alert_context_menu';
 import { useEventDetailsWidthContext } from '../../../../../common/components/events_viewer/event_details_width_context';
 import { EventColumnView } from './event_column_view';
 import { appSelectors, inputsModel } from '../../../../../common/store';
@@ -29,6 +31,7 @@ import { timelineActions, timelineSelectors } from '../../../../store/timeline';
 import { activeTimeline } from '../../../../containers/active_timeline_context';
 import { TimelineResultNote } from '../../../open_timeline/types';
 import { getRowRenderer } from '../renderers/get_row_renderer';
+import { OnSaveRowRenderer, RowRendererEditor } from '../../../row_renderer_editor';
 import { StatefulRowRenderer } from './stateful_row_renderer';
 import { NOTES_BUTTON_CLASS_NAME } from '../../properties/helpers';
 import { timelineDefaults } from '../../../../store/timeline/defaults';
@@ -55,6 +58,10 @@ interface Props {
   tabType?: TimelineTabs;
   timelineId: string;
 }
+
+const EditorContainer = styled.div`
+  margin-bottom: 4px;
+`;
 
 const emptyNotes: string[] = [];
 
@@ -90,6 +97,15 @@ const StatefulEventComponent: React.FC<Props> = ({
   const trGroupRef = useRef<HTMLDivElement | null>(null);
   const dispatch = useDispatch();
   const [showNotes, setShowNotes] = useState<{ [eventId: string]: boolean }>({});
+  const [showRowRendererEditor, setShowRowRendererEditor] = useState<boolean>(false);
+  const closeRowRendererEditor = useCallback(() => {
+    setShowRowRendererEditor(false);
+    setTimeout(() => {
+      trGroupRef.current
+        ?.querySelector<HTMLButtonElement>(`.${CONTEXT_MENU_BUTTON_CLASS_NAME}`)
+        ?.focus();
+    }, 0);
+  }, []);
   const getTimeline = useMemo(() => timelineSelectors.getTimelineByIdSelector(), []);
   const expandedEvent = useDeepEqualSelector(
     (state) =>
@@ -180,6 +196,18 @@ const StatefulEventComponent: React.FC<Props> = ({
     [dispatch, event, isEventPinned, onPinEvent, timelineId]
   );
 
+  const onSaveRowRenderer: OnSaveRowRenderer = useCallback(
+    ({ name, dataProviders, description, markdown }) => {
+      console.log('---->', {
+        name,
+        dataProviders,
+        description,
+        markdown,
+      });
+    },
+    []
+  );
+
   const RowRendererContent = useMemo(
     () => (
       <EventsTrSupplement>
@@ -238,6 +266,7 @@ const StatefulEventComponent: React.FC<Props> = ({
         refetch={refetch}
         onRuleChange={onRuleChange}
         selectedEventIds={selectedEventIds}
+        setShowRowRendererEditor={setShowRowRendererEditor}
         showCheckboxes={showCheckboxes}
         showNotes={!!showNotes[event._id]}
         tabType={tabType}
@@ -259,6 +288,19 @@ const StatefulEventComponent: React.FC<Props> = ({
             toggleShowAddNote={onToggleShowNotes}
           />
         </EventsTrSupplement>
+
+        {showRowRendererEditor && (
+          <EventsTrSupplement>
+            <EditorContainer>
+              <RowRendererEditor
+                onCloseEditor={closeRowRendererEditor}
+                onSaveRowRenderer={onSaveRowRenderer}
+                sampleEventId={event._id}
+                sampleEventType={getEventType(event.ecs)}
+              />
+            </EditorContainer>
+          </EventsTrSupplement>
+        )}
 
         {RowRendererContent}
       </EventsTrSupplementContainerWrapper>

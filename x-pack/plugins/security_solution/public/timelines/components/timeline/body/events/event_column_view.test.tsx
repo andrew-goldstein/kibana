@@ -56,6 +56,7 @@ describe('EventColumnView', () => {
     onUnPinEvent: jest.fn(),
     refetch: jest.fn(),
     selectedEventIds: {},
+    setShowRowRendererEditor: jest.fn(),
     showCheckboxes: false,
     showNotes: false,
     tabType: TimelineTabs.query,

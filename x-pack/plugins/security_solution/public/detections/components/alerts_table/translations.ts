@@ -24,6 +24,13 @@ export const OPEN_ALERTS = i18n.translate(
   }
 );
 
+export const CREATE_EVENT_RENDERER = i18n.translate(
+  'xpack.securitySolution.timeline.actions.createEventRendererLabel',
+  {
+    defaultMessage: 'Create Event Renderer',
+  }
+);
+
 export const CLOSED_ALERTS = i18n.translate(
   'xpack.securitySolution.detectionEngine.alerts.closedAlertsTitle',
   {

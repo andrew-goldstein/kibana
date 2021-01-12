@@ -350,6 +350,19 @@ export const allowTopN = ({
 export const getTimelineIdFromColumnDroppableId = (droppableId: string) =>
   droppableId.slice(droppableId.lastIndexOf('.') + 1);
 
+export const getTimelineIdFromDataProviderDroppableId = (droppableId: string) =>
+  droppableId.split('.')[2] ?? '';
+
+export const getTimelineIdFromDropResult = (result: DropResult) => {
+  if (userIsReArrangingProviders(result) || providerWasDroppedOnTimeline(result)) {
+    return getTimelineIdFromDataProviderDroppableId(result.destination?.droppableId ?? '');
+  } else if (fieldWasDroppedOnTimelineColumns(result)) {
+    return getTimelineIdFromColumnDroppableId(result.destination?.droppableId ?? '');
+  } else {
+    return '';
+  }
+};
+
 /** The draggable will move this many pixes via the keyboard when the arrow key is pressed */
 export const KEYBOARD_DRAG_OFFSET = 20;
 

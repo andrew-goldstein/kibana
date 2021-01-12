@@ -18,7 +18,7 @@ import styled from 'styled-components';
 import { getOr } from 'lodash/fp';
 
 import { useAppToasts } from '../../../../common/hooks/use_app_toasts';
-import { TimelineId } from '../../../../../common/types/timeline';
+import { TimelineEventsType, TimelineId } from '../../../../../common/types/timeline';
 import { DEFAULT_INDEX_PATTERN } from '../../../../../common/constants';
 import { Status } from '../../../../../common/detection_engine/schemas/common/schemas';
 import { timelineActions } from '../../../../timelines/store/timeline';
@@ -28,6 +28,7 @@ import { FILTER_OPEN, FILTER_CLOSED, FILTER_IN_PROGRESS } from '../alerts_filter
 import { updateAlertStatusAction } from '../actions';
 import { SetEventsDeletedProps, SetEventsLoadingProps } from '../types';
 import { Ecs } from '../../../../../common/ecs';
+import { useTimelineFullScreen } from '../../../../common/containers/use_full_screen';
 import { AddExceptionModal } from '../../../../common/components/exceptions/add_exception_modal';
 import * as i18nCommon from '../../../../common/translations';
 import * as i18n from '../translations';
@@ -40,11 +41,15 @@ import { inputsModel } from '../../../../common/store';
 import { useUserData } from '../../user_info';
 import { ExceptionListType } from '../../../../../common/shared_imports';
 
+export const CONTEXT_MENU_BUTTON_CLASS_NAME = 'context-menu-button';
 interface AlertContextMenuProps {
   ariaLabel?: string;
   disabled: boolean;
   ecsRowData: Ecs;
+  eventType: Omit<TimelineEventsType, 'all'>;
   refetch: inputsModel.Refetch;
+  setShowRowRendererEditor: (show: boolean) => void;
+  onEventToggled: () => void;
   onRuleChange?: () => void;
   timelineId: string;
 }
@@ -53,11 +58,15 @@ const AlertContextMenuComponent: React.FC<AlertContextMenuProps> = ({
   ariaLabel = i18n.MORE_ACTIONS,
   disabled,
   ecsRowData,
+  eventType,
   refetch,
+  onEventToggled,
   onRuleChange,
+  setShowRowRendererEditor,
   timelineId,
 }) => {
   const dispatch = useDispatch();
+  const { setTimelineFullScreen } = useTimelineFullScreen();
   const [, dispatchToaster] = useStateToaster();
   const [isPopoverOpen, setPopover] = useState(false);
   const eventId = ecsRowData._id;
@@ -291,6 +300,7 @@ const AlertContextMenuComponent: React.FC<AlertContextMenuProps> = ({
     <EuiToolTip position="top" content={i18n.MORE_ACTIONS}>
       <EuiButtonIcon
         aria-label={ariaLabel}
+        className={CONTEXT_MENU_BUTTON_CLASS_NAME}
         data-test-subj="timeline-context-menu-button"
         size="s"
         iconType="boxesHorizontal"
@@ -340,6 +350,31 @@ const AlertContextMenuComponent: React.FC<AlertContextMenuProps> = ({
     </EuiContextMenuItem>
   );
 
+  const showRowRendererEditor = useCallback(() => {
+    closePopover();
+    setTimelineFullScreen(true);
+    setShowRowRendererEditor(true);
+    onEventToggled();
+  }, [closePopover, onEventToggled, setShowRowRendererEditor, setTimelineFullScreen]);
+
+  const createRowRendererComponent = useMemo(
+    () => (
+      <EuiContextMenuItem
+        key="create-row-renderer-menu-item"
+        aria-label={i18n.CREATE_EVENT_RENDERER}
+        data-test-subj="create-row-renderer-menu-item"
+        id="createRowRenderer"
+        onClick={showRowRendererEditor}
+        disabled={!canUserCRUD || !hasIndexWrite}
+      >
+        <EuiText data-test-subj="createRowRendererButton" size="m">
+          {i18n.CREATE_EVENT_RENDERER}
+        </EuiText>
+      </EuiContextMenuItem>
+    ),
+    [canUserCRUD, hasIndexWrite, showRowRendererEditor]
+  );
+
   const statusFilters = useMemo(() => {
     if (!alertStatus) {
       return [];
@@ -363,8 +398,22 @@ const AlertContextMenuComponent: React.FC<AlertContextMenuProps> = ({
   ]);
 
   const items = useMemo(
-    () => [...statusFilters, addEndpointExceptionComponent, addExceptionComponent],
-    [addEndpointExceptionComponent, addExceptionComponent, statusFilters]
+    () =>
+      eventType === 'signal' || eventType === 'alert'
+        ? [
+            ...statusFilters,
+            addEndpointExceptionComponent,
+            addExceptionComponent,
+            createRowRendererComponent,
+          ]
+        : [createRowRendererComponent],
+    [
+      addEndpointExceptionComponent,
+      addExceptionComponent,
+      createRowRendererComponent,
+      eventType,
+      statusFilters,
+    ]
   );
 
   return (

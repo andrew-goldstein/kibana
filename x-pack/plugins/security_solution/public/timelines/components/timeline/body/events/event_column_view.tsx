@@ -54,6 +54,7 @@ interface Props {
   onRuleChange?: () => void;
   hasRowRenderers: boolean;
   selectedEventIds: Readonly<Record<string, TimelineNonEcsData[]>>;
+  setShowRowRendererEditor: (show: boolean) => void;
   showCheckboxes: boolean;
   showNotes: boolean;
   tabType?: TimelineTabs;
@@ -86,6 +87,7 @@ export const EventColumnView = React.memo<Props>(
     hasRowRenderers,
     onRuleChange,
     selectedEventIds,
+    setShowRowRendererEditor,
     showCheckboxes,
     showNotes,
     tabType,
@@ -184,10 +186,13 @@ export const EventColumnView = React.memo<Props>(
           ariaLabel={i18n.MORE_ACTIONS_FOR_ROW({ ariaRowindex, columnValues })}
           key="alert-context-menu"
           ecsRowData={ecsData}
+          eventType={eventType}
           timelineId={timelineId}
-          disabled={eventType !== 'signal'}
-          refetch={refetch}
+          disabled={false}
+          onEventToggled={onEventToggled}
           onRuleChange={onRuleChange}
+          refetch={refetch}
+          setShowRowRendererEditor={setShowRowRendererEditor}
         />,
       ],
       [
@@ -202,7 +207,9 @@ export const EventColumnView = React.memo<Props>(
         isEventPinned,
         isEventViewer,
         refetch,
+        onEventToggled,
         onRuleChange,
+        setShowRowRendererEditor,
         showNotes,
         timelineId,
         timelineType,

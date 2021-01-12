@@ -6,6 +6,7 @@
 
 import { omit } from 'lodash/fp';
 import { DropResult } from 'react-beautiful-dnd';
+import uuid from 'uuid';
 
 import { IdToDataProvider } from '../../store/drag_and_drop/model';
 
@@ -33,6 +34,7 @@ import {
   getFieldIdFromDraggable,
   getProviderIdFromDraggable,
   getTimelineIdFromColumnDroppableId,
+  getTimelineIdFromDataProviderDroppableId,
   getTimelineProviderDraggableId,
   getTimelineProviderDroppableId,
   providerWasDroppedOnTimeline,
@@ -43,7 +45,7 @@ import {
   userIsReArrangingProviders,
 } from './helpers';
 
-const DROPPABLE_ID_TIMELINE_PROVIDERS = `${droppableTimelineProvidersPrefix}timeline`;
+const DROPPABLE_ID_TIMELINE_PROVIDERS = `${droppableTimelineProvidersPrefix}timeline-1.${uuid.v4()}`;
 
 /** a sample droppable id that uniquely identifies a timeline's columns */
 const DROPPABLE_ID_TIMELINE_COLUMNS = `${droppableTimelineColumnsPrefix}timeline-1`;
@@ -995,6 +997,18 @@ describe('helpers', () => {
 
     test('it returns an empty string when the droppableId is an empty string', () => {
       expect(getTimelineIdFromColumnDroppableId('')).toEqual('');
+    });
+  });
+
+  describe('getTimelineIdFromDataProviderDroppableId', () => {
+    test('it returns the expected timelineId from a column droppableId', () => {
+      expect(getTimelineIdFromDataProviderDroppableId(DROPPABLE_ID_TIMELINE_PROVIDERS)).toEqual(
+        'timeline-1'
+      );
+    });
+
+    test('it returns an empty string when the droppableId is an empty string', () => {
+      expect(getTimelineIdFromDataProviderDroppableId('')).toEqual('');
     });
   });
 });

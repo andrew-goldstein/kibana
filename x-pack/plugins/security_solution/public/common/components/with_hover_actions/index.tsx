@@ -12,6 +12,10 @@ import { IS_DRAGGING_CLASS_NAME } from '../drag_and_drop/helpers';
 
 export const HOVER_ACTIONS_ALWAYS_SHOW_CLASS_NAME = 'hover-actions-always-show';
 
+const WithHoverActionsContainer = styled.div`
+  display: inline-block;
+`;
+
 /**
  * To avoid expensive changes to the DOM, delay showing the popover menu
  */
@@ -143,7 +147,7 @@ export const WithHoverActions = React.memo<Props>(
     }, [closePopOverTrigger]); // NOTE: the `closePopOverTrigger` dependency here will close the hover menu whenever `closePopOverTrigger` changes
 
     return (
-      <div
+      <WithHoverActionsContainer
         className={alwaysShow ? HOVER_ACTIONS_ALWAYS_SHOW_CLASS_NAME : ''}
         onMouseLeave={onMouseLeave}
       >
@@ -160,7 +164,7 @@ export const WithHoverActions = React.memo<Props>(
         >
           {isOpen ? <div onKeyDown={onKeyDown}>{hoverContent}</div> : null}
         </WithHoverActionsPopover>
-      </div>
+      </WithHoverActionsContainer>
     );
   }
 );

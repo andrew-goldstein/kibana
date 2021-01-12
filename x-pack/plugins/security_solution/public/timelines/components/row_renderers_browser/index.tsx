@@ -138,7 +138,13 @@ const StatefulRowRenderersBrowserComponent: React.FC<StatefulRowRenderersBrowser
                   <EuiText size="s">{i18n.CUSTOMIZE_EVENT_RENDERERS_DESCRIPTION}</EuiText>
                 </EuiFlexItem>
                 <EuiFlexItem grow={false}>
-                  <EuiFlexGroup>
+                  <EuiFlexGroup alignItems="center">
+                    <EuiFlexItem grow={false}>
+                      <EuiButton data-test-subj="import" iconType="importAction">
+                        {i18n.IMPORT}
+                      </EuiButton>
+                    </EuiFlexItem>
+
                     <EuiFlexItem grow={false}>
                       <EuiButtonEmpty
                         size="s"

@@ -35,6 +35,13 @@ export const ENABLE_ALL = i18n.translate(
   }
 );
 
+export const IMPORT = i18n.translate(
+  'xpack.securitySolution.customizeEventRenderers.importButtonLabel',
+  {
+    defaultMessage: 'Import',
+  }
+);
+
 export const DISABLE_ALL = i18n.translate(
   'xpack.securitySolution.customizeEventRenderers.disableAllRenderersButtonLabel',
   {

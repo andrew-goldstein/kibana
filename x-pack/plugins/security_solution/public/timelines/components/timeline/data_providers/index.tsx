@@ -65,7 +65,7 @@ const DropTargetDataProviders = styled.div`
 DropTargetDataProviders.displayName = 'DropTargetDataProviders';
 
 const getDroppableId = (id: string): string =>
-  `${droppableTimelineProvidersPrefix}${id}${uuid.v4()}`;
+  `${droppableTimelineProvidersPrefix}${id}.${uuid.v4()}`;
 
 /**
  * Renders the data providers section of the timeline.

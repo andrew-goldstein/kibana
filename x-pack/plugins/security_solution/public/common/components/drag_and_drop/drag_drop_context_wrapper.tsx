@@ -4,7 +4,7 @@
  * you may not use this file except in compliance with the Elastic License.
  */
 
-import { noop, pick } from 'lodash/fp';
+import { noop } from 'lodash/fp';
 import React, { useCallback, useMemo } from 'react';
 import { DropResult, DragDropContext } from 'react-beautiful-dnd';
 import { useDispatch } from 'react-redux';
@@ -24,12 +24,12 @@ import {
 } from '../../hooks/translations';
 import { useAddToTimelineSensor } from '../../hooks/use_add_to_timeline';
 import { displaySuccessToast, useStateToaster } from '../toasters';
-import { TimelineId, TimelineType } from '../../../../common/types/timeline';
+import { TimelineType } from '../../../../common/types/timeline';
 import {
   addFieldToTimelineColumns,
   addProviderToTimeline,
   fieldWasDroppedOnTimelineColumns,
-  getTimelineIdFromColumnDroppableId,
+  getTimelineIdFromDropResult,
   IS_DRAGGING_CLASS_NAME,
   IS_TIMELINE_FIELD_DRAGGING_CLASS_NAME,
   providerWasDroppedOnTimeline,
@@ -37,7 +37,6 @@ import {
   userIsReArrangingProviders,
 } from './helpers';
 import { useDeepEqualSelector } from '../../hooks/use_selector';
-import { timelineDefaults } from '../../../timelines/store/timeline/defaults';
 
 // @ts-expect-error
 window['__react-beautiful-dnd-disable-dev-warnings'] = true;
@@ -54,6 +53,7 @@ interface OnDragEndHandlerParams {
   dispatch: Dispatch;
   onAddedToTimeline: (fieldOrValue: string) => void;
   result: DropResult;
+  timelineId: string;
 }
 
 const onDragEndHandler = ({
@@ -63,6 +63,7 @@ const onDragEndHandler = ({
   dispatch,
   onAddedToTimeline,
   result,
+  timelineId,
 }: OnDragEndHandlerParams) => {
   if (userIsReArrangingProviders(result)) {
     reArrangeProviders({
@@ -70,7 +71,7 @@ const onDragEndHandler = ({
       destination: result.destination,
       dispatch,
       source: result.source,
-      timelineId: TimelineId.active,
+      timelineId,
     });
   } else if (providerWasDroppedOnTimeline(result)) {
     addProviderToTimeline({
@@ -79,14 +80,14 @@ const onDragEndHandler = ({
       dispatch,
       onAddedToTimeline,
       result,
-      timelineId: TimelineId.active,
+      timelineId,
     });
   } else if (fieldWasDroppedOnTimelineColumns(result)) {
     addFieldToTimelineColumns({
       browserFields,
       dispatch,
       result,
-      timelineId: getTimelineIdFromColumnDroppableId(result.destination?.droppableId ?? ''),
+      timelineId,
     });
   }
 };
@@ -98,35 +99,26 @@ const sensors = [useAddToTimelineSensor];
  */
 export const DragDropContextWrapperComponent: React.FC<Props> = ({ browserFields, children }) => {
   const dispatch = useDispatch();
-  const getTimeline = useMemo(() => timelineSelectors.getTimelineByIdSelector(), []);
+  const getTimelinesById = useMemo(() => timelineSelectors.getTimelines(), []);
   const getDataProviders = useMemo(() => dragAndDropSelectors.getDataProvidersSelector(), []);
-
-  const {
-    dataProviders: activeTimelineDataProviders,
-    timelineType,
-  } = useDeepEqualSelector((state) =>
-    pick(
-      ['dataProviders', 'timelineType'],
-      getTimeline(state, TimelineId.active) ?? timelineDefaults
-    )
-  );
+  const timelinesById = useDeepEqualSelector((state) => getTimelinesById(state) ?? {});
   const dataProviders = useDeepEqualSelector(getDataProviders);
-
   const [, dispatchToaster] = useStateToaster();
-  const onAddedToTimeline = useCallback(
-    (fieldOrValue: string) => {
-      const message =
-        timelineType === TimelineType.template
-          ? ADDED_TO_TIMELINE_TEMPLATE_MESSAGE(fieldOrValue)
-          : ADDED_TO_TIMELINE_MESSAGE(fieldOrValue);
-      displaySuccessToast(message, dispatchToaster);
-    },
-    [dispatchToaster, timelineType]
-  );
 
   const onDragEnd = useCallback(
     (result: DropResult) => {
       try {
+        const timelineId = getTimelineIdFromDropResult(result);
+        const timelineType = timelinesById[timelineId]?.timelineType ?? [];
+        const onAddedToTimeline = (fieldOrValue: string) => {
+          const message =
+            timelineType === TimelineType.template
+              ? ADDED_TO_TIMELINE_TEMPLATE_MESSAGE(fieldOrValue)
+              : ADDED_TO_TIMELINE_MESSAGE(fieldOrValue);
+          displaySuccessToast(message, dispatchToaster);
+        };
+        const activeTimelineDataProviders = timelinesById[timelineId]?.dataProviders ?? [];
+
         enableScrolling();
 
         if (dataProviders != null) {
@@ -137,6 +129,7 @@ export const DragDropContextWrapperComponent: React.FC<Props> = ({ browserFields
             dispatch,
             onAddedToTimeline,
             result,
+            timelineId,
           });
         }
       } finally {
@@ -147,7 +140,7 @@ export const DragDropContextWrapperComponent: React.FC<Props> = ({ browserFields
         }
       }
     },
-    [activeTimelineDataProviders, browserFields, dataProviders, dispatch, onAddedToTimeline]
+    [browserFields, dataProviders, dispatch, dispatchToaster, timelinesById]
   );
   return (
     <DragDropContext onDragEnd={onDragEnd} onBeforeCapture={onBeforeCapture} sensors={sensors}>
