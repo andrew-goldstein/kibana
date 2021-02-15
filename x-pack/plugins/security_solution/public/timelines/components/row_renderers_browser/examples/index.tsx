@@ -4,9 +4,12 @@
  * you may not use this file except in compliance with the Elastic License.
  */
 
+export * from './alerts';
 export * from './auditd';
 export * from './auditd_file';
+export * from './library';
 export * from './netflow';
+export * from './registry';
 export * from './suricata';
 export * from './system';
 export * from './system_dns';

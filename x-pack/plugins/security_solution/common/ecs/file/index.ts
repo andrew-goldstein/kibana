@@ -4,14 +4,22 @@
  * you may not use this file except in compliance with the Elastic License.
  */
 
+interface Original {
+  name?: string[];
+  path?: string[];
+}
+
 export interface CodeSignature {
   subject_name: string[];
   trusted: string[];
 }
 export interface Ext {
-  code_signature: CodeSignature[] | CodeSignature;
+  code_signature?: CodeSignature[] | CodeSignature;
+  original?: Original;
 }
 export interface Hash {
+  md5?: string[];
+  sha1?: string[];
   sha256: string[];
 }
 

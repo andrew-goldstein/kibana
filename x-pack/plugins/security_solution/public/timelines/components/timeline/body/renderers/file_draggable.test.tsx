@@ -32,12 +32,15 @@ describe('FileDraggable', () => {
           endgameFileName="[endgameFileName]"
           endgameFilePath="[endgameFilePath]"
           eventId="1"
+          fileExtOriginalPath="[fileExtOriginalPath]"
           fileName="[fileName]"
           filePath="[filePath]"
         />
       </TestProviders>
     );
-    expect(wrapper.text()).toEqual('[fileName]in[filePath]');
+    expect(wrapper.text()).toEqual(
+      '[fileName]in[filePath]from its original path[fileExtOriginalPath]'
+    );
   });
 
   test('it returns an empty string when none of the files or paths are provided', () => {
@@ -48,6 +51,7 @@ describe('FileDraggable', () => {
           endgameFileName={undefined}
           endgameFilePath={undefined}
           eventId="1"
+          fileExtOriginalPath={undefined}
           fileName={undefined}
           filePath={undefined}
         />
@@ -64,6 +68,7 @@ describe('FileDraggable', () => {
           endgameFileName="[endgameFileName]"
           endgameFilePath={undefined}
           eventId="1"
+          fileExtOriginalPath={undefined}
           fileName={undefined}
           filePath={undefined}
         />
@@ -80,6 +85,7 @@ describe('FileDraggable', () => {
           endgameFileName={undefined}
           endgameFilePath="[endgameFilePath]"
           eventId="1"
+          fileExtOriginalPath={undefined}
           fileName={undefined}
           filePath={undefined}
         />
@@ -96,6 +102,7 @@ describe('FileDraggable', () => {
           endgameFileName={undefined}
           endgameFilePath={undefined}
           eventId="1"
+          fileExtOriginalPath={undefined}
           fileName="[fileName]"
           filePath={undefined}
         />
@@ -112,6 +119,7 @@ describe('FileDraggable', () => {
           endgameFileName={undefined}
           endgameFilePath={undefined}
           eventId="1"
+          fileExtOriginalPath={undefined}
           fileName={undefined}
           filePath="[filePath]"
         />

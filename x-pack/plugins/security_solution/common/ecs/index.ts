@@ -14,6 +14,7 @@ import { FileEcs } from './file';
 import { GeoEcs } from './geo';
 import { HostEcs } from './host';
 import { NetworkEcs } from './network';
+import { RegistryEcs } from './registry';
 import { RuleEcs } from './rule';
 import { SignalEcs } from './signal';
 import { SourceEcs } from './source';
@@ -39,6 +40,7 @@ export interface Ecs {
   geo?: GeoEcs;
   host?: HostEcs;
   network?: NetworkEcs;
+  registry?: RegistryEcs;
   rule?: RuleEcs;
   signal?: SignalEcs;
   source?: SourceEcs;
