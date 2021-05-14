@@ -49,7 +49,7 @@ import { SourcererScopeName } from '../../../common/store/sourcerer/model';
 import { useSourcererScope } from '../../../common/containers/sourcerer';
 import { buildTimeRangeFilter } from './helpers';
 import { defaultRowRenderers } from '../../../timelines/components/timeline/body/renderers';
-import { columns, RenderCellValue } from '../../configurations/security_solution_detections';
+import { columns, RenderCellValue } from '../../configurations/examples/observablity_alerts';
 
 interface OwnProps {
   defaultFilters?: Filter[];

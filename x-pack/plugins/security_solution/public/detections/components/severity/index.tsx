@@ -12,7 +12,6 @@ import styled from 'styled-components';
 const SeverityBadge = styled(EuiBadge)`
   align-items: center;
   display: inline-flex;
-  height: 40px;
   text-transform: capitalize;
 `;
 
