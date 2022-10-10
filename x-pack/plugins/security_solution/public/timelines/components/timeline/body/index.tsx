@@ -5,6 +5,7 @@
  * 2.0.
  */
 
+import { EuiFlexGroup, EuiFlexItem } from '@elastic/eui';
 import { noop } from 'lodash/fp';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -21,6 +22,7 @@ import { DEFAULT_COLUMN_MIN_WIDTH } from './constants';
 import type {
   ControlColumnProps,
   RowRenderer,
+  TimelineId,
   TimelineTabs,
 } from '../../../../../common/types/timeline';
 import { RowRendererId } from '../../../../../common/types/timeline';
@@ -28,9 +30,9 @@ import type { BrowserFields } from '../../../../common/containers/source';
 import type { TimelineItem } from '../../../../../common/search_strategy/timeline';
 import type { inputsModel, State } from '../../../../common/store';
 import { timelineDefaults } from '../../../store/timeline/defaults';
-import { timelineActions } from '../../../store/timeline';
+import { timelineActions, timelineSelectors } from '../../../store/timeline';
 import type { OnRowSelected, OnSelectAll } from '../events';
-import { getColumnHeaders } from './column_headers/helpers';
+import { getColumnHeader, getColumnHeaders } from './column_headers/helpers';
 import { getEventIdToDataMapping } from './helpers';
 import type { Sort } from './sort';
 import { plainRowRenderer } from './renderers/plain_row_renderer';
@@ -39,6 +41,14 @@ import { ColumnHeaders } from './column_headers';
 import { Events } from './events';
 import { timelineBodySelector } from './selectors';
 import { useLicense } from '../../../../common/hooks/use_license';
+import { useDeepEqualSelector } from '../../../../common/hooks/use_selector';
+import { useKibana } from '../../../../common/lib/kibana';
+import { SourcererScopeName } from '../../../../common/store/sourcerer/model';
+import type { FieldEditorActions } from '../../fields_browser';
+import { useFieldBrowserOptions } from '../../fields_browser';
+import { getMaybeFixedWidthStyle } from '../helpers';
+
+const FIELD_BROWSER_SIDEBAR_WIDTH = 300; // px
 
 export interface Props {
   activePage: number;
@@ -53,8 +63,10 @@ export interface Props {
   leadingControlColumns: ControlColumnProps[];
   trailingControlColumns: ControlColumnProps[];
   tabType: TimelineTabs;
+  timelineId: string;
   totalPages: number;
   onRuleChange?: () => void;
+  width?: number;
 }
 
 /**
@@ -74,10 +86,13 @@ export const StatefulBody = React.memo<Props>(
     rowRenderers,
     sort,
     tabType,
+    timelineId,
     totalPages,
     leadingControlColumns = [],
     trailingControlColumns = [],
+    width,
   }) => {
+    const { triggersActionsUi } = useKibana().services;
     const dispatch = useDispatch();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const {
@@ -215,59 +230,134 @@ export const StatefulBody = React.memo<Props>(
       [columnHeaders.length, containerRef, data.length]
     );
 
+    const [showFields, setShowFields] = useState<boolean>(false);
+
+    const getManageTimeline = useMemo(() => timelineSelectors.getManageTimelineById(), []);
+
+    const { defaultColumns } = useDeepEqualSelector((state) =>
+      getManageTimeline(state, timelineId)
+    );
+
+    const onResetColumns = useCallback(() => {
+      dispatch(timelineActions.updateColumns({ id: timelineId, columns: defaultColumns }));
+    }, [defaultColumns, dispatch, timelineId]);
+
+    const onToggleColumn = useCallback(
+      (columnId: string) => {
+        if (columnHeaders.some(({ id: cid }) => cid === columnId)) {
+          dispatch(
+            timelineActions.removeColumn({
+              columnId,
+              id: timelineId,
+            })
+          );
+        } else {
+          dispatch(
+            timelineActions.upsertColumn({
+              column: getColumnHeader(columnId, defaultColumns),
+              id: timelineId,
+              index: 1,
+            })
+          );
+        }
+      },
+      [columnHeaders, dispatch, timelineId, defaultColumns]
+    );
+
+    const fieldEditorActionsRef = useRef<FieldEditorActions>(null);
+
+    const fieldBrowserOptions = useFieldBrowserOptions({
+      sourcererScope: SourcererScopeName.timeline,
+      timelineId: timelineId as TimelineId,
+      editorActionsRef: fieldEditorActionsRef,
+      isSidebar: true,
+    });
+
+    const maybeFixedWidthStyle = useMemo(
+      () =>
+        getMaybeFixedWidthStyle({
+          containerWidth: width,
+          fieldsSidebarWidth: FIELD_BROWSER_SIDEBAR_WIDTH,
+          showFields,
+        }),
+      [showFields, width]
+    );
+
     return (
       <>
-        <TimelineBody data-test-subj="timeline-body" ref={containerRef}>
-          <EventsTable
-            $activePage={activePage}
-            $columnCount={columnCount}
-            data-test-subj={`${tabType}-events-table`}
-            columnWidths={totalWidth}
-            onKeyDown={onKeyDown}
-            $rowCount={data.length}
-            $totalPages={totalPages}
-          >
-            <ColumnHeaders
-              actionsColumnWidth={actionsColumnWidth}
-              browserFields={browserFields}
-              columnHeaders={columnHeaders}
-              isEventViewer={isEventViewer}
-              isSelectAllChecked={isSelectAllChecked}
-              onSelectAll={onSelectAll}
-              show={show}
-              showEventsSelect={false}
-              showSelectAllCheckbox={showCheckboxes}
-              sort={sort}
-              tabType={tabType}
-              timelineId={id}
-              leadingControlColumns={leadingControlColumns}
-              trailingControlColumns={trailingControlColumns}
-            />
+        <EuiFlexGroup data-test-subj="statefulBodyFlexGroup" gutterSize="none">
+          {showFields && (
+            <EuiFlexItem grow={false}>
+              {triggersActionsUi.getFieldBrowser({
+                browserFields,
+                columnIds: columnHeaders.map(({ id: cid }) => cid),
+                onResetColumns,
+                onToggleColumn,
+                options: fieldBrowserOptions,
+              })}
+            </EuiFlexItem>
+          )}
 
-            <Events
-              containerRef={containerRef}
-              actionsColumnWidth={actionsColumnWidth}
-              columnHeaders={columnHeaders}
-              data={data}
-              eventIdToNoteIds={eventIdToNoteIds}
-              id={id}
-              isEventViewer={isEventViewer}
-              lastFocusedAriaColindex={lastFocusedAriaColindex}
-              loadingEventIds={loadingEventIds}
-              onRowSelected={onRowSelected}
-              pinnedEventIds={pinnedEventIds}
-              refetch={refetch}
-              renderCellValue={renderCellValue}
-              rowRenderers={enabledRowRenderers}
-              onRuleChange={onRuleChange}
-              selectedEventIds={selectedEventIds}
-              showCheckboxes={showCheckboxes}
-              leadingControlColumns={leadingControlColumns}
-              trailingControlColumns={trailingControlColumns}
-              tabType={tabType}
-            />
-          </EventsTable>
-        </TimelineBody>
+          <EuiFlexItem grow={true}>
+            <TimelineBody
+              data-test-subj="timeline-body"
+              ref={containerRef}
+              style={maybeFixedWidthStyle}
+            >
+              <EventsTable
+                $activePage={activePage}
+                $columnCount={columnCount}
+                data-test-subj={`${tabType}-events-table`}
+                columnWidths={totalWidth}
+                onKeyDown={onKeyDown}
+                $rowCount={data.length}
+                $totalPages={totalPages}
+              >
+                <ColumnHeaders
+                  actionsColumnWidth={actionsColumnWidth}
+                  browserFields={browserFields}
+                  columnHeaders={columnHeaders}
+                  isEventViewer={isEventViewer}
+                  isSelectAllChecked={isSelectAllChecked}
+                  onSelectAll={onSelectAll}
+                  setShowFields={setShowFields}
+                  show={show}
+                  showFields={showFields}
+                  showEventsSelect={false}
+                  showSelectAllCheckbox={showCheckboxes}
+                  sort={sort}
+                  tabType={tabType}
+                  timelineId={id}
+                  leadingControlColumns={leadingControlColumns}
+                  trailingControlColumns={trailingControlColumns}
+                />
+
+                <Events
+                  containerRef={containerRef}
+                  actionsColumnWidth={actionsColumnWidth}
+                  columnHeaders={columnHeaders}
+                  data={data}
+                  eventIdToNoteIds={eventIdToNoteIds}
+                  id={id}
+                  isEventViewer={isEventViewer}
+                  lastFocusedAriaColindex={lastFocusedAriaColindex}
+                  loadingEventIds={loadingEventIds}
+                  onRowSelected={onRowSelected}
+                  pinnedEventIds={pinnedEventIds}
+                  refetch={refetch}
+                  renderCellValue={renderCellValue}
+                  rowRenderers={enabledRowRenderers}
+                  onRuleChange={onRuleChange}
+                  selectedEventIds={selectedEventIds}
+                  showCheckboxes={showCheckboxes}
+                  leadingControlColumns={leadingControlColumns}
+                  trailingControlColumns={trailingControlColumns}
+                  tabType={tabType}
+                />
+              </EventsTable>
+            </TimelineBody>
+          </EuiFlexItem>
+        </EuiFlexGroup>
         <TimelineBodyGlobalStyle />
       </>
     );

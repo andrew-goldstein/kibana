@@ -14,7 +14,7 @@ import type { LegendItem } from './draggable_legend_item';
 import { DraggableLegendItem } from './draggable_legend_item';
 
 export const MIN_LEGEND_HEIGHT = 175;
-export const DEFAULT_WIDTH = 165; // px
+export const DEFAULT_MIN_WIDTH = 300; // px
 
 const DraggableLegendContainer = styled.div<{ height: number; $minWidth: number }>`
   height: ${({ height }) => `${height}px`};
@@ -48,7 +48,7 @@ const DraggableLegendComponent: React.FC<{
   height: number;
   legendItems: LegendItem[];
   minWidth?: number;
-}> = ({ className, height, legendItems, minWidth = DEFAULT_WIDTH }) => {
+}> = ({ className, height, legendItems, minWidth = DEFAULT_MIN_WIDTH }) => {
   if (legendItems.length === 0) {
     return null;
   }

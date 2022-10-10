@@ -366,7 +366,7 @@ export const convertTimelineAsInput = (
         return set(
           key,
           get(key, timeline).map((col: ColumnHeaderOptions) =>
-            omit(['initialWidth', 'width', '__typename', 'esTypes'], col)
+            omit(['count', 'initialWidth', 'width', '__typename', 'esTypes'], col)
           ),
           acc
         );

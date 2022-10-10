@@ -105,6 +105,8 @@ export interface HeaderActionProps {
   onSelectAll: ({ isSelected }: { isSelected: boolean }) => void;
   showEventsSelect: boolean;
   showSelectAllCheckbox: boolean;
+  showFields?: boolean;
+  setShowFields?: (showFields: boolean) => void;
   sort: SortColumnTimeline[];
   tabType: TimelineTabs;
   timelineId: string;

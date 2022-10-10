@@ -37,6 +37,7 @@ export interface UseFieldBrowserOptionsProps {
   sourcererScope: SourcererScopeName;
   timelineId: TimelineId;
   editorActionsRef?: FieldEditorActionsRef;
+  isSidebar?: boolean;
 }
 
 export type UseFieldBrowserOptions = (props: UseFieldBrowserOptionsProps) => {
@@ -48,6 +49,7 @@ export const useFieldBrowserOptions: UseFieldBrowserOptions = ({
   sourcererScope,
   timelineId,
   editorActionsRef,
+  isSidebar = false,
 }) => {
   const dispatch = useDispatch();
   const [dataView, setDataView] = useState<DataView | null>(null);
@@ -187,5 +189,6 @@ export const useFieldBrowserOptions: UseFieldBrowserOptions = ({
   return {
     createFieldButton,
     getFieldTableColumns,
+    isSidebar,
   };
 };

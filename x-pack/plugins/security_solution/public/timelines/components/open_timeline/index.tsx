@@ -12,7 +12,7 @@ import { useShallowEqualSelector } from '../../../common/hooks/use_selector';
 import type { SortFieldTimeline } from '../../../../common/types/timeline';
 import { TimelineId } from '../../../../common/types/timeline';
 import type { TimelineModel } from '../../store/timeline/model';
-import { timelineSelectors } from '../../store/timeline';
+import { timelineActions, timelineSelectors } from '../../store/timeline';
 import {
   createTimeline as dispatchCreateNewTimeline,
   updateIsLoading as dispatchUpdateIsLoading,
@@ -297,6 +297,8 @@ export const StatefulOpenTimelineComponent = React.memo<OpenTimelineOwnProps>(
           updateIsLoading,
           updateTimeline,
         });
+
+        dispatch(timelineActions.updateActiveTimeline({ id: timelineId }));
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [updateIsLoading, updateTimeline]

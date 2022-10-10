@@ -213,6 +213,65 @@ export const addNewTimeline = ({
   };
 };
 
+export const closeTimeline = ({
+  id,
+  inactiveTimelineIds,
+  timelineById,
+}: {
+  id: string;
+  inactiveTimelineIds: string[];
+  timelineById: TimelineById;
+}): {
+  activeTimelineId: string;
+  inactiveTimelineIds: string[];
+  timelineById: TimelineById;
+} => {
+  return {
+    activeTimelineId: TimelineId.active,
+    inactiveTimelineIds: inactiveTimelineIds.filter((x) => x !== id),
+    timelineById: omit(id, timelineById),
+  };
+};
+
+export const deactivateTimeline = ({
+  id,
+  inactiveTimelineIds,
+  timelineById,
+}: {
+  id: string;
+  inactiveTimelineIds: string[];
+  timelineById: TimelineById;
+}): {
+  inactiveTimelineIds: string[];
+  timelineById: TimelineById;
+} => {
+  const timeline = timelineById[id];
+  const savedObjectId = timeline.savedObjectId;
+
+  if (savedObjectId != null) {
+    const newInactiveTimelineIds = inactiveTimelineIds.includes(savedObjectId)
+      ? inactiveTimelineIds // noop
+      : [savedObjectId, ...inactiveTimelineIds];
+
+    // add / update this timeline in `timelineById`, using its savedObjectId as the key
+    return {
+      inactiveTimelineIds: newInactiveTimelineIds,
+      timelineById: {
+        ...timelineById,
+        [savedObjectId]: {
+          ...timeline,
+        },
+      },
+    };
+  } else {
+    // noop
+    return {
+      inactiveTimelineIds,
+      timelineById,
+    };
+  }
+};
+
 interface PinTimelineEventParams {
   id: string;
   eventId: string;
@@ -256,6 +315,26 @@ export const updateTimelineShowTimeline = ({
     [id]: {
       ...timeline,
       show,
+    },
+  };
+};
+
+export const updateTimelineCount = ({
+  count,
+  id,
+  timelineById,
+}: {
+  count: number;
+  id: string;
+  timelineById: TimelineById;
+}): TimelineById => {
+  const timeline = timelineById[id];
+
+  return {
+    ...timelineById,
+    [id]: {
+      ...timeline,
+      count,
     },
   };
 };

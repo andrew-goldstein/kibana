@@ -11,6 +11,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { BrowserFields } from '@kbn/rule-registry-plugin/common';
 import type { FieldBrowserProps } from './types';
 import { FieldBrowserModal } from './field_browser_modal';
+import { FieldBrowserSidebar } from './field_browser_sidebar';
 import { filterBrowserFieldsByFieldName, filterSelectedBrowserFields } from './helpers';
 import * as i18n from './translations';
 import { styles } from './field_browser.styles';
@@ -119,6 +120,34 @@ export const FieldBrowserComponent: React.FC<FieldBrowserProps> = ({
     },
     [setFilterSelectedEnabled]
   );
+
+  const isSidebar = options?.isSidebar ?? false;
+
+  if (isSidebar) {
+    return (
+      <FieldBrowserSidebar
+        browserFields={browserFields}
+        columnIds={columnIds}
+        filteredBrowserFields={
+          filteredBrowserFields != null ? filteredBrowserFields : browserFields
+        }
+        filterSelectedEnabled={filterSelectedEnabled}
+        isSearching={isSearching}
+        setSelectedCategoryIds={setSelectedCategoryIds}
+        onFilterSelectedChange={onFilterSelectedChange}
+        onHide={onHide}
+        onResetColumns={onResetColumns}
+        onSearchInputChange={updateFilter}
+        onToggleColumn={onToggleColumn}
+        options={options}
+        restoreFocusTo={customizeColumnsButtonRef}
+        searchInput={filterInput}
+        appliedFilterInput={appliedFilterInput}
+        selectedCategoryIds={selectedCategoryIds}
+        width={width}
+      />
+    );
+  }
 
   return (
     <div css={styles.buttonContainer} data-test-subj="fields-browser-button-container">

@@ -47,6 +47,7 @@ export const useCreateTimeline = ({ timelineId, timelineType, closeGearMenu }: P
           selectedPatterns,
         })
       );
+
       dispatch(
         timelineActions.createTimeline({
           columns: defaultHeaders,
@@ -57,6 +58,8 @@ export const useCreateTimeline = ({ timelineId, timelineType, closeGearMenu }: P
           timelineType,
         })
       );
+
+      dispatch(timelineActions.updateActiveTimeline({ id: TimelineId.active }));
 
       dispatch(
         timelineActions.setTimelineUpdatedAt({

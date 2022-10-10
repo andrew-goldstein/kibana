@@ -48,6 +48,10 @@ export const TimelineBodyGlobalStyle = createGlobalStyle`
   body.${IS_TIMELINE_FIELD_DRAGGING_CLASS_NAME} .${SELECTOR_TIMELINE_BODY_CLASS_NAME} {
     overflow: hidden;
   }
+
+  body.${SELECTOR_TIMELINE_IS_VISIBLE_CSS_CLASS_NAME} {
+    overflow: hidden;
+  }
 `;
 
 export const TimelineBody = styled.div.attrs(({ className = '' }) => ({

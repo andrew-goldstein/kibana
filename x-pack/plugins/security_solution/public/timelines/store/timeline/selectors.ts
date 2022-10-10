@@ -26,6 +26,11 @@ export const selectTimeline = (state: State, timelineId: string): TimelineModel 
 export const selectInsertTimeline = (state: State): InsertTimeline | null =>
   state.timeline.insertTimeline;
 
+export const selectActiveTimelineId = (state: State): string => state.timeline.activeTimelineId;
+
+export const selectInactiveTimelineIds = (state: State): string[] =>
+  state.timeline.inactiveTimelineIds;
+
 export const autoSaveMsgSelector = createSelector(selectAutoSaveMsg, (autoSaveMsg) => autoSaveMsg);
 
 export const timelineByIdSelector = createSelector(
@@ -40,6 +45,12 @@ export const getShowCallOutUnauthorizedMsg = () =>
   );
 
 export const getTimelineByIdSelector = () => createSelector(selectTimeline, (timeline) => timeline);
+
+export const getActiveTimelineIdSelector = () =>
+  createSelector(selectActiveTimelineId, (activeTimelineId) => activeTimelineId);
+
+export const getInactiveTimelineIdsSelector = () =>
+  createSelector(selectInactiveTimelineIds, (inactiveTimelineIds) => inactiveTimelineIds);
 
 export const getKqlFilterQuerySelector = () =>
   createSelector(selectTimeline, (timeline) =>

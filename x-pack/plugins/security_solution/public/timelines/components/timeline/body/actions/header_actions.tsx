@@ -20,15 +20,18 @@ import {
   useGlobalFullScreen,
   useTimelineFullScreen,
 } from '../../../../../common/containers/use_full_screen';
-import { useDeepEqualSelector } from '../../../../../common/hooks/use_selector';
+// import { useDeepEqualSelector } from '../../../../../common/hooks/use_selector';
 import { StatefulRowRenderersBrowser } from '../../../row_renderers_browser';
 import { EventsTh, EventsThContent } from '../../styles';
 import { EventsSelect } from '../column_headers/events_select';
 import * as i18n from '../column_headers/translations';
-import { timelineActions, timelineSelectors } from '../../../../store/timeline';
+// import { timelineActions, timelineSelectors } from '../../../../store/timeline';
+import { timelineActions } from '../../../../store/timeline';
 import { isFullScreen } from '../column_headers';
-import { useKibana } from '../../../../../common/lib/kibana';
-import { getColumnHeader } from '../column_headers/helpers';
+// import { useKibana } from '../../../../../common/lib/kibana';
+// import { getColumnHeader } from '../column_headers/helpers';
+
+const FIELDS_BUTTON_CLASS_NAME = 'fields-button';
 
 const SortingColumnsContainer = styled.div`
   button {
@@ -44,23 +47,23 @@ const SortingColumnsContainer = styled.div`
   }
 `;
 
-const FieldBrowserContainer = styled.div`
-  .euiToolTipAnchor {
-    .euiButtonContent {
-      padding: ${({ theme }) => `0 ${theme.eui.euiSizeXS}`};
-    }
-    button {
-      color: ${({ theme }) => theme.eui.euiColorPrimary};
-    }
-    .euiButtonContent__icon {
-      width: 16px;
-      height: 16px;
-    }
-    .euiButtonEmpty__text {
-      display: none;
-    }
-  }
-`;
+// const FieldBrowserContainer = styled.div`
+//   .euiToolTipAnchor {
+//     .euiButtonContent {
+//       padding: ${({ theme }) => `0 ${theme.eui.euiSizeXS}`};
+//     }
+//     button {
+//       color: ${({ theme }) => theme.eui.euiColorPrimary};
+//     }
+//     .euiButtonContent__icon {
+//       width: 16px;
+//       height: 16px;
+//     }
+//     .euiButtonEmpty__text {
+//       display: none;
+//     }
+//   }
+// `;
 
 const ActionsContainer = styled.div`
   align-items: center;
@@ -68,26 +71,28 @@ const ActionsContainer = styled.div`
 `;
 
 const HeaderActionsComponent: React.FC<HeaderActionProps> = ({
-  width,
-  browserFields,
+  // width,
+  // browserFields,
   columnHeaders,
-  isEventViewer = false,
+  // isEventViewer = false,
   isSelectAllChecked,
   onSelectAll,
+  setShowFields,
   showEventsSelect,
+  showFields,
   showSelectAllCheckbox,
   sort,
   tabType,
   timelineId,
-  fieldBrowserOptions,
+  // fieldBrowserOptions,
 }) => {
-  const { triggersActionsUi } = useKibana().services;
+  // const { triggersActionsUi } = useKibana().services;
   const { globalFullScreen, setGlobalFullScreen } = useGlobalFullScreen();
   const { timelineFullScreen, setTimelineFullScreen } = useTimelineFullScreen();
   const dispatch = useDispatch();
 
-  const getManageTimeline = useMemo(() => timelineSelectors.getManageTimelineById(), []);
-  const { defaultColumns } = useDeepEqualSelector((state) => getManageTimeline(state, timelineId));
+  // const getManageTimeline = useMemo(() => timelineSelectors.getManageTimelineById(), []);
+  // const { defaultColumns } = useDeepEqualSelector((state) => getManageTimeline(state, timelineId));
 
   const toggleFullScreen = useCallback(() => {
     if (timelineId === TimelineId.active) {
@@ -165,33 +170,44 @@ const HeaderActionsComponent: React.FC<HeaderActionProps> = ({
     [columnHeaders]
   );
 
-  const onResetColumns = useCallback(() => {
-    dispatch(timelineActions.updateColumns({ id: timelineId, columns: defaultColumns }));
-  }, [defaultColumns, dispatch, timelineId]);
+  // const onResetColumns = useCallback(() => {
+  //   dispatch(timelineActions.updateColumns({ id: timelineId, columns: defaultColumns }));
+  // }, [defaultColumns, dispatch, timelineId]);
 
-  const onToggleColumn = useCallback(
-    (columnId: string) => {
-      if (columnHeaders.some(({ id }) => id === columnId)) {
-        dispatch(
-          timelineActions.removeColumn({
-            columnId,
-            id: timelineId,
-          })
-        );
-      } else {
-        dispatch(
-          timelineActions.upsertColumn({
-            column: getColumnHeader(columnId, defaultColumns),
-            id: timelineId,
-            index: 1,
-          })
-        );
-      }
-    },
-    [columnHeaders, dispatch, timelineId, defaultColumns]
-  );
+  // const onToggleColumn = useCallback(
+  //   (columnId: string) => {
+  //     if (columnHeaders.some(({ id }) => id === columnId)) {
+  //       dispatch(
+  //         timelineActions.removeColumn({
+  //           columnId,
+  //           id: timelineId,
+  //         })
+  //       );
+  //     } else {
+  //       dispatch(
+  //         timelineActions.upsertColumn({
+  //           column: getColumnHeader(columnId, defaultColumns),
+  //           id: timelineId,
+  //           index: 1,
+  //         })
+  //       );
+  //     }
+  //   },
+  //   [columnHeaders, dispatch, timelineId, defaultColumns]
+  // );
 
   const ColumnSorting = useDataGridColumnSorting(myColumns, sortedColumns, {}, [], displayValues);
+
+  const toggleShow = useCallback(() => {
+    if (setShowFields != null) {
+      setShowFields(!showFields);
+    }
+  }, [setShowFields, showFields]);
+
+  const fieldBrowserLabel = useMemo(
+    () => (showFields ? i18n.HIDE_FIELDS : i18n.SHOW_FIELDS),
+    [showFields]
+  );
 
   return (
     <ActionsContainer>
@@ -209,15 +225,25 @@ const HeaderActionsComponent: React.FC<HeaderActionProps> = ({
       )}
 
       <EventsTh role="button">
-        <FieldBrowserContainer>
-          {triggersActionsUi.getFieldBrowser({
-            browserFields,
-            columnIds: columnHeaders.map(({ id }) => id),
-            onResetColumns,
-            onToggleColumn,
-            options: fieldBrowserOptions,
-          })}
-        </FieldBrowserContainer>
+        <EuiToolTip content={fieldBrowserLabel}>
+          <>
+            <EuiButtonIcon
+              aria-label={fieldBrowserLabel}
+              className={FIELDS_BUTTON_CLASS_NAME}
+              display={showFields ? 'base' : 'empty'}
+              iconType="tableOfContents"
+              onClick={toggleShow}
+            />
+
+            {/* {triggersActionsUi.getFieldBrowser({
+              browserFields,
+              columnIds: columnHeaders.map(({ id }) => id),
+              onResetColumns,
+              onToggleColumn,
+              options: fieldBrowserOptions,
+            })} */}
+          </>
+        </EuiToolTip>
       </EventsTh>
 
       <EventsTh role="button">

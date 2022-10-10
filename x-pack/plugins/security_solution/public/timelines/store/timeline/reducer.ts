@@ -14,8 +14,10 @@ import {
   addProvider,
   addTimeline,
   applyKqlFilterQuery,
+  closeTimeline,
   createTimeline,
   dataProviderEdited,
+  deactivateTimeline,
   endTimelineSaving,
   pinEvent,
   removeProvider,
@@ -28,7 +30,9 @@ import {
   showTimeline,
   startTimelineSaving,
   unPinEvent,
+  updateActiveTimeline,
   updateAutoSaveMsg,
+  updateCount,
   updateDataProviderEnabled,
   updateDataProviderExcluded,
   updateDataProviderKqlQuery,
@@ -57,10 +61,13 @@ import {
   addTimelineProviders,
   addTimelineToStore,
   applyKqlFilterQueryDraft,
+  closeTimeline as closeTimelineHelper,
+  deactivateTimeline as deactivateTimelineHelper,
   pinTimelineEvent,
   removeTimelineProvider,
   unPinTimelineEvent,
   updateExcludedRowRenderersIds,
+  updateTimelineCount,
   updateTimelineIsFavorite,
   updateTimelineIsLive,
   updateTimelineKqlMode,
@@ -83,14 +90,16 @@ import {
 
 import type { TimelineState } from './types';
 import { EMPTY_TIMELINE_BY_ID } from './types';
-import { TimelineType } from '../../../../common/types/timeline';
+import { TimelineId, TimelineType } from '../../../../common/types/timeline';
 
 export const initialTimelineState: TimelineState = {
   timelineById: EMPTY_TIMELINE_BY_ID,
+  activeTimelineId: TimelineId.active,
   autoSavedWarningMsg: {
     timelineId: null,
     newTimelineModel: null,
   },
+  inactiveTimelineIds: [],
   showCallOutUnauthorizedMsg: false,
   insertTimeline: null,
 };
@@ -115,6 +124,39 @@ export const timelineReducer = reducerWithInitialState(initialTimelineState)
         timelineType,
         ...timelineProps,
       }),
+    };
+  })
+  .case(closeTimeline, (state, { id }) => {
+    const { activeTimelineId, inactiveTimelineIds, timelineById } = closeTimelineHelper({
+      id,
+      inactiveTimelineIds: state.inactiveTimelineIds,
+      timelineById: state.timelineById,
+    });
+
+    return {
+      ...state,
+      activeTimelineId,
+      inactiveTimelineIds,
+      timelineById,
+    };
+  })
+  .case(deactivateTimeline, (state, { id }) => {
+    const { inactiveTimelineIds, timelineById } = deactivateTimelineHelper({
+      id,
+      inactiveTimelineIds: state.inactiveTimelineIds,
+      timelineById: state.timelineById,
+    });
+
+    return {
+      ...state,
+      inactiveTimelineIds,
+      timelineById,
+    };
+  })
+  .case(updateActiveTimeline, (state, { id }) => {
+    return {
+      ...state,
+      activeTimelineId: id,
     };
   })
   .case(addHistory, (state, { id, historyId }) => ({
@@ -394,6 +436,10 @@ export const timelineReducer = reducerWithInitialState(initialTimelineState)
   .case(showTimeline, (state, { id, show }) => ({
     ...state,
     timelineById: updateTimelineShowTimeline({ id, show, timelineById: state.timelineById }),
+  }))
+  .case(updateCount, (state, { id, count }) => ({
+    ...state,
+    timelineById: updateTimelineCount({ id, count, timelineById: state.timelineById }),
   }))
   .case(setTimelineUpdatedAt, (state, { id, updated }) => ({
     ...state,

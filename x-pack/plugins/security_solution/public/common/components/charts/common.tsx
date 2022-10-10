@@ -68,6 +68,7 @@ export interface ChartSeriesData {
   key: string;
   value: ChartData[] | [] | null;
   color?: string | undefined;
+  doc_count?: number | undefined;
 }
 
 const WrappedByAutoSizerComponent = styled.div<{ height?: string }>`

@@ -55,10 +55,8 @@ const DropTargetDataProviders = styled.div`
   border-radius: 5px;
   padding: ${({ theme }) => theme.eui.euiSizeXS} 0;
   margin: 2px 0 2px 0;
-  max-height: 33vh;
   min-height: 100px;
   overflow: auto;
-  resize: vertical;
   background-color: ${({ theme }) => theme.eui.euiFormBackgroundColor};
 `;
 

@@ -177,7 +177,7 @@ export const MatrixHistogramComponent: React.FC<MatrixHistogramComponentProps> =
     isPtrIncluded,
     skip: querySkip,
   };
-  const [loading, { data, inspect, totalCount, refetch }] =
+  const [loading, { buckets, data, inspect, totalCount, refetch }] =
     useMatrixHistogramCombined(matrixHistogramRequest);
   const [{ pageName }] = useRouteSpy();
 
@@ -205,7 +205,10 @@ export const MatrixHistogramComponent: React.FC<MatrixHistogramComponentProps> =
     () => (totalCount <= 0 && hideHistogramIfEmpty ? true : false),
     [totalCount, hideHistogramIfEmpty]
   );
-  const barChartData = useMemo(() => getCustomChartData(data, mapping), [data, mapping]);
+  const barChartData = useMemo(
+    () => getCustomChartData({ buckets, data, mapping }),
+    [buckets, data, mapping]
+  );
 
   useEffect(() => {
     if (!loading && !isInitialLoading) {

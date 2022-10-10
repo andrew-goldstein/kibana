@@ -30,6 +30,8 @@ export type TimelineModel = TGridModelForTimeline & {
   scrollToTop?: ScrollToTopEvent;
   /** Timeline saved object owner */
   createdBy?: string;
+  /** A count of the alerts and events from the last query execution */
+  count?: number;
   /** A summary of the events and notes in this timeline */
   description: string;
   eqlOptions: EqlOptionsSelected;

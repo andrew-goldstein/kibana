@@ -34,9 +34,9 @@ import {
 import type { Sort } from '../sort';
 import { ColumnHeader } from './column_header';
 
-import { SourcererScopeName } from '../../../../../common/store/sourcerer/model';
+// import { SourcererScopeName } from '../../../../../common/store/sourcerer/model';
 import type { FieldEditorActions } from '../../../fields_browser';
-import { useFieldBrowserOptions } from '../../../fields_browser';
+// import { useFieldBrowserOptions } from '../../../fields_browser';
 
 export interface ColumnHeadersComponentProps {
   actionsColumnWidth: number;
@@ -45,8 +45,10 @@ export interface ColumnHeadersComponentProps {
   isEventViewer?: boolean;
   isSelectAllChecked: boolean;
   onSelectAll: OnSelectAll;
+  setShowFields?: (showFields: boolean) => void;
   show: boolean;
   showEventsSelect: boolean;
+  showFields?: boolean;
   showSelectAllCheckbox: boolean;
   sort: Sort[];
   tabType: TimelineTabs;
@@ -95,8 +97,10 @@ export const ColumnHeadersComponent = ({
   isEventViewer = false,
   isSelectAllChecked,
   onSelectAll,
+  setShowFields,
   show,
   showEventsSelect,
+  showFields,
   showSelectAllCheckbox,
   sort,
   tabType,
@@ -192,11 +196,12 @@ export const ColumnHeadersComponent = ({
     [trailingControlColumns]
   );
 
-  const fieldBrowserOptions = useFieldBrowserOptions({
-    sourcererScope: SourcererScopeName.timeline,
-    timelineId: timelineId as TimelineId,
-    editorActionsRef: fieldEditorActionsRef,
-  });
+  // const fieldBrowserOptions = useFieldBrowserOptions({
+  //   sourcererScope: SourcererScopeName.timeline,
+  //   timelineId: timelineId as TimelineId,
+  //   editorActionsRef: fieldEditorActionsRef,
+  //   isSidebar: true,
+  // });
 
   const LeadingHeaderActions = useMemo(() => {
     return leadingHeaderCells.map(
@@ -218,12 +223,14 @@ export const ColumnHeadersComponent = ({
                 isEventViewer={isEventViewer}
                 isSelectAllChecked={isSelectAllChecked}
                 onSelectAll={onSelectAll}
+                setShowFields={setShowFields}
                 showEventsSelect={showEventsSelect}
+                showFields={showFields}
                 showSelectAllCheckbox={showSelectAllCheckbox}
                 sort={sort}
                 tabType={tabType}
                 timelineId={timelineId}
-                fieldBrowserOptions={fieldBrowserOptions}
+                // fieldBrowserOptions={fieldBrowserOptions}
               />
             )}
           </EventsThGroupActions>
@@ -236,11 +243,13 @@ export const ColumnHeadersComponent = ({
     actionsColumnWidth,
     browserFields,
     columnHeaders,
-    fieldBrowserOptions,
+    // fieldBrowserOptions,
     isEventViewer,
     isSelectAllChecked,
     onSelectAll,
+    setShowFields,
     showEventsSelect,
+    showFields,
     showSelectAllCheckbox,
     sort,
     tabType,
@@ -272,7 +281,7 @@ export const ColumnHeadersComponent = ({
                 sort={sort}
                 tabType={tabType}
                 timelineId={timelineId}
-                fieldBrowserOptions={fieldBrowserOptions}
+                // fieldBrowserOptions={fieldBrowserOptions}
               />
             )}
           </EventsThGroupActions>
@@ -285,7 +294,7 @@ export const ColumnHeadersComponent = ({
     actionsColumnWidth,
     browserFields,
     columnHeaders,
-    fieldBrowserOptions,
+    // fieldBrowserOptions,
     isEventViewer,
     isSelectAllChecked,
     onSelectAll,

@@ -123,7 +123,7 @@ export const AlertsHistogramPanel = memo<AlertsHistogramPanelProps>(
     legendPosition = 'right',
     setComboboxInputRef,
     signalIndexName,
-    showCountsInLegend = false,
+    showCountsInLegend = true,
     showGroupByPlaceholder = false,
     showLegend = true,
     showLinkToAlerts = false,

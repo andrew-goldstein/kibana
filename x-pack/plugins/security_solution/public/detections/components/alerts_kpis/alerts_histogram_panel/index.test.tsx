@@ -12,7 +12,7 @@ import type { Filter } from '@kbn/es-query';
 
 import { SecurityPageName } from '../../../../app/types';
 import { CHART_SETTINGS_POPOVER_ARIA_LABEL } from '../../../../common/components/chart_settings_popover/translations';
-import { DEFAULT_WIDTH } from '../../../../common/components/charts/draggable_legend';
+import { DEFAULT_MIN_WIDTH } from '../../../../common/components/charts/draggable_legend';
 import { MatrixLoader } from '../../../../common/components/matrix_histogram/matrix_loader';
 import { DEFAULT_STACK_BY_FIELD, DEFAULT_STACK_BY_FIELD1 } from '../common/config';
 import { useQueryToggle } from '../../../../common/containers/query_toggle';
@@ -136,14 +136,14 @@ describe('AlertsHistogramPanel', () => {
       });
     });
 
-    test('it does NOT render counts in the legend by default', () => {
+    test('it renders counts in the legend by default', () => {
       const wrapper = mount(
         <TestProviders>
           <AlertsHistogramPanel {...defaultProps} />
         </TestProviders>
       );
 
-      expect(wrapper.find('[data-test-subj="legendItemCount"]').exists()).toBe(false);
+      expect(wrapper.find('[data-test-subj="legendItemCount"]').exists()).toBe(true);
     });
 
     test('it renders counts in the legend when `showCountsInLegend` is true', () => {
@@ -411,7 +411,20 @@ describe('AlertsHistogramPanel', () => {
 
       expect(wrapper.find('[data-test-subj="draggable-legend"]').first()).toHaveStyleRule(
         'min-width',
-        `${DEFAULT_WIDTH}px`
+        `${LEGEND_WITH_COUNTS_WIDTH}px`
+      );
+    });
+
+    test('it renders the legend with the expected min-width when `showCountsInLegend` is false', () => {
+      const wrapper = mount(
+        <TestProviders>
+          <AlertsHistogramPanel {...defaultProps} showCountsInLegend={false} />
+        </TestProviders>
+      );
+
+      expect(wrapper.find('[data-test-subj="draggable-legend"]').first()).toHaveStyleRule(
+        'min-width',
+        `${DEFAULT_MIN_WIDTH}px`
       );
     });
 

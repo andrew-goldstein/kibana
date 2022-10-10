@@ -99,28 +99,34 @@ describe('utils', () => {
   });
 
   describe('getCustomChartData', () => {
+    const data = [
+      { x: 1, y: 2, g: 'g1' },
+      { x: 2, y: 4, g: 'g1' },
+      { x: 3, y: 6, g: 'g1' },
+      { x: 1, y: 1, g: 'g2' },
+      { x: 2, y: 3, g: 'g2' },
+      { x: 3, y: 5, g: 'g2' },
+    ];
+
     test('should handle the case when no data provided', () => {
-      const data = null;
-      const result = getCustomChartData(data);
+      const result = getCustomChartData({ data: null });
 
       expect(result).toEqual([]);
     });
 
-    test('should format data correctly', () => {
-      const data = [
-        { x: 1, y: 2, g: 'g1' },
-        { x: 2, y: 4, g: 'g1' },
-        { x: 3, y: 6, g: 'g1' },
-        { x: 1, y: 1, g: 'g2' },
-        { x: 2, y: 3, g: 'g2' },
-        { x: 3, y: 5, g: 'g2' },
+    test('it extracts the expected `doc_count` from `buckets`', () => {
+      const withExtraBucket = [...data, { x: 4, y: 7, g: 'g2' }];
+      const buckets = [
+        { key: 'g1', doc_count: 3 },
+        { key: 'g2', doc_count: 4 },
       ];
-      const result = getCustomChartData(data);
+      const result = getCustomChartData({ buckets, data: withExtraBucket });
 
       expect(result).toEqual([
         {
           key: 'g1',
           color: '#1EA593',
+          doc_count: 3,
           value: [
             { x: 1, y: 2, g: 'g1' },
             { x: 2, y: 4, g: 'g1' },
@@ -130,6 +136,35 @@ describe('utils', () => {
         {
           key: 'g2',
           color: '#2B70F7',
+          doc_count: 4,
+          value: [
+            { x: 1, y: 1, g: 'g2' },
+            { x: 2, y: 3, g: 'g2' },
+            { x: 3, y: 5, g: 'g2' },
+            { x: 4, y: 7, g: 'g2' },
+          ],
+        },
+      ]);
+    });
+
+    test('should format data correctly', () => {
+      const result = getCustomChartData({ data });
+
+      expect(result).toEqual([
+        {
+          key: 'g1',
+          color: '#1EA593',
+          doc_count: undefined,
+          value: [
+            { x: 1, y: 2, g: 'g1' },
+            { x: 2, y: 4, g: 'g1' },
+            { x: 3, y: 6, g: 'g1' },
+          ],
+        },
+        {
+          key: 'g2',
+          color: '#2B70F7',
+          doc_count: undefined,
           value: [
             { x: 1, y: 1, g: 'g2' },
             { x: 2, y: 3, g: 'g2' },

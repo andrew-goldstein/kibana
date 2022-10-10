@@ -6,7 +6,7 @@
  */
 
 import { ScaleType, Position } from '@elastic/charts';
-import { get, groupBy, map, toPairs } from 'lodash/fp';
+import { get, groupBy, keyBy, map, toPairs } from 'lodash/fp';
 
 import type { UpdateDateRange, ChartSeriesData } from '../charts/common';
 import type { MatrixHistogramMappingTypes, BarchartConfigs } from './types';
@@ -93,16 +93,30 @@ export const formatToChartDataItem = ([key, value]: [
   value,
 });
 
-export const getCustomChartData = (
-  data: MatrixHistogramData[] | null,
-  mapping?: MatrixHistogramMappingTypes
-): ChartSeriesData[] => {
+interface GetCustomChartData {
+  buckets?: Array<{
+    key: string;
+    doc_count: number;
+  }>;
+  data: MatrixHistogramData[] | null;
+  mapping?: MatrixHistogramMappingTypes;
+}
+
+export const getCustomChartData = ({
+  buckets,
+  data,
+  mapping,
+}: GetCustomChartData): ChartSeriesData[] => {
   if (!data) return [];
   const dataGroupedByEvent = groupBy('g', data);
   const dataGroupedEntries = toPairs(dataGroupedByEvent);
   const formattedChartData = map(formatToChartDataItem, dataGroupedEntries);
+  const bucketMap = keyBy('key', buckets);
+
   return formattedChartData.map((item: ChartSeriesData, idx: number) => {
     const mapItem = get(item.key, mapping);
-    return { ...item, color: mapItem?.color ?? defaultLegendColors[idx] };
+    const docCount = bucketMap[item.key]?.doc_count;
+
+    return { ...item, color: mapItem?.color ?? defaultLegendColors[idx], doc_count: docCount };
   });
 };

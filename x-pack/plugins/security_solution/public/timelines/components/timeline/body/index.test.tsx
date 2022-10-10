@@ -31,7 +31,7 @@ import type { Sort } from './sort';
 import { getDefaultControlColumn } from './control_columns';
 import { useMountAppended } from '../../../../common/utils/use_mount_appended';
 import { timelineActions } from '../../../store/timeline';
-import { TimelineTabs } from '../../../../../common/types/timeline';
+import { TimelineId, TimelineTabs } from '../../../../../common/types/timeline';
 import { defaultRowRenderers } from './renderers';
 import type { State } from '../../../../common/store';
 import { createStore } from '../../../../common/store';
@@ -157,6 +157,7 @@ describe('Body', () => {
     rowRenderers: defaultRowRenderers,
     sort: mockSort,
     tabType: TimelineTabs.query,
+    timelineId: TimelineId.active,
     totalPages: 1,
     leadingControlColumns: getDefaultControlColumn(ACTION_BUTTON_COUNT),
     trailingControlColumns: [],

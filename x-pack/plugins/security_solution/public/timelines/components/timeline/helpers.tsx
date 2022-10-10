@@ -7,6 +7,7 @@
 
 import { isEmpty, get } from 'lodash/fp';
 import memoizeOne from 'memoize-one';
+import type { CSSProperties } from 'react';
 
 import {
   handleSkipFocus,
@@ -252,4 +253,88 @@ export const focusUtilityBarAction = (containerElement: HTMLElement | null) => {
  */
 export const resetKeyboardFocus = () => {
   document.querySelector<HTMLAnchorElement>('header.headerGlobalNav a.euiHeaderLogo')?.focus();
+};
+
+export const TIMELINE_TAB_BEGINS_AT = 250; // px
+export const TIMELINE_HEADER_DEFAULT_HEIGHT = 287; // px
+
+export const getHeaderHeight = (dataProviderCount: number): number => {
+  const ZERO_PROVIDERS_HEIGHT = 285;
+  const ONE_PROVIDER_HEIGHT = 270;
+  const ADDITIONAL_PROVIDER_HEIGHT = 45;
+
+  return dataProviderCount === 0
+    ? ZERO_PROVIDERS_HEIGHT
+    : ONE_PROVIDER_HEIGHT + (dataProviderCount - 1) * ADDITIONAL_PROVIDER_HEIGHT;
+};
+
+const fallbackDocumentHeight = 300; // a fallback when clientHeight is zero
+
+export const getDocumentHeight = (fallbackHeight: number): number =>
+  document.documentElement.clientHeight > 0
+    ? document.documentElement.clientHeight
+    : fallbackHeight;
+
+/**
+ * Returns the initial size of the timeline header as a percentage, for use
+ * with the `EuiResizablePanel` initialSize prop
+ */
+export const getTimelineHeaderInitialSizePercent = (dataProviderCount: number): number => {
+  const documentHeight = getDocumentHeight(fallbackDocumentHeight);
+  const headerHeight = getHeaderHeight(dataProviderCount);
+
+  return (headerHeight / (documentHeight - TIMELINE_TAB_BEGINS_AT)) * 100;
+};
+
+export const MIN_HEADER_SIZE = '100px';
+
+export const getMinBodySize = (timelineBodyInitialSize: number): string =>
+  `${timelineBodyInitialSize}%`;
+
+export const getBodyPanelStyle = (containerHeight: number): CSSProperties => {
+  const fudge = 60;
+  const panelHeight = containerHeight - fudge;
+
+  return {
+    // backgroundColor: 'green',
+    // border: '1px solid blue',
+    height: `${panelHeight}px`,
+  };
+};
+
+export const getContainerHeight = (): number => {
+  const documentHeight = getDocumentHeight(fallbackDocumentHeight);
+  const fudge = 10;
+  return documentHeight - TIMELINE_TAB_BEGINS_AT - fudge;
+};
+
+export const getFixedHeightFlexGroupStyle = (): CSSProperties => {
+  const panelHeight = getContainerHeight();
+
+  return {
+    // backgroundColor: 'orange',
+    // border: '1px solid red',
+    height: `${panelHeight}px`,
+    overflow: 'hidden',
+  };
+};
+
+export const getMaybeFixedWidthStyle = ({
+  containerWidth,
+  fieldsSidebarWidth,
+  showFields,
+}: {
+  containerWidth: number | undefined;
+  fieldsSidebarWidth: number; // px
+  showFields: boolean;
+}): CSSProperties | undefined => {
+  if (containerWidth != null) {
+    const width = showFields ? containerWidth - fieldsSidebarWidth : containerWidth;
+
+    return {
+      width: `${width}px`,
+    };
+  } else {
+    return undefined;
+  }
 };

@@ -241,6 +241,7 @@ export const PinnedTabContentComponent: React.FC<Props> = ({
                 rowRenderers={rowRenderers}
                 sort={sort}
                 tabType={TimelineTabs.pinned}
+                timelineId={timelineId}
                 totalPages={calculateTotalPages({
                   itemsCount: totalCount,
                   itemsPerPage,

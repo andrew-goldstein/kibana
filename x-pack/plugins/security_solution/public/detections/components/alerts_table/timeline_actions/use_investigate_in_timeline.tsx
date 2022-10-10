@@ -112,6 +112,11 @@ export const useInvestigateInTimeline = ({
 
   const createTimeline = useCallback(
     ({ from: fromTimeline, timeline, to: toTimeline, ruleNote }: CreateTimelineProps) => {
+      dispatch(
+        timelineActions.deactivateTimeline({
+          id: TimelineId.active,
+        })
+      );
       clearActiveTimeline();
       updateTimelineIsLoading({ id: TimelineId.active, isLoading: false });
       dispatchUpdateTimeline(dispatch)({
@@ -128,6 +133,7 @@ export const useInvestigateInTimeline = ({
         to: toTimeline,
         ruleNote,
       })();
+      dispatch(timelineActions.updateActiveTimeline({ id: TimelineId.active }));
     },
     [dispatch, filterManager, updateTimelineIsLoading, clearActiveTimeline]
   );

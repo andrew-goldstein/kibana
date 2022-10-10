@@ -34,6 +34,7 @@ export type GetFieldTableColumns = (params: {
 export interface FieldBrowserOptions {
   createFieldButton?: CreateFieldComponent;
   getFieldTableColumns?: GetFieldTableColumns;
+  isSidebar?: boolean;
   /**
    * Categories that should be selected initially
    */

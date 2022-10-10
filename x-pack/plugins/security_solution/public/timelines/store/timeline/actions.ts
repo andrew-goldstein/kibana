@@ -60,6 +60,8 @@ export const addNoteToEvent = actionCreator<{ id: string; noteId: string; eventI
 
 export const showTimeline = actionCreator<{ id: string; show: boolean }>('SHOW_TIMELINE');
 
+export const updateCount = actionCreator<{ id: string; count: number }>('UPDATE_TIMELINE_COUNT');
+
 export const setInsertTimeline = actionCreator<InsertTimeline | null>('SET_INSERT_TIMELINE');
 
 export const addProvider = actionCreator<{ id: string; providers: DataProvider[] }>('ADD_PROVIDER');
@@ -67,6 +69,12 @@ export const addProvider = actionCreator<{ id: string; providers: DataProvider[]
 export const saveTimeline = actionCreator<TimelinePersistInput>('SAVE_TIMELINE');
 
 export const createTimeline = actionCreator<TimelinePersistInput>('CREATE_TIMELINE');
+
+export const closeTimeline = actionCreator<{ id: string }>('CLOSE_TIMELINE');
+
+export const deactivateTimeline = actionCreator<{ id: string }>('DEACTIVATE_TIMELINE');
+
+export const updateActiveTimeline = actionCreator<{ id: string }>('UPDATE_ACTIVE_TIMELINE');
 
 export const pinEvent = actionCreator<{ id: string; eventId: string }>('PIN_EVENT');
 

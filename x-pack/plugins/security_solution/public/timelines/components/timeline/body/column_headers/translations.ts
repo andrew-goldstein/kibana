@@ -27,6 +27,14 @@ export const HIDE_COLUMN = i18n.translate('xpack.securitySolution.timeline.hideC
   defaultMessage: 'Hide column',
 });
 
+export const HIDE_FIELDS = i18n.translate('xpack.securitySolution.timeline.hideFieldsLabel', {
+  defaultMessage: 'Hide fields',
+});
+
+export const SHOW_FIELDS = i18n.translate('xpack.securitySolution.timeline.showFieldsLabel', {
+  defaultMessage: 'Show fields',
+});
+
 export const SORT_AZ = i18n.translate('xpack.securitySolution.timeline.sortAZLabel', {
   defaultMessage: 'Sort A-Z',
 });

@@ -26,7 +26,7 @@ import * as i18n from './translations';
 import type { AlertsStackByField } from '../../../detections/components/alerts_kpis/common/types';
 
 const TopNContainer = styled.div`
-  min-width: 600px;
+  min-width: 700px;
 `;
 
 const CloseButton = styled(EuiButtonIcon)`
@@ -42,7 +42,7 @@ const ViewSelect = styled(EuiSuperSelect)`
 `;
 
 const TopNContent = styled.div`
-  margin-top: 4px;
+  margin-top: ${({ theme }) => theme.eui.euiSizeM};
 
   .euiPanel {
     border: none;

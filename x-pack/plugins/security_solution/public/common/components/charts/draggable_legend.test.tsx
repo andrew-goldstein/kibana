@@ -13,7 +13,7 @@ import '../../mock/match_media';
 import '../../mock/react_beautiful_dnd';
 import { TestProviders } from '../../mock';
 
-import { DEFAULT_WIDTH, MIN_LEGEND_HEIGHT, DraggableLegend } from './draggable_legend';
+import { DEFAULT_MIN_WIDTH, MIN_LEGEND_HEIGHT, DraggableLegend } from './draggable_legend';
 import type { LegendItem } from './draggable_legend_item';
 
 jest.mock('../../lib/kibana');
@@ -79,7 +79,7 @@ describe('DraggableLegend', () => {
     it(`renders a container with the default 'min-width'`, () => {
       expect(wrapper.find('[data-test-subj="draggable-legend"]').first()).toHaveStyleRule(
         'min-width',
-        `${DEFAULT_WIDTH}px`
+        `${DEFAULT_MIN_WIDTH}px`
       );
     });
 

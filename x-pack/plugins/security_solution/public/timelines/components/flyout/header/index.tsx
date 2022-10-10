@@ -52,7 +52,7 @@ import {
 import { focusActiveTimelineButton } from '../../timeline/helpers';
 import { combineQueries } from '../../../../common/lib/kuery';
 import { SourcererScopeName } from '../../../../common/store/sourcerer/model';
-import { ActiveTimelines } from './active_timelines';
+import { TimelineSummaryButton } from './timeline_summary_button';
 import * as i18n from './translations';
 import * as commonI18n from '../../timeline/properties/translations';
 import { getTimelineStatusByIdSelector } from './selectors';
@@ -73,6 +73,14 @@ const ActiveTimelinesContainer = styled(EuiFlexItem)`
   overflow: hidden;
 `;
 
+const SummaryButtonFlexItem = styled(EuiFlexItem)`
+  ${({ theme }) => `margin: 0 ${theme.eui.euiSizeXS};`}
+`;
+
+const HeaderFlexGroup = styled(EuiFlexGroup)`
+  ${({ theme }) => `margin-bottom: -${theme.eui.euiSizeXS};`}
+`;
+
 const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timelineId }) => {
   const dispatch = useDispatch();
   const { browserFields, indexPattern } = useSourcererDataView(SourcererScopeName.timeline);
@@ -81,6 +89,7 @@ const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timeline
   const getTimeline = useMemo(() => timelineSelectors.getTimelineByIdSelector(), []);
   const {
     activeTab,
+    count,
     dataProviders,
     kqlQuery,
     title,
@@ -94,6 +103,7 @@ const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timeline
     pick(
       [
         'activeTab',
+        'count',
         'dataProviders',
         'kqlQuery',
         'status',
@@ -107,6 +117,23 @@ const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timeline
       getTimeline(state, timelineId) ?? timelineDefaults
     )
   );
+
+  const activeTimelineId = useSelector(timelineSelectors.getActiveTimelineIdSelector());
+  const inactiveTimelineIds = useSelector(timelineSelectors.getInactiveTimelineIdsSelector());
+  const timelineById = useSelector(timelineSelectors.timelineByIdSelector);
+
+  const inactiveTimelines = useMemo(
+    () =>
+      inactiveTimelineIds.flatMap((x) => {
+        const inactiveTimeline = timelineById[x];
+
+        return inactiveTimeline != null && inactiveTimeline.savedObjectId != null
+          ? [inactiveTimeline]
+          : [];
+      }),
+    [inactiveTimelineIds, timelineById]
+  );
+
   const isDataInTimeline = useMemo(
     () => !isEmpty(dataProviders) || !isEmpty(get('filterQuery.kuery.expression', kqlQuery)),
     [dataProviders, kqlQuery]
@@ -145,26 +172,60 @@ const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timeline
 
   const { euiTheme } = useEuiTheme();
 
+  const showActiveTab = useMemo(
+    () =>
+      inactiveTimelineIds.length === 0 ||
+      (activeTimelineId === TimelineId.active && !inactiveTimelineIds.includes(activeTimelineId)),
+    [activeTimelineId, inactiveTimelineIds]
+  );
+
   return (
     <EuiPanel
       borderRadius="none"
       grow={false}
-      paddingSize="s"
+      paddingSize={show ? 'none' : 's'}
       hasShadow={false}
       data-test-subj="timeline-flyout-header-panel"
       style={{ backgroundColor: euiTheme.colors.emptyShade, color: euiTheme.colors.text }}
     >
-      <EuiFlexGroup alignItems="center" gutterSize="s" responsive={false}>
+      <HeaderFlexGroup alignItems="center" gutterSize={show ? 'none' : 's'} responsive={false}>
         <AddTimelineButton timelineId={timelineId} />
         <ActiveTimelinesContainer grow={false}>
-          <ActiveTimelines
-            timelineId={timelineId}
-            timelineType={timelineType}
-            timelineTitle={title}
-            timelineStatus={timelineStatus}
-            isOpen={show}
-            updated={updated}
-          />
+          <EuiFlexGroup alignItems="center" direction="row" gutterSize="none">
+            {showActiveTab && (
+              <SummaryButtonFlexItem grow={false}>
+                <TimelineSummaryButton
+                  activeTimelineTab={activeTab}
+                  count={count}
+                  isActive={activeTimelineId === timelineId}
+                  isOpen={show}
+                  timelineId={timelineId}
+                  timelineStatus={timelineStatus}
+                  timelineTitle={title}
+                  timelineType={timelineType}
+                  updated={updated}
+                />
+              </SummaryButtonFlexItem>
+            )}
+
+            {inactiveTimelines.map((x) =>
+              x.savedObjectId != null ? (
+                <SummaryButtonFlexItem key={x.savedObjectId} grow={false}>
+                  <TimelineSummaryButton
+                    activeTimelineTab={x.activeTab}
+                    count={x.count}
+                    isActive={activeTimelineId === x.savedObjectId}
+                    isOpen={show}
+                    timelineId={x.savedObjectId}
+                    timelineTitle={x.title}
+                    timelineType={x.timelineType}
+                    timelineStatus={TimelineStatus.immutable}
+                    updated={x.updated}
+                  />
+                </SummaryButtonFlexItem>
+              ) : null
+            )}
+          </EuiFlexGroup>
         </ActiveTimelinesContainer>
         {show && (
           <EuiFlexItem>
@@ -194,7 +255,7 @@ const FlyoutHeaderPanelComponent: React.FC<FlyoutHeaderPanelProps> = ({ timeline
             </EuiFlexGroup>
           </EuiFlexItem>
         )}
-      </EuiFlexGroup>
+      </HeaderFlexGroup>
     </EuiPanel>
   );
 };
@@ -230,7 +291,9 @@ const ReadMoreButton = ({
 };
 
 const StyledTimelineHeader = styled(EuiFlexGroup)`
-  ${({ theme }) => `margin: ${theme.eui.euiSizeXS} ${theme.eui.euiSizeS} 0 ${theme.eui.euiSizeS};`}
+  ${({ theme }) => `background-color: ${theme.eui.euiFocusBackgroundColor};`}
+  ${({ theme }) =>
+    `padding: ${theme.eui.euiSizeXS} ${theme.eui.euiSizeS} ${theme.eui.euiSizeXS} ${theme.eui.euiSizeM};`}
   flex: 0;
 `;
 

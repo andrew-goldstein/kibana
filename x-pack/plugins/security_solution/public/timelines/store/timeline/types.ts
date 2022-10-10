@@ -36,8 +36,10 @@ export const EMPTY_TIMELINE_BY_ID: TimelineById = {}; // stable reference
 
 /** The state of all timelines is stored here */
 export interface TimelineState {
+  activeTimelineId: string;
   timelineById: TimelineById;
   autoSavedWarningMsg: AutoSavedWarningMsg;
+  inactiveTimelineIds: string[];
   showCallOutUnauthorizedMsg: boolean;
   insertTimeline: InsertTimeline | null;
 }

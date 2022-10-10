@@ -57,7 +57,7 @@ describe('AlertsHistogram', () => {
 
     expect(wrapper.find('[data-test-subj="draggable-legend"]').first()).toHaveStyleRule(
       'min-width',
-      '165px'
+      '300px'
     );
   });
 
