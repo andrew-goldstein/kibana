@@ -44,6 +44,7 @@ export type EnrichedFieldMetadata = EcsMetadata & {
   indexFieldType: string;
   indexInvalidValues: UnallowedValueCount[];
   isEcsCompliant: boolean;
+  isInSameFamily: boolean;
 };
 
 export interface PartitionedFieldMetadata {

@@ -24,6 +24,7 @@ import {
   getIlmPhaseDescription,
   getIncompatibleStatColor,
   getIndexNames,
+  getIsInSameFamily,
   getMissingTimestampFieldMetadata,
   getPartitionedFieldMetadata,
   getPartitionedFieldMetadataStats,
@@ -31,17 +32,18 @@ import {
   getTotalPatternIncompatible,
   getTotalPatternIndicesChecked,
   hasValidTimestampMapping,
+  isMappingCompatible,
 } from './helpers';
 import {
-  eventCategory,
-  hostName,
-  hostNameFieldsKeyword,
+  hostNameWithTextMapping,
+  hostNameKeyword,
   someField,
-  someFieldFieldsKeyword,
-  sourceIp,
-  sourceIpFieldsKeyword,
+  someFieldKeyword,
+  sourceIpWithTextMapping,
+  sourceIpKeyword,
   sourcePort,
   timestamp,
+  eventCategoryWithUnallowedValues,
 } from './mock/enriched_field_metadata';
 import { mockIlmExplain } from './mock/ilm_explain';
 import { alertIndexNoResults } from './mock/pattern_rollup/mock_alerts_pattern_rollup';
@@ -310,6 +312,48 @@ describe('helpers', () => {
     });
   });
 
+  describe('getIsInSameFamily', () => {
+    test('it returns false when ecsExpectedType is undefined', () => {
+      expect(getIsInSameFamily({ ecsExpectedType: undefined, type: 'keyword' })).toBe(false);
+    });
+
+    const expectedFamilyMembers: {
+      [key: string]: string[];
+    } = {
+      constant_keyword: ['keyword', 'wildcard'], // `keyword` and `wildcard` in the same family as `constant_keyword`
+      keyword: ['constant_keyword', 'wildcard'],
+      match_only_text: ['text'],
+      text: ['match_only_text'],
+      wildcard: ['keyword', 'constant_keyword'],
+    };
+
+    const ecsExpectedTypes = Object.keys(expectedFamilyMembers);
+
+    ecsExpectedTypes.forEach((ecsExpectedType) => {
+      const otherMembersOfSameFamily = expectedFamilyMembers[ecsExpectedType];
+
+      otherMembersOfSameFamily.forEach((type) =>
+        test(`it returns true for ecsExpectedType '${ecsExpectedType}' when given '${type}', a type in the same family`, () => {
+          expect(getIsInSameFamily({ ecsExpectedType, type })).toBe(true);
+        })
+      );
+
+      test(`it returns false for ecsExpectedType '${ecsExpectedType}' when given 'date', a type NOT in the same family`, () => {
+        expect(getIsInSameFamily({ ecsExpectedType, type: 'date' })).toBe(false);
+      });
+    });
+  });
+
+  describe('isMappingCompatible', () => {
+    test('it returns true for an exact match', () => {
+      expect(isMappingCompatible({ ecsExpectedType: 'keyword', type: 'keyword' })).toBe(true);
+    });
+
+    test("it returns false when both types don't exactly match", () => {
+      expect(isMappingCompatible({ ecsExpectedType: 'wildcard', type: 'keyword' })).toBe(false);
+    });
+  });
+
   describe('getEnrichedFieldMetadata', () => {
     /**
      * The ECS schema
@@ -519,18 +563,19 @@ describe('helpers', () => {
       short: 'Event category. The second categorization field in the hierarchy.',
       type: 'keyword',
       indexFieldName: 'event.category',
-      indexFieldType: 'keyword', // <-- a valid mapping, because the `type` property from the `ecsMetadata` is also `keyword`
-      indexInvalidValues: [], // <-- empty array, because the index does not contain any invalid values
+      indexFieldType: 'keyword', // a valid mapping, because the `type` property from the `ecsMetadata` is also `keyword`
+      indexInvalidValues: [], // empty array, because the index does not contain any invalid values
       hasEcsMetadata: true,
-      isEcsCompliant: true, // <-- because the index has the expected mapping type, and no unallowed values
+      isEcsCompliant: true, // because the index has the expected mapping type, and no unallowed values
+      isInSameFamily: true, // `keyword` and `keyword` are in the same family
     };
 
     test('it returns the happy path result when the index has no mapping conflicts, and no unallowed values', () => {
       expect(
         getEnrichedFieldMetadata({
           ecsMetadata,
-          fieldMetadata: fieldMetadataCorrectMappingType, // <-- no mapping conflicts for `event.category` in this index
-          unallowedValues: noUnallowedValues, // <-- no unallowed values for `event.category` in this index
+          fieldMetadata: fieldMetadataCorrectMappingType, // no mapping conflicts for `event.category` in this index
+          unallowedValues: noUnallowedValues, // no unallowed values for `event.category` in this index
         })
       ).toEqual({ ...happyPathResult });
     });
@@ -545,8 +590,8 @@ describe('helpers', () => {
       expect(
         getEnrichedFieldMetadata({
           ecsMetadata,
-          fieldMetadata: fieldMetadataCorrectMappingType, // <-- no mapping conflicts for `event.category` in this index
-          unallowedValues: noEntryForEventCategory, // <-- a lookup in this map for the `event.category` field will return undefined
+          fieldMetadata: fieldMetadataCorrectMappingType, // no mapping conflicts for `event.category` in this index
+          unallowedValues: noEntryForEventCategory, // a lookup in this map for the `event.category` field will return undefined
         })
       ).toEqual({ ...happyPathResult });
     });
@@ -555,8 +600,8 @@ describe('helpers', () => {
       expect(
         getEnrichedFieldMetadata({
           ecsMetadata,
-          fieldMetadata: fieldMetadataCorrectMappingType, // <-- no mapping conflicts for `event.category` in this index
-          unallowedValues, // <-- this index has unallowed values for the event.category field
+          fieldMetadata: fieldMetadataCorrectMappingType, // no mapping conflicts for `event.category` in this index
+          unallowedValues, // this index has unallowed values for the event.category field
         })
       ).toEqual({
         ...happyPathResult,
@@ -570,40 +615,61 @@ describe('helpers', () => {
             fieldName: 'theory',
           },
         ],
-        isEcsCompliant: false, // <-- because there are unallowed values
+        isEcsCompliant: false, // because there are unallowed values
       });
     });
 
-    test('it returns a result with the expected `isEcsCompliant` when the index has a mapping conflict, but NO unallowed values', () => {
-      const indexFieldType = 'text'; // <-- mapping conflict, because `event.category` is a `keyword`
+    test('it returns a result with the expected `isEcsCompliant` and `isInSameFamily` when the index type does not match ECS, but NO unallowed values', () => {
+      const indexFieldType = 'text';
 
       expect(
         getEnrichedFieldMetadata({
           ecsMetadata,
           fieldMetadata: {
-            field: 'event.category',
-            type: indexFieldType, // <-- mapping conflict for `event.category` in this index
+            field: 'event.category', // `event.category` is a `keyword`, per the ECS spec
+            type: indexFieldType, // this index has a mapping of `text` instead
           },
-          unallowedValues: noUnallowedValues, // <-- no unallowed values for `event.category` in this index
+          unallowedValues: noUnallowedValues, // no unallowed values for `event.category` in this index
         })
       ).toEqual({
         ...happyPathResult,
         indexFieldType,
-        isEcsCompliant: false, // <-- because there's a mapping conflict
+        isEcsCompliant: false, // `keyword` !== `text`
+        isInSameFamily: false, // `keyword` and `text` are not in the same family
       });
     });
 
-    test('it returns a result with the expected `indexInvalidValues` and `isEcsCompliant` when the index has BOTH mapping conflicts, and unallowed values', () => {
-      const indexFieldType = 'text'; // <-- mapping conflict, because `event.category` is a `keyword`
+    test('it returns a result with the expected `isEcsCompliant` and `isInSameFamily` when the mapping is is in the same family', () => {
+      const indexFieldType = 'wildcard';
 
       expect(
         getEnrichedFieldMetadata({
           ecsMetadata,
           fieldMetadata: {
-            field: 'event.category',
-            type: indexFieldType, // <-- mapping conflict for `event.category` in this index
+            field: 'event.category', // `event.category` is a `keyword` per the ECS spec
+            type: indexFieldType, // this index has a mapping of `wildcard` instead
           },
-          unallowedValues, // <-- this index has unallowed values for the event.category field
+          unallowedValues: noUnallowedValues, // no unallowed values for `event.category` in this index
+        })
+      ).toEqual({
+        ...happyPathResult,
+        indexFieldType,
+        isEcsCompliant: false, // `wildcard` !== `keyword`
+        isInSameFamily: true, // `wildcard` and `keyword` are in the same family
+      });
+    });
+
+    test('it returns a result with the expected `indexInvalidValues`,`isEcsCompliant`, and `isInSameFamily` when the index has BOTH mapping conflicts, and unallowed values', () => {
+      const indexFieldType = 'text';
+
+      expect(
+        getEnrichedFieldMetadata({
+          ecsMetadata,
+          fieldMetadata: {
+            field: 'event.category', // `event.category` is a `keyword` per the ECS spec
+            type: indexFieldType, // this index has a mapping of `text` instead
+          },
+          unallowedValues, // this index also has unallowed values for the event.category field
         })
       ).toEqual({
         ...happyPathResult,
@@ -618,11 +684,12 @@ describe('helpers', () => {
             fieldName: 'theory',
           },
         ],
-        isEcsCompliant: false, // <-- because there are BOTH mapping conflicts and unallowed values
+        isEcsCompliant: false, // because there are BOTH mapping conflicts and unallowed values
+        isInSameFamily: false, // `text` and `keyword` are not in the same family
       });
     });
 
-    test('it returns the expected result for a field that does NOT have an entry in `ecsMetadata`', () => {
+    test('it returns the expected result for a custom field, i.e. a field that does NOT have an entry in `ecsMetadata`', () => {
       const field = 'a_custom_field'; // not defined by ECS
       const indexFieldType = 'keyword';
 
@@ -631,9 +698,9 @@ describe('helpers', () => {
           ecsMetadata,
           fieldMetadata: {
             field,
-            type: indexFieldType, // <-- no mapping conflict, because ECS doesn't define this field
+            type: indexFieldType, // no mapping conflict, because ECS doesn't define this field
           },
-          unallowedValues: noUnallowedValues, // <-- no unallowed values for `a_custom_field` in this index
+          unallowedValues: noUnallowedValues, // no unallowed values for `a_custom_field` in this index
         })
       ).toEqual({
         indexFieldName: field,
@@ -641,6 +708,7 @@ describe('helpers', () => {
         indexInvalidValues: [],
         hasEcsMetadata: false,
         isEcsCompliant: false,
+        isInSameFamily: false, // custom fields are never in the same family
       });
     });
   });
@@ -651,9 +719,10 @@ describe('helpers', () => {
         description: TIMESTAMP_DESCRIPTION,
         hasEcsMetadata: true,
         indexFieldName: '@timestamp',
-        indexFieldType: '-', // <-- the index did NOT define a mapping for @timestamp
+        indexFieldType: '-', // the index did NOT define a mapping for @timestamp
         indexInvalidValues: [],
-        isEcsCompliant: false, // <-- an index must define the @timestamp mapping
+        isEcsCompliant: false, // an index must define the @timestamp mapping
+        isInSameFamily: false, // `date` is not a member of any families
         type: 'date',
       });
     });
@@ -663,30 +732,34 @@ describe('helpers', () => {
     test('it places all the `EnrichedFieldMetadata` in the expected categories', () => {
       const enrichedFieldMetadata: EnrichedFieldMetadata[] = [
         timestamp,
-        eventCategory,
-        hostName,
-        hostNameFieldsKeyword,
+        eventCategoryWithUnallowedValues,
+        hostNameWithTextMapping,
+        hostNameKeyword,
         someField,
-        someFieldFieldsKeyword,
-        sourceIp,
-        sourceIpFieldsKeyword,
+        someFieldKeyword,
+        sourceIpWithTextMapping,
+        sourceIpKeyword,
         sourcePort,
       ];
       const expected: PartitionedFieldMetadata = {
         all: [
           timestamp,
-          eventCategory,
-          hostName,
-          hostNameFieldsKeyword,
+          eventCategoryWithUnallowedValues,
+          hostNameWithTextMapping,
+          hostNameKeyword,
           someField,
-          someFieldFieldsKeyword,
-          sourceIp,
-          sourceIpFieldsKeyword,
+          someFieldKeyword,
+          sourceIpWithTextMapping,
+          sourceIpKeyword,
           sourcePort,
         ],
         ecsCompliant: [timestamp, sourcePort],
-        custom: [hostNameFieldsKeyword, someField, someFieldFieldsKeyword, sourceIpFieldsKeyword],
-        incompatible: [eventCategory, hostName, sourceIp],
+        custom: [hostNameKeyword, someField, someFieldKeyword, sourceIpKeyword],
+        incompatible: [
+          eventCategoryWithUnallowedValues,
+          hostNameWithTextMapping,
+          sourceIpWithTextMapping,
+        ],
       };
 
       expect(getPartitionedFieldMetadata(enrichedFieldMetadata)).toEqual(expected);
@@ -698,18 +771,22 @@ describe('helpers', () => {
       const partitionedFieldMetadata: PartitionedFieldMetadata = {
         all: [
           timestamp,
-          eventCategory,
-          hostName,
-          hostNameFieldsKeyword,
+          eventCategoryWithUnallowedValues,
+          hostNameWithTextMapping,
+          hostNameKeyword,
           someField,
-          someFieldFieldsKeyword,
-          sourceIp,
-          sourceIpFieldsKeyword,
+          someFieldKeyword,
+          sourceIpWithTextMapping,
+          sourceIpKeyword,
           sourcePort,
         ],
         ecsCompliant: [timestamp, sourcePort],
-        custom: [hostNameFieldsKeyword, someField, someFieldFieldsKeyword, sourceIpFieldsKeyword],
-        incompatible: [eventCategory, hostName, sourceIp],
+        custom: [hostNameKeyword, someField, someFieldKeyword, sourceIpKeyword],
+        incompatible: [
+          eventCategoryWithUnallowedValues,
+          hostNameWithTextMapping,
+          sourceIpWithTextMapping,
+        ],
       };
 
       expect(getPartitionedFieldMetadataStats(partitionedFieldMetadata)).toEqual({
@@ -737,7 +814,7 @@ describe('helpers', () => {
     test('it returns false when the `enrichedFieldMetadata` has an @timestamp with an invalid mapping', () => {
       const timestampWithInvalidMapping: EnrichedFieldMetadata = {
         ...timestamp,
-        indexFieldType: 'text', // <-- invalid mapping, should be "date"
+        indexFieldType: 'text', // invalid mapping, should be "date"
       };
       const enrichedFieldMetadata: EnrichedFieldMetadata[] = [
         timestampWithInvalidMapping,

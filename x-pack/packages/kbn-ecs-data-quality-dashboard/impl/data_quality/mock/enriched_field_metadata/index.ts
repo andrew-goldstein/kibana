@@ -24,6 +24,7 @@ export const timestamp: EnrichedFieldMetadata = {
   indexInvalidValues: [],
   hasEcsMetadata: true,
   isEcsCompliant: true,
+  isInSameFamily: false, // `date` is not a member of any families
 };
 
 export const eventCategory: EnrichedFieldMetadata = {
@@ -159,6 +160,14 @@ export const eventCategory: EnrichedFieldMetadata = {
   type: 'keyword',
   indexFieldName: 'event.category',
   indexFieldType: 'keyword',
+  indexInvalidValues: [],
+  hasEcsMetadata: true,
+  isEcsCompliant: true,
+  isInSameFamily: true, // `keyword` and `keyword` are in the same family
+};
+
+export const eventCategoryWithUnallowedValues: EnrichedFieldMetadata = {
+  ...eventCategory,
   indexInvalidValues: [
     {
       count: 2,
@@ -169,11 +178,10 @@ export const eventCategory: EnrichedFieldMetadata = {
       fieldName: 'theory',
     },
   ],
-  hasEcsMetadata: true,
-  isEcsCompliant: false,
+  isEcsCompliant: false, // because this index has unallowed values
 };
 
-export const hostName: EnrichedFieldMetadata = {
+export const hostNameWithTextMapping: EnrichedFieldMetadata = {
   dashed_name: 'host-name',
   description:
     'Name of the host.\nIt can contain what `hostname` returns on Unix systems, the fully qualified domain name, or a name specified by the user. The sender decides which value to use.',
@@ -185,18 +193,20 @@ export const hostName: EnrichedFieldMetadata = {
   short: 'Name of the host.',
   type: 'keyword',
   indexFieldName: 'host.name',
-  indexFieldType: 'text',
+  indexFieldType: 'text', // this index has a mapping of `text` instead of `keyword`
   indexInvalidValues: [],
   hasEcsMetadata: true,
   isEcsCompliant: false,
+  isInSameFamily: false, // `keyword` and `text` are not in the family
 };
 
-export const hostNameFieldsKeyword: EnrichedFieldMetadata = {
-  indexFieldName: 'host.name.fields.keyword',
+export const hostNameKeyword: EnrichedFieldMetadata = {
+  indexFieldName: 'host.name.keyword',
   indexFieldType: 'keyword',
   indexInvalidValues: [],
   hasEcsMetadata: false,
   isEcsCompliant: false,
+  isInSameFamily: false, // custom fields are never in the same family
 };
 
 export const someField: EnrichedFieldMetadata = {
@@ -205,17 +215,19 @@ export const someField: EnrichedFieldMetadata = {
   indexInvalidValues: [],
   hasEcsMetadata: false,
   isEcsCompliant: false,
+  isInSameFamily: false, // custom fields are never in the same family
 };
 
-export const someFieldFieldsKeyword: EnrichedFieldMetadata = {
-  indexFieldName: 'some.field.fields.keyword',
+export const someFieldKeyword: EnrichedFieldMetadata = {
+  indexFieldName: 'some.field.keyword',
   indexFieldType: 'keyword',
   indexInvalidValues: [],
   hasEcsMetadata: false,
   isEcsCompliant: false,
+  isInSameFamily: false, // custom fields are never in the same family
 };
 
-export const sourceIp: EnrichedFieldMetadata = {
+export const sourceIpWithTextMapping: EnrichedFieldMetadata = {
   dashed_name: 'source-ip',
   description: 'IP address of the source (IPv4 or IPv6).',
   flat_name: 'source.ip',
@@ -225,18 +237,20 @@ export const sourceIp: EnrichedFieldMetadata = {
   short: 'IP address of the source.',
   type: 'ip',
   indexFieldName: 'source.ip',
-  indexFieldType: 'text',
+  indexFieldType: 'text', // this index has a mapping of `text` instead of `keyword`
   indexInvalidValues: [],
   hasEcsMetadata: true,
   isEcsCompliant: false,
+  isInSameFamily: false, // `ip` is not a member of any families
 };
 
-export const sourceIpFieldsKeyword: EnrichedFieldMetadata = {
-  indexFieldName: 'source.ip.fields.keyword',
+export const sourceIpKeyword: EnrichedFieldMetadata = {
+  indexFieldName: 'source.ip.keyword',
   indexFieldType: 'keyword',
   indexInvalidValues: [],
   hasEcsMetadata: false,
   isEcsCompliant: false,
+  isInSameFamily: false, // custom fields are never in the same family
 };
 
 export const sourcePort: EnrichedFieldMetadata = {
@@ -254,4 +268,5 @@ export const sourcePort: EnrichedFieldMetadata = {
   indexInvalidValues: [],
   hasEcsMetadata: true,
   isEcsCompliant: true,
+  isInSameFamily: false, // `long` is not a member of any families
 };
