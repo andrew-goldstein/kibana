@@ -14,6 +14,7 @@ import { buildSiemResponse } from '../../../routes/utils';
 import {
   installEndpointPackage,
   installPrebuiltRulesPackage,
+  installSecurityAiPromptsPackage,
 } from '../install_prebuilt_rules_and_timelines/install_prebuilt_rules_package';
 
 export const bootstrapPrebuiltRulesRoute = (router: SecuritySolutionPluginRouter) => {
@@ -43,6 +44,7 @@ export const bootstrapPrebuiltRulesRoute = (router: SecuritySolutionPluginRouter
           const results = await Promise.all([
             installPrebuiltRulesPackage(config, securityContext),
             installEndpointPackage(config, securityContext),
+            installSecurityAiPromptsPackage(config, securityContext),
           ]);
 
           const responseBody: BootstrapPrebuiltRulesResponse = {
