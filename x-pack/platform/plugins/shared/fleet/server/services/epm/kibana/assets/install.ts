@@ -115,6 +115,8 @@ export async function installKibanaAssets(options: {
 }): Promise<SavedObjectsImportSuccess[]> {
   const { kibanaAssets, savedObjectsClient, savedObjectsImporter, logger } = options;
 
+  // console.log('--> kibanaAssets', JSON.stringify(kibanaAssets, null, 2));
+
   const assetsToInstall = Object.entries(kibanaAssets).flatMap(([assetType, assets]) => {
     if (!validKibanaAssetTypes.has(assetType as KibanaAssetType)) {
       return [];
@@ -124,13 +126,23 @@ export async function installKibanaAssets(options: {
       return [];
     }
 
+    // console.log('--> assetType', assetType);
+    // console.log('--> AssetFilters', JSON.stringify(AssetFilters, null, 2));
+
     const assetFilter = AssetFilters[assetType];
+    // console.log('--> assetFilter', JSON.stringify(assetFilter, null, 2));
+
     if (assetFilter) {
+      // console.log('--> returning', JSON.stringify(assetFilter(assets), null, 2));
+
       return assetFilter(assets);
     }
 
     return assets;
   });
+
+  // console.log('--> assetsToInstall', JSON.stringify(assetsToInstall, null, 2));
+  // console.log('--> assetsToInstall.length', assetsToInstall.length);
 
   if (!assetsToInstall.length) {
     return [];
@@ -358,20 +370,44 @@ export const isKibanaAssetType = (path: string) => {
 export function getKibanaAssets(
   packageInstallContext: PackageInstallContext
 ): Record<KibanaAssetType, ArchiveAsset[]> {
+  // console.log('--> packageInstallContext', JSON.stringify(packageInstallContext, null, 2));
+
+  // console.log('--> kibanaAssetTypes', JSON.stringify(kibanaAssetTypes, null, 2));
+
   const result = Object.fromEntries<ArchiveAsset[]>(
     kibanaAssetTypes.map((type) => [type, []])
   ) as Record<KibanaAssetType, ArchiveAsset[]>;
+
+  // console.log('--> result', JSON.stringify(result, null, 2));
+
+  // console.log('--> all paths', JSON.stringify(packageInstallContext.paths, null, 2));
 
   packageInstallContext.paths.filter(isKibanaAssetType).forEach((path) => {
     const buffer = getAssetFromAssetsMap(packageInstallContext.assetsMap, path);
     const asset = JSON.parse(buffer.toString('utf8'));
 
+    // console.log(
+    //   '--> KibanaSavedObjectTypeMapping',
+    //   JSON.stringify(KibanaSavedObjectTypeMapping, null, 2)
+    // );
+
     const assetType = getPathParts(path).type as KibanaAssetType;
+    // console.log('--> assetType', assetType);
+
     const soType = KibanaSavedObjectTypeMapping[assetType];
+
+    // console.log('--> asset.type', asset.type);
+    // console.log('--> soType', JSON.stringify(soType, null, 2));
+
     if (asset.type === soType) {
+      // console.log('--> gonna push asset', JSON.stringify(asset, null, 2));
       result[assetType].push(asset);
+    } else {
+      // console.log('--> skipping - asset type does not match', JSON.stringify(asset, null, 2));
     }
   });
+
+  // console.log('--> final resultresult', JSON.stringify(result, null, 2));
 
   return result;
 }
@@ -477,6 +513,8 @@ async function installKibanaSavedObjectsChunk({
   logger: Logger;
   refresh?: boolean | 'wait_for';
 }) {
+  // console.log('--> kibanaAssets', JSON.stringify(kibanaAssets, null, 2));
+
   if (!kibanaAssets.length) {
     return [];
   }
