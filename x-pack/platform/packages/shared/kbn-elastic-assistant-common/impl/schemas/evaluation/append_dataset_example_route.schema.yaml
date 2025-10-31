@@ -1,0 +1,91 @@
+openapi: 3.0.0
+info:
+  title: Append Dataset Example API endpoint
+  version: '2023-10-31'
+paths:
+  /internal/elastic_assistant/evaluate/dataset/{datasetName}/examples/_append:
+    post:
+      operationId: AppendDatasetExample
+      x-codegen-enabled: true
+      description: Appends a new example to a LangSmith dataset by cloning an existing example with updated alerts
+      summary: Append example to dataset
+      tags:
+        - Evaluation API
+      parameters:
+        - name: datasetName
+          in: path
+          required: true
+          description: Name of the dataset to append the example to
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - exampleName
+                - sourceDatasetName
+                - sourceExampleId
+                - updatedAlerts
+              properties:
+                exampleName:
+                  type: string
+                  description: Name for the new example
+                langSmithApiKey:
+                  type: string
+                  description: Optional LangSmith API key for authentication
+                sourceDatasetName:
+                  type: string
+                  description: Name of the dataset containing the source example
+                sourceExampleId:
+                  type: string
+                  description: ID of the source example to clone
+                updatedAlerts:
+                  type: array
+                  description: Array of updated alert documents
+                  items:
+                    type: object
+                    required:
+                      - pageContent
+                      - metadata
+                    properties:
+                      pageContent:
+                        type: string
+                        description: CSV-formatted string containing alert field-value pairs
+                      metadata:
+                        type: object
+                        additionalProperties: true
+                        description: Metadata object for the document
+      responses:
+        '200':
+          description: Successfully appended example to dataset
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - exampleId
+                properties:
+                  success:
+                    type: boolean
+                    description: Whether the operation was successful
+                  exampleId:
+                    type: string
+                    description: ID of the newly created example
+        '400':
+          description: Bad request - invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusCode:
+                    type: number
+                  error:
+                    type: string
+                  message:
+                    type: string
+

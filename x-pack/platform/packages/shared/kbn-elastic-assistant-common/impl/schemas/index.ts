@@ -99,8 +99,10 @@ export * from './users';
 export * from './chat/post_chat_complete_route.gen';
 
 // Evaluation Schemas
-export * from './evaluation/post_evaluate_route.gen';
+export * from './evaluation/append_dataset_example_route.gen';
+export * from './evaluation/get_dataset_examples_route.gen';
 export * from './evaluation/get_evaluate_route.gen';
+export * from './evaluation/post_evaluate_route.gen';
 
 // Capabilities Schemas
 export * from './capabilities/get_capabilities_route.gen';

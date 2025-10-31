@@ -28,7 +28,7 @@ export const fetchLangSmithDataset = async (
   }
 
   try {
-    const client = new Client({ apiKey: langSmithApiKey });
+    const client = new Client(!isEmpty(langSmithApiKey) ? { apiKey: langSmithApiKey } : undefined);
 
     const examples = [];
     for await (const example of client.listExamples({ datasetName })) {
@@ -38,7 +38,9 @@ export const fetchLangSmithDataset = async (
     return examples;
   } catch (e) {
     logger.error(`Error fetching dataset from LangSmith: ${e.message}`);
-    return [];
+    throw new Error(
+      `Failed to fetch dataset from LangSmith: ${e.message}. Please verify your LangSmith API key is valid and has access to the dataset.`
+    );
   }
 };
 

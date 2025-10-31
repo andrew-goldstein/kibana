@@ -5,12 +5,16 @@
  * 2.0.
  */
 
-import { ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG } from '@kbn/elastic-assistant-common';
+import {
+  ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG,
+  EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG,
+} from '@kbn/elastic-assistant-common';
 import { useMemo } from 'react';
 import { useKibana } from '../../../common/lib/kibana';
 
 interface UseKibanaFeatureFlags {
   attackDiscoveryPublicApiEnabled: boolean;
+  evaluateAnonymizationFields: boolean;
 }
 
 export const useKibanaFeatureFlags = (): UseKibanaFeatureFlags => {
@@ -23,7 +27,13 @@ export const useKibanaFeatureFlags = (): UseKibanaFeatureFlags => {
     [featureFlags]
   );
 
+  const evaluateAnonymizationFields = useMemo(
+    () => featureFlags.getBooleanValue(EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG, false),
+    [featureFlags]
+  );
+
   return {
     attackDiscoveryPublicApiEnabled,
+    evaluateAnonymizationFields,
   };
 };

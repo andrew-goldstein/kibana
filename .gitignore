@@ -21,6 +21,7 @@ target
 .idea
 .claude
 .cursor
+.cursorrules
 .windsurf
 claude.md
 *.iml

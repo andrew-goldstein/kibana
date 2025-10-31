@@ -5,12 +5,16 @@
  * 2.0.
  */
 
-import { ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG } from '@kbn/elastic-assistant-common';
+import {
+  ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG,
+  EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG,
+} from '@kbn/elastic-assistant-common';
 
 import type { ElasticAssistantRequestHandlerContext } from '../../../types';
 
 interface GetKibanaFeatureFlags {
   attackDiscoveryPublicApiEnabled: boolean;
+  evaluateAnonymizationFields: boolean;
 }
 
 export const getKibanaFeatureFlags = async (
@@ -23,7 +27,13 @@ export const getKibanaFeatureFlags = async (
     true
   );
 
+  const evaluateAnonymizationFields = await featureFlags.getBooleanValue(
+    EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG,
+    false
+  );
+
   return {
     attackDiscoveryPublicApiEnabled,
+    evaluateAnonymizationFields,
   };
 };

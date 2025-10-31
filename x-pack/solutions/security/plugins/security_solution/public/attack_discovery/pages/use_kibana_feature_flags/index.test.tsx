@@ -5,7 +5,10 @@
  * 2.0.
  */
 
-import { ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG } from '@kbn/elastic-assistant-common';
+import {
+  ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG,
+  EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG,
+} from '@kbn/elastic-assistant-common';
 import { renderHook, waitFor } from '@testing-library/react';
 import React from 'react';
 
@@ -85,6 +88,45 @@ describe('useKibanaFeatureFlags', () => {
       expect(mockGetBooleanValueFn).toHaveBeenCalledWith(
         ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG,
         true // <-- expected default when the feature flag is not configured
+      );
+    });
+  });
+
+  it('returns false when the evaluate anonymization fields feature flag is disabled', async () => {
+    mockGetBooleanValueFn.mockReturnValue(false);
+
+    const { result } = renderHook(() => useKibanaFeatureFlags(), {
+      wrapper: ({ children }) => <TestProviders>{children}</TestProviders>,
+    });
+
+    await waitFor(() => {
+      expect(result.current.evaluateAnonymizationFields).toBe(false);
+    });
+  });
+
+  it('returns true when the evaluate anonymization fields feature flag is enabled', async () => {
+    mockGetBooleanValueFn.mockReturnValue(true);
+
+    const { result } = renderHook(() => useKibanaFeatureFlags(), {
+      wrapper: ({ children }) => <TestProviders>{children}</TestProviders>,
+    });
+
+    await waitFor(() => {
+      expect(result.current.evaluateAnonymizationFields).toBe(true);
+    });
+  });
+
+  it('calls getBooleanValue with the expected default value (false) for evaluateAnonymizationFields', async () => {
+    mockGetBooleanValueFn.mockReturnValue(false);
+
+    renderHook(() => useKibanaFeatureFlags(), {
+      wrapper: ({ children }) => <TestProviders>{children}</TestProviders>,
+    });
+
+    await waitFor(() => {
+      expect(mockGetBooleanValueFn).toHaveBeenCalledWith(
+        EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG,
+        false // <-- expected default when the feature flag is not configured
       );
     });
   });

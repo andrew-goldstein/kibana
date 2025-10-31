@@ -6,6 +6,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
+import { useKibana } from '@kbn/kibana-react-plugin/public';
 import type { EuiComboBoxOptionOption, EuiComboBoxSingleSelectionShape } from '@elastic/eui';
 import {
   EuiAccordion,
@@ -31,6 +32,7 @@ import type {
   GetEvaluateResponse,
   PostEvaluateRequestBodyInput,
 } from '@kbn/elastic-assistant-common';
+import { EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG } from '@kbn/elastic-assistant-common';
 import { isEmpty } from 'lodash/fp';
 
 import moment from 'moment';
@@ -42,6 +44,7 @@ import { getActionTypeTitle, getGenAiConfig } from '../../../connectorland/helpe
 import { PRECONFIGURED_CONNECTOR } from '../../../connectorland/translations';
 import { usePerformEvaluation } from '../../api/evaluate/use_perform_evaluation';
 import { useEvaluationData } from '../../api/evaluate/use_evaluation_data';
+import { AttackDiscoveryExampleGenerationSection } from './attack_discovery_example_generation_section';
 
 const AS_PLAIN_TEXT: EuiComboBoxSingleSelectionShape = { asPlainText: true };
 
@@ -51,6 +54,13 @@ const AS_PLAIN_TEXT: EuiComboBoxSingleSelectionShape = { asPlainText: true };
 export const EvaluationSettings: React.FC = React.memo(() => {
   const { actionTypeRegistry, http, setTraceOptions, toasts, traceOptions, settings } =
     useAssistantContext();
+  const { services } = useKibana();
+  const evaluateAnonymizationFields = useMemo(
+    () =>
+      services?.featureFlags?.getBooleanValue(EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG, false) ??
+      false,
+    [services]
+  );
   const { data: connectors } = useLoadConnectors({ http, inferenceEnabled: true, settings });
   const { mutate: performEvaluation, isLoading: isPerformingEvaluation } = usePerformEvaluation({
     http,
@@ -59,6 +69,7 @@ export const EvaluationSettings: React.FC = React.memo(() => {
   const { data: evalData } = useEvaluationData({
     http,
   });
+
   const defaultGraphs = useMemo(() => (evalData as GetEvaluateResponse)?.graphs ?? [], [evalData]);
   const datasets = useMemo(() => (evalData as GetEvaluateResponse)?.datasets ?? [], [evalData]);
 
@@ -264,192 +275,205 @@ export const EvaluationSettings: React.FC = React.memo(() => {
   `;
 
   return (
-    <EuiPanel hasShadow={false} hasBorder paddingSize="l">
-      <EuiText size={'m'}>{i18n.SETTINGS_DESCRIPTION}</EuiText>
-      <EuiHorizontalRule margin={'s'} />
-      {/* Run Details*/}
-      <EuiAccordion
-        id={i18n.RUN_DETAILS_TITLE}
-        arrowDisplay={'right'}
-        buttonContent={runDetailsSection}
-        buttonProps={{ paddingSize: 's', css: buttonCss }}
-        element="fieldset"
-        initialIsOpen={true}
-        paddingSize="s"
-      >
-        <EuiFormRow
-          display="rowCompressed"
-          label={i18n.RUN_NAME_LABEL}
-          helpText={i18n.RUN_NAME_DESCRIPTION}
+    <>
+      <EuiPanel hasShadow={false} hasBorder paddingSize="l">
+        <EuiText size={'m'}>{i18n.SETTINGS_DESCRIPTION}</EuiText>
+        <EuiHorizontalRule margin={'s'} />
+        {/* Run Details*/}
+        <EuiAccordion
+          id={i18n.RUN_DETAILS_TITLE}
+          arrowDisplay={'right'}
+          buttonContent={runDetailsSection}
+          buttonProps={{ paddingSize: 's', css: buttonCss }}
+          element="fieldset"
+          initialIsOpen={true}
+          paddingSize="s"
         >
-          <EuiFieldText
-            aria-label={i18n.RUN_NAME_LABEL}
-            compressed
-            onChange={onRunNameChange}
-            placeholder={i18n.RUN_NAME_PLACEHOLDER}
-            value={runName}
-          />
-        </EuiFormRow>
-        <EuiFormRow
-          display="rowCompressed"
-          label={i18n.EVALUATOR_DATASET_LABEL}
-          fullWidth
-          helpText={i18n.LANGSMITH_DATASET_DESCRIPTION}
-        >
-          <EuiComboBox
-            aria-label={i18n.EVALUATOR_DATASET_LABEL}
-            placeholder={i18n.LANGSMITH_DATASET_PLACEHOLDER}
-            singleSelection={{ asPlainText: true }}
-            options={datasetOptions}
-            selectedOptions={selectedDatasetOptions}
-            onChange={onDatasetOptionsChange}
-            onCreateOption={onDatasetCreateOption}
-            compressed={true}
-          />
-        </EuiFormRow>
-        <EuiText
-          size={'xs'}
-          css={css`
-            margin-top: 16px;
-          `}
-        >
-          <EuiLink color={'primary'} onClick={() => setShowTraceOptions(!showTraceOptions)}>
-            {i18n.SHOW_TRACE_OPTIONS}
-          </EuiLink>
-        </EuiText>
-        {showTraceOptions && (
-          <>
-            <EuiFormRow
-              display="rowCompressed"
-              label={i18n.APM_URL_LABEL}
-              fullWidth
-              helpText={i18n.APM_URL_DESCRIPTION}
-              css={css`
-                margin-top: 16px;
-              `}
-            >
-              <EuiFieldText
-                value={traceOptions.apmUrl}
-                onChange={onApmUrlChange}
-                aria-label={i18n.APM_URL_LABEL}
-              />
-            </EuiFormRow>
-            <EuiFormRow
-              display="rowCompressed"
-              label={i18n.LANGSMITH_PROJECT_LABEL}
-              fullWidth
-              helpText={i18n.LANGSMITH_PROJECT_DESCRIPTION}
-            >
-              <EuiFieldText
-                value={traceOptions.langSmithProject}
-                onChange={onLangSmithProjectChange}
-                aria-label={i18n.LANGSMITH_PROJECT_LABEL}
-              />
-            </EuiFormRow>
-            <EuiFormRow
-              display="rowCompressed"
-              label={i18n.LANGSMITH_API_KEY_LABEL}
-              fullWidth
-              helpText={i18n.LANGSMITH_API_KEY_DESCRIPTION}
-            >
-              <EuiFieldText
-                value={traceOptions.langSmithApiKey}
-                onChange={onLangSmithApiKeyChange}
-                aria-label={i18n.LANGSMITH_API_KEY_LABEL}
-              />
-            </EuiFormRow>
-          </>
-        )}
-      </EuiAccordion>
-      <EuiHorizontalRule margin={'s'} />
-      {/* Prediction Details*/}
-      <EuiAccordion
-        id={i18n.PREDICTION_DETAILS_TITLE}
-        arrowDisplay={'right'}
-        buttonContent={predictionDetailsSection}
-        buttonProps={{ paddingSize: 's', css: buttonCss }}
-        element="fieldset"
-        initialIsOpen={true}
-        paddingSize="s"
-      >
-        <EuiFormRow
-          display="rowCompressed"
-          label={i18n.CONNECTORS_LABEL}
-          helpText={i18n.CONNECTORS_DESCRIPTION}
-        >
-          <EuiComboBox
-            aria-label={i18n.CONNECTORS_LABEL}
-            compressed
-            options={modelOptions}
-            selectedOptions={selectedModelOptions}
-            onChange={onModelOptionsChange}
-          />
-        </EuiFormRow>
-
-        <EuiFormRow
-          display="rowCompressed"
-          label={i18n.GRAPHS_LABEL}
-          helpText={i18n.GRAPHS_DESCRIPTION}
-        >
-          <EuiComboBox
-            aria-label={i18n.GRAPHS_LABEL}
-            compressed
-            onCreateOption={onGraphOptionsCreate}
-            options={graphOptions}
-            selectedOptions={selectedGraphOptions}
-            singleSelection // Remove once post_evaluate support running multiple graphs
-            onChange={onGraphOptionsChange}
-          />
-        </EuiFormRow>
-
-        <EuiFormRow
-          display="rowCompressed"
-          helpText={i18n.EVALUATOR_MODEL_DESCRIPTION}
-          label={i18n.EVALUATOR_MODEL}
-        >
-          <EuiComboBox
-            aria-label={i18n.EVALUATOR_MODEL}
-            compressed
-            onChange={onSelectedEvaluatorModelChange}
-            options={modelOptions}
-            selectedOptions={selectedEvaluatorModel}
-            singleSelection={AS_PLAIN_TEXT}
-          />
-        </EuiFormRow>
-
-        <EuiFormRow
-          display="rowCompressed"
-          helpText={i18n.DEFAULT_MAX_ALERTS_DESCRIPTION}
-          label={i18n.DEFAULT_MAX_ALERTS}
-        >
-          <EuiFieldNumber onChange={(e) => setSize(e.target.value)} value={size} />
-        </EuiFormRow>
-      </EuiAccordion>
-      <EuiHorizontalRule margin={'s'} />
-      <EuiFlexGroup alignItems="center">
-        <EuiFlexItem grow={false}>
-          <EuiButton
-            size="s"
-            type="submit"
-            isDisabled={isPerformEvaluationDisabled}
-            isLoading={isPerformingEvaluation}
-            onClick={handlePerformEvaluation}
-            fill
+          <EuiFormRow
+            display="rowCompressed"
+            label={i18n.RUN_NAME_LABEL}
+            helpText={i18n.RUN_NAME_DESCRIPTION}
           >
-            {i18n.PERFORM_EVALUATION}
-          </EuiButton>
-        </EuiFlexItem>
-        <EuiFlexItem>
-          <EuiText color={'subdued'} size={'xs'}>
-            <FormattedMessage
-              defaultMessage="Closing this dialog will cancel the evaluation. You can watch the Kibana server logs for progress. Can take many minutes for large datasets."
-              id="xpack.elasticAssistant.assistant.settings.evaluationSettings.evaluatorFunFactText"
+            <EuiFieldText
+              aria-label={i18n.RUN_NAME_LABEL}
+              compressed
+              onChange={onRunNameChange}
+              placeholder={i18n.RUN_NAME_PLACEHOLDER}
+              value={runName}
             />
+          </EuiFormRow>
+          <EuiFormRow
+            display="rowCompressed"
+            label={i18n.EVALUATOR_DATASET_LABEL}
+            fullWidth
+            helpText={i18n.LANGSMITH_DATASET_DESCRIPTION}
+          >
+            <EuiComboBox
+              aria-label={i18n.EVALUATOR_DATASET_LABEL}
+              placeholder={i18n.LANGSMITH_DATASET_PLACEHOLDER}
+              singleSelection={{ asPlainText: true }}
+              options={datasetOptions}
+              selectedOptions={selectedDatasetOptions}
+              onChange={onDatasetOptionsChange}
+              onCreateOption={onDatasetCreateOption}
+              compressed={true}
+            />
+          </EuiFormRow>
+          <EuiText
+            size={'xs'}
+            css={css`
+              margin-top: 16px;
+            `}
+          >
+            <EuiLink color={'primary'} onClick={() => setShowTraceOptions(!showTraceOptions)}>
+              {i18n.SHOW_TRACE_OPTIONS}
+            </EuiLink>
           </EuiText>
-        </EuiFlexItem>
-      </EuiFlexGroup>
-      <EuiSpacer size="s" />
-    </EuiPanel>
+          {showTraceOptions && (
+            <>
+              <EuiFormRow
+                display="rowCompressed"
+                label={i18n.APM_URL_LABEL}
+                fullWidth
+                helpText={i18n.APM_URL_DESCRIPTION}
+                css={css`
+                  margin-top: 16px;
+                `}
+              >
+                <EuiFieldText
+                  value={traceOptions.apmUrl}
+                  onChange={onApmUrlChange}
+                  aria-label={i18n.APM_URL_LABEL}
+                />
+              </EuiFormRow>
+              <EuiFormRow
+                display="rowCompressed"
+                label={i18n.LANGSMITH_PROJECT_LABEL}
+                fullWidth
+                helpText={i18n.LANGSMITH_PROJECT_DESCRIPTION}
+              >
+                <EuiFieldText
+                  value={traceOptions.langSmithProject}
+                  onChange={onLangSmithProjectChange}
+                  aria-label={i18n.LANGSMITH_PROJECT_LABEL}
+                />
+              </EuiFormRow>
+              <EuiFormRow
+                display="rowCompressed"
+                label={i18n.LANGSMITH_API_KEY_LABEL}
+                fullWidth
+                helpText={i18n.LANGSMITH_API_KEY_DESCRIPTION}
+              >
+                <EuiFieldText
+                  value={traceOptions.langSmithApiKey}
+                  onChange={onLangSmithApiKeyChange}
+                  aria-label={i18n.LANGSMITH_API_KEY_LABEL}
+                />
+              </EuiFormRow>
+            </>
+          )}
+        </EuiAccordion>
+        <EuiHorizontalRule margin={'s'} />
+        {/* Prediction Details*/}
+        <EuiAccordion
+          id={i18n.PREDICTION_DETAILS_TITLE}
+          arrowDisplay={'right'}
+          buttonContent={predictionDetailsSection}
+          buttonProps={{ paddingSize: 's', css: buttonCss }}
+          element="fieldset"
+          initialIsOpen={true}
+          paddingSize="s"
+        >
+          <EuiFormRow
+            display="rowCompressed"
+            label={i18n.CONNECTORS_LABEL}
+            helpText={i18n.CONNECTORS_DESCRIPTION}
+          >
+            <EuiComboBox
+              aria-label={i18n.CONNECTORS_LABEL}
+              compressed
+              options={modelOptions}
+              selectedOptions={selectedModelOptions}
+              onChange={onModelOptionsChange}
+            />
+          </EuiFormRow>
+
+          <EuiFormRow
+            display="rowCompressed"
+            label={i18n.GRAPHS_LABEL}
+            helpText={i18n.GRAPHS_DESCRIPTION}
+          >
+            <EuiComboBox
+              aria-label={i18n.GRAPHS_LABEL}
+              compressed
+              onCreateOption={onGraphOptionsCreate}
+              options={graphOptions}
+              selectedOptions={selectedGraphOptions}
+              singleSelection // Remove once post_evaluate support running multiple graphs
+              onChange={onGraphOptionsChange}
+            />
+          </EuiFormRow>
+
+          <EuiFormRow
+            display="rowCompressed"
+            helpText={i18n.EVALUATOR_MODEL_DESCRIPTION}
+            label={i18n.EVALUATOR_MODEL}
+          >
+            <EuiComboBox
+              aria-label={i18n.EVALUATOR_MODEL}
+              compressed
+              onChange={onSelectedEvaluatorModelChange}
+              options={modelOptions}
+              selectedOptions={selectedEvaluatorModel}
+              singleSelection={AS_PLAIN_TEXT}
+            />
+          </EuiFormRow>
+
+          <EuiFormRow
+            display="rowCompressed"
+            helpText={i18n.DEFAULT_MAX_ALERTS_DESCRIPTION}
+            label={i18n.DEFAULT_MAX_ALERTS}
+          >
+            <EuiFieldNumber onChange={(e) => setSize(e.target.value)} value={size} />
+          </EuiFormRow>
+        </EuiAccordion>
+        <EuiHorizontalRule margin={'s'} />
+        <EuiFlexGroup alignItems="center">
+          <EuiFlexItem grow={false}>
+            <EuiButton
+              size="s"
+              type="submit"
+              isDisabled={isPerformEvaluationDisabled}
+              isLoading={isPerformingEvaluation}
+              onClick={handlePerformEvaluation}
+              fill
+            >
+              {i18n.PERFORM_EVALUATION}
+            </EuiButton>
+          </EuiFlexItem>
+          <EuiFlexItem>
+            <EuiText color={'subdued'} size={'xs'}>
+              <FormattedMessage
+                defaultMessage="Closing this dialog will cancel the evaluation. You can watch the Kibana server logs for progress. Can take many minutes for large datasets."
+                id="xpack.elasticAssistant.assistant.settings.evaluationSettings.evaluatorFunFactText"
+              />
+            </EuiText>
+          </EuiFlexItem>
+        </EuiFlexGroup>
+        <EuiSpacer size="s" />
+      </EuiPanel>
+
+      {/* Attack Discovery Example Generation Section - Visually Distinct */}
+      {evaluateAnonymizationFields && (
+        <>
+          <EuiSpacer size="l" />
+          <AttackDiscoveryExampleGenerationSection
+            datasetOptions={datasetOptions}
+            modelOptions={modelOptions}
+          />
+        </>
+      )}
+    </>
   );
 });
 

@@ -32,6 +32,8 @@ import { bulkActionConversationsRoute } from './user_conversations/bulk_actions_
 import { appendConversationMessageRoute } from './user_conversations/append_conversation_messages_route';
 import { getKnowledgeBaseStatusRoute } from './knowledge_base/get_knowledge_base_status';
 import { postKnowledgeBaseRoute } from './knowledge_base/post_knowledge_base';
+import { appendDatasetExampleRoute } from './evaluate/append_dataset_example';
+import { getDatasetExamplesRoute } from './evaluate/get_dataset_examples';
 import { getEvaluateRoute } from './evaluate/get_evaluate';
 import { postEvaluateRoute } from './evaluate/post_evaluate';
 import { getCapabilitiesRoute } from './capabilities/get_capabilities_route';
@@ -167,6 +169,10 @@ jest.mock('./knowledge_base/get_knowledge_base_status');
 const getKnowledgeBaseStatusRouteMock = getKnowledgeBaseStatusRoute as jest.Mock;
 jest.mock('./knowledge_base/post_knowledge_base');
 const postKnowledgeBaseRouteMock = postKnowledgeBaseRoute as jest.Mock;
+jest.mock('./evaluate/append_dataset_example');
+const appendDatasetExampleRouteMock = appendDatasetExampleRoute as jest.Mock;
+jest.mock('./evaluate/get_dataset_examples');
+const getDatasetExamplesRouteMock = getDatasetExamplesRoute as jest.Mock;
 jest.mock('./evaluate/get_evaluate');
 const getEvaluateRouteMock = getEvaluateRoute as jest.Mock;
 jest.mock('./evaluate/post_evaluate');
@@ -358,6 +364,14 @@ describe('registerRoutes', () => {
 
   it('should call `postKnowledgeBaseRouteMock`', () => {
     expect(postKnowledgeBaseRouteMock).toHaveBeenCalledWith(server.router);
+  });
+
+  it('should call `appendDatasetExampleRouteMock`', () => {
+    expect(appendDatasetExampleRouteMock).toHaveBeenCalledWith(server.router);
+  });
+
+  it('should call `getDatasetExamplesRouteMock`', () => {
+    expect(getDatasetExamplesRouteMock).toHaveBeenCalledWith(server.router);
   });
 
   it('should call `getEvaluateRouteMock`', () => {

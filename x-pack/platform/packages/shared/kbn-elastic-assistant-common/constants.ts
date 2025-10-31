@@ -59,6 +59,10 @@ export const ELASTIC_AI_ASSISTANT_KNOWLEDGE_BASE_ENTRIES_URL_BULK_ACTION =
 
 export const ELASTIC_AI_ASSISTANT_EVALUATE_URL =
   `${ELASTIC_AI_ASSISTANT_INTERNAL_URL}/evaluate` as const;
+export const ELASTIC_AI_ASSISTANT_EVALUATE_DATASET_EXAMPLES_URL =
+  `${ELASTIC_AI_ASSISTANT_INTERNAL_URL}/evaluate/dataset/{datasetName}/examples` as const;
+export const ELASTIC_AI_ASSISTANT_EVALUATE_APPEND_DATASET_EXAMPLE_URL =
+  `${ELASTIC_AI_ASSISTANT_INTERNAL_URL}/evaluate/dataset/{datasetName}/examples/_append` as const;
 
 // Alert summary
 export const ELASTIC_AI_ASSISTANT_ALERT_SUMMARY_URL =
@@ -146,6 +150,18 @@ export const ATTACK_DISCOVERY_AD_HOC_RULE_TYPE_ID = 'attack_discovery_ad_hoc_rul
  */
 export const ATTACK_DISCOVERY_PUBLIC_API_ENABLED_FEATURE_FLAG =
   'securitySolution.attackDiscoveryPublicApiEnabled' as const;
+
+/**
+ * This feature flag enables the evaluate anonymization fields feature.
+ *
+ * It may be overridden via the following setting in `kibana.yml` or `kibana.dev.yml`:
+ * ```
+ * feature_flags.overrides:
+ *   securitySolution.evaluateAnonymizationFields: true
+ * ```
+ */
+export const EVALUATE_ANONYMIZATION_FIELDS_FEATURE_FLAG =
+  'securitySolution.evaluateAnonymizationFields' as const;
 
 /**
  * The common prefix for all (ad hoc and scheduled) Attack discovery alerts indices
