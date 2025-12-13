@@ -11,7 +11,7 @@ import { registerEventLogProvider } from '.';
 import {
   ATTACK_DISCOVERY_EVENT_ACTIONS,
   ATTACK_DISCOVERY_EVENT_PROVIDER,
-} from '../../common/constants';
+} from '@kbn/discoveries/impl/attack_discovery/persistence/event_logging';
 
 describe('registerEventLogProvider', () => {
   let eventLog: IEventLogService;

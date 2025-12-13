@@ -177,6 +177,7 @@ export class WorkflowsService {
         query: {
           bool: {
             must: [{ ids: { values: [id] } }, { term: { spaceId } }],
+            must_not: [{ exists: { field: 'deleted_at' } }],
           },
         },
         size: 1,
@@ -188,6 +189,13 @@ export class WorkflowsService {
       }
 
       const document = response.hits.hits[0];
+
+      // Defense-in-depth: treat soft-deleted workflows as not found even if the ES
+      // query somehow returns them (e.g. during index refresh lag).
+      if (document._source?.deleted_at != null) {
+        return null;
+      }
+
       return this.transformStorageDocumentToWorkflowDto(document._id, document._source);
     } catch (error) {
       if (error.statusCode === 404) {

@@ -187,6 +187,49 @@ describe('WorkflowsService', () => {
         message: 'Server error',
       });
     });
+
+    it('should return null for a soft-deleted workflow (deleted_at is set)', async () => {
+      // Soft-deleted workflows have deleted_at set to a timestamp and enabled: false.
+      // getWorkflow must exclude them so callers treat them as "not found" rather than
+      // "not enabled", which would produce a misleading error message.
+      const softDeletedDocument = {
+        _id: 'test-workflow-id',
+        _source: {
+          ...mockWorkflowDocument._source,
+          deleted_at: '2024-01-01T00:00:00.000Z',
+          enabled: false,
+        },
+      };
+
+      mockEsClient.search.mockResolvedValue({
+        hits: {
+          hits: [softDeletedDocument],
+          total: { value: 1 },
+        },
+      } as any);
+
+      const result = await service.getWorkflow('test-workflow-id', 'default');
+
+      expect(result).toBeNull();
+    });
+
+    it('should exclude soft-deleted workflows from the ES query', async () => {
+      mockEsClient.search.mockResolvedValue({
+        hits: { hits: [], total: { value: 0 } },
+      } as any);
+
+      await service.getWorkflow('test-workflow-id', 'default');
+
+      expect(mockEsClient.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.objectContaining({
+            bool: expect.objectContaining({
+              must_not: [{ exists: { field: 'deleted_at' } }],
+            }),
+          }),
+        })
+      );
+    });
   });
 
   describe('getWorkflowsSubscribedToTrigger', () => {

@@ -7,6 +7,7 @@
 import { trialCompanionTelemetryEvents } from './trial_companion';
 import { alertsTelemetryEvents } from './alerts_grouping';
 import { appTelemetryEvents } from './app';
+import { attackDiscoveryTelemetryEvents } from './attack_discovery';
 import { dataQualityTelemetryEvents } from './data_quality';
 import { documentTelemetryEvents } from './document_details';
 import { entityTelemetryEvents } from './entity_analytics';
@@ -22,6 +23,7 @@ import { aiValueReportTelemetryEvents } from './ai_value_report';
 import { attacksTelemetryEvents } from './attacks';
 
 export const telemetryEvents = [
+  ...attackDiscoveryTelemetryEvents,
   ...attacksTelemetryEvents,
   ...alertsTelemetryEvents,
   ...previewRuleTelemetryEvents,

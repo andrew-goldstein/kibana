@@ -363,9 +363,6 @@ export class WorkflowExecutionRuntimeManager {
           parent_alerting_rule_id: (existingTransaction as any)._labels?.alerting_rule_id,
         });
 
-        // Make the workflow transaction the current transaction for subsequent spans
-        (agent as any).setCurrentTransaction(workflowTransaction);
-
         // Store the workflow transaction ID (not the alerting transaction ID)
         const workflowTransactionId = workflowTransaction.ids?.['transaction.id'];
         if (workflowTransactionId) {

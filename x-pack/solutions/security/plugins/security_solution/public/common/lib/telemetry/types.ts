@@ -15,6 +15,10 @@ import type {
   AlertsGroupingTelemetryEventsMap,
 } from './events/alerts_grouping/types';
 import type {
+  AttackDiscoveryEventTypes,
+  AttackDiscoveryTelemetryEventsMap,
+} from './events/attack_discovery/types';
+import type {
   DataQualityEventTypes,
   DataQualityTelemetryEventsMap,
 } from './events/data_quality/types';
@@ -66,6 +70,7 @@ import type {
 } from './events/trial_companion/types';
 
 export * from './events/app/types';
+export * from './events/attack_discovery/types';
 export * from './events/attacks/types';
 export * from './events/alerts_grouping/types';
 export * from './events/data_quality/types';
@@ -83,45 +88,49 @@ export interface TelemetryServiceSetupParams {
 }
 
 // Combine all event type data
-export type TelemetryEventTypeData<T extends TelemetryEventTypes> = T extends AlertsEventTypes
-  ? AlertsGroupingTelemetryEventsMap[T]
-  : T extends PreviewRuleEventTypes
-  ? PreviewRuleTelemetryEventsMap[T]
-  : T extends EntityEventTypes
-  ? EntityAnalyticsTelemetryEventsMap[T]
-  : T extends DataQualityEventTypes
-  ? DataQualityTelemetryEventsMap[T]
-  : T extends DocumentEventTypes
-  ? DocumentDetailsTelemetryEventsMap[T]
-  : T extends OnboardingHubEventTypes
-  ? OnboardingHubTelemetryEventsMap[T]
-  : T extends ManualRuleRunEventTypes
-  ? ManualRuleRunTelemetryEventsMap[T]
-  : T extends BulkFillRuleGapsEventTypes
-  ? BulkFillRuleGapsTelemetryEventsMap[T]
-  : T extends EventLogEventTypes
-  ? EventLogTelemetryEventsMap[T]
-  : T extends NotesEventTypes
-  ? NotesTelemetryEventsMap[T]
-  : T extends AppEventTypes
-  ? AppTelemetryEventsMap[T]
-  : T extends SiemMigrationsRuleEventTypes
-  ? SiemMigrationsTelemetryEventsMap[T]
-  : T extends SiemMigrationsDashboardEventTypes
-  ? SiemMigrationsTelemetryEventsMap[T]
-  : T extends RuleUpgradeEventTypes
-  ? RuleUpgradeTelemetryEventsMap[T]
-  : T extends AIValueReportEventTypes
-  ? AIValueReportTelemetryEventsMap[T]
-  : T extends TrialCompanionEventTypes
-  ? TrialCompanionTelemetryEventsMap[T]
-  : T extends AgentBuilderEventTypes
-  ? AgentBuilderTelemetryEventsMap[T]
-  : T extends AttacksEventTypes
-  ? AttacksTelemetryEventsMap[T]
-  : never;
+export type TelemetryEventTypeData<T extends TelemetryEventTypes> =
+  T extends AttackDiscoveryEventTypes
+    ? AttackDiscoveryTelemetryEventsMap[T]
+    : T extends AlertsEventTypes
+    ? AlertsGroupingTelemetryEventsMap[T]
+    : T extends PreviewRuleEventTypes
+    ? PreviewRuleTelemetryEventsMap[T]
+    : T extends EntityEventTypes
+    ? EntityAnalyticsTelemetryEventsMap[T]
+    : T extends DataQualityEventTypes
+    ? DataQualityTelemetryEventsMap[T]
+    : T extends DocumentEventTypes
+    ? DocumentDetailsTelemetryEventsMap[T]
+    : T extends OnboardingHubEventTypes
+    ? OnboardingHubTelemetryEventsMap[T]
+    : T extends ManualRuleRunEventTypes
+    ? ManualRuleRunTelemetryEventsMap[T]
+    : T extends BulkFillRuleGapsEventTypes
+    ? BulkFillRuleGapsTelemetryEventsMap[T]
+    : T extends EventLogEventTypes
+    ? EventLogTelemetryEventsMap[T]
+    : T extends NotesEventTypes
+    ? NotesTelemetryEventsMap[T]
+    : T extends AppEventTypes
+    ? AppTelemetryEventsMap[T]
+    : T extends SiemMigrationsRuleEventTypes
+    ? SiemMigrationsTelemetryEventsMap[T]
+    : T extends SiemMigrationsDashboardEventTypes
+    ? SiemMigrationsTelemetryEventsMap[T]
+    : T extends RuleUpgradeEventTypes
+    ? RuleUpgradeTelemetryEventsMap[T]
+    : T extends AIValueReportEventTypes
+    ? AIValueReportTelemetryEventsMap[T]
+    : T extends TrialCompanionEventTypes
+    ? TrialCompanionTelemetryEventsMap[T]
+    : T extends AgentBuilderEventTypes
+    ? AgentBuilderTelemetryEventsMap[T]
+    : T extends AttacksEventTypes
+    ? AttacksTelemetryEventsMap[T]
+    : never;
 
 export type TelemetryEventTypes =
+  | AttackDiscoveryEventTypes
   | AlertsEventTypes
   | PreviewRuleEventTypes
   | EntityEventTypes
