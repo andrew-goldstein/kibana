@@ -132,6 +132,12 @@ export const getRunAgentStepDefinition = (serviceManager: ServiceManager) => {
 
         const { events$ } = await executionService.executeAgent({
           mode: AgentExecutionMode.conversation,
+          // Workflow steps run unattended (scheduled tasks, no human to answer
+          // a question). Without this, conversation mode defaults to
+          // interactive:true, the agent gets ask_user_question, and a
+          // clarification request ends the run via handleToolInterrupt with
+          // no structured output — the step silently loses its verdict.
+          interactive: { enabled: false },
           request,
           abortSignal: context.abortSignal,
           metadata,
@@ -179,7 +185,12 @@ export const getRunAgentStepDefinition = (serviceManager: ServiceManager) => {
           )
         );
 
-        const roundEvent = events.find(isRoundCompleteEvent);
+        // The agent loop emits one round_complete per round (research cycles
+        // + the terminal structured answer). The workflow step's output is the
+        // FINAL round: `find` returned the first intermediate round whenever
+        // the agent did research before answering, silently dropping the
+        // structured output the caller asked for.
+        const roundEvent = events.findLast(isRoundCompleteEvent);
         if (!roundEvent) {
           throw new Error('No round_complete event received from execution service');
         }
