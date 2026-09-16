@@ -17,6 +17,11 @@ import {
 } from './constants';
 import type { ManagedWorkflowDefinition } from '../../types';
 
+// PR-SPLIT: this install set splits across #19022 (review create + attachments),
+// #19214 (verdict switch and gate), and #19396 (forensics action). The batched
+// generation child is already on main; #19022 bumps it for the
+// `discoveries_generated` output the runner's telemetry reads.
+
 // `system-attack-discovery-generation` is already taken by the discoveries plugin,
 // so these mirror the `system-security-rule-tuning-worker` / `-review` pair instead.
 // The `-batched-generation` suffix below does not collide with it — both the
@@ -33,7 +38,7 @@ export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
   id: ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 2,
+  version: 4,
   yaml: ATTACK_DISCOVERY_RUNNER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
@@ -42,7 +47,7 @@ export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
   id: ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 1,
+  version: 4,
   yaml: ATTACK_DISCOVERY_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
@@ -51,12 +56,16 @@ export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
  * `workflow.execute`. Owns no trigger, so unlike the runner and the review it
  * uses the internal-workflow management profile: enablement is enforced rather
  * than restorable.
+ *
+ * PR-SPLIT #19022: the version carries the YAML's new `discoveries_generated`
+ * output. Without the bump an existing install keeps the old definition and the
+ * runner's `attacks_generated` reads nothing.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 1,
+  version: 2,
   yaml: ATTACK_DISCOVERY_BATCHED_GENERATION_YAML,
 } as const satisfies ManagedWorkflowDefinition;

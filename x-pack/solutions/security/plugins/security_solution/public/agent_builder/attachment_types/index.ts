@@ -363,3 +363,29 @@ export const registerRulePreviewAttachment = ({
     register({ attachments, data, spaces, getServices, getStore });
   });
 };
+
+/**
+ * Registers the `security.attack_discovery` attachment renderer (inline summary
+ * and details via `AttackDiscoveryMarkdownFormatter`).
+ *
+ * PR-SPLIT #19022: the client-side renderer for the Attack Discovery attachment.
+ *
+ * Dynamically imports
+ * [./attack_discovery](./attack_discovery) so the markdown field-plugin stack stays
+ * off the main `securitySolution` page-load bundle.
+ *
+ * Race-window: same semantics as {@link registerRuleAttachment} — until the chunk
+ * resolves, `security.attack_discovery` attachments are header-only.
+ */
+export const registerAttackDiscoveryAttachment = ({
+  attachments,
+}: {
+  attachments: AttachmentServiceStartContract;
+}): void => {
+  void import(
+    /* webpackChunkName: "security_attack_discovery_attachment" */
+    './attack_discovery'
+  ).then(({ registerAttackDiscoveryAttachment: register }) => {
+    register({ attachments });
+  });
+};

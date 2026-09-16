@@ -8,6 +8,11 @@
 import { coreMock } from '@kbn/core/server/mocks';
 import type { AttackDiscoveryExecutorOptions } from '@kbn/attack-discovery-schedules-common';
 
+import {
+  ATTACK_DISCOVERY_ATTACHMENT_TYPE,
+  ATTACK_DISCOVERY_VERDICT_ATTACHMENT_TYPE,
+  DIAGNOSTIC_REPORT_ATTACHMENT_TYPE,
+} from '../common/constants';
 import { DiscoveriesPlugin } from './plugin';
 import type { DiscoveriesPluginSetupDeps, DiscoveriesPluginStartDeps } from './types';
 
@@ -432,12 +437,13 @@ describe('DiscoveriesPlugin', () => {
       });
     });
 
+    // PR-SPLIT #19022: the attachment types the review adds to an Investigation.
     describe('agent builder registration', () => {
       beforeEach(() => {
         jest.clearAllMocks();
       });
 
-      it('registers agent builder skills and the attachment type when the feature flag is ON', async () => {
+      it('registers agent builder skills and all attachment types when the feature flag is ON', async () => {
         const mockAgentBuilder = createMockAgentBuilder();
         const context = createPluginInitializerContext();
         const plugin = new DiscoveriesPlugin(context);
@@ -452,7 +458,16 @@ describe('DiscoveriesPlugin', () => {
         await flushPromises();
 
         expect(registerSkills).toHaveBeenCalledTimes(1);
-        expect(mockAgentBuilder.attachments.registerType).toHaveBeenCalledTimes(1);
+        // Named rather than counted: every type here has to be on the agent
+        // builder allow list, and registering one that is not throws and takes
+        // the whole registration — skills included — down with it.
+        expect(
+          mockAgentBuilder.attachments.registerType.mock.calls.map(([type]) => type.id)
+        ).toEqual([
+          DIAGNOSTIC_REPORT_ATTACHMENT_TYPE,
+          ATTACK_DISCOVERY_ATTACHMENT_TYPE,
+          ATTACK_DISCOVERY_VERDICT_ATTACHMENT_TYPE,
+        ]);
       });
 
       it('does not register agent builder skills or the attachment type when the feature flag is OFF', async () => {

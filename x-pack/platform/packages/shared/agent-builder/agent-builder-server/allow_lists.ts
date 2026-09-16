@@ -361,6 +361,10 @@ export const AGENT_BUILDER_BUILTIN_ATTACHMENTS = [
   // Security Solution – Attack Discovery (discoveries plugin)
   // gated behind the workflows feature flag
   'diagnostic_report',
+  // PR-SPLIT #19022: security.attack_discovery attachment type.
+  'security.attack_discovery',
+  // PR-SPLIT #19022: the FP/TP verdict attachment type.
+  'security.attack_discovery.verdict',
 
   // Observability
   'observability.ai_insight',

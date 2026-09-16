@@ -145,6 +145,20 @@ describe('allowed autonomy levels', () => {
     expect(buildDefaultWorkerSettings(twoLevels).autonomy).toBe('manual');
     expect(buildDefaultWorkerSettings(noManual).autonomy).toBe('supervised');
   });
+
+  // PR-SPLIT #19214: two-level dial that decides whether the forensics handoff gates.
+  // Attack Discovery takes two of the three shared levels: it gates exactly one thing —
+  // the forensics handoff its verdicts propose — so it needs one level that gates that
+  // and one that does not. `assisted` sits between them and would be indistinguishable
+  // from `manual` here, which is why it is rejected rather than merely unused.
+  it('offers Attack Discovery manual and supervised only', () => {
+    const schema = getCompleteWorkerSettingsSchema(ATTACK_DISCOVERY);
+    const defaults = createDefaultWorkerSettings(ATTACK_DISCOVERY);
+
+    expect(schema.safeParse({ ...defaults, autonomy: 'manual' }).success).toBe(true);
+    expect(schema.safeParse({ ...defaults, autonomy: 'supervised' }).success).toBe(true);
+    expect(issuesOf(ATTACK_DISCOVERY, { ...defaults, autonomy: 'assisted' })).toContain('autonomy');
+  });
 });
 
 describe('applyWorkerSettingsWrite and diffWorkerSettings', () => {

@@ -749,6 +749,8 @@ export const ESSENTIAL_ALERT_FIELDS: string[] = [
 export enum SecurityAgentBuilderAttachments {
   alert = 'security.alert',
   alerts = 'security.alerts',
+  // PR-SPLIT #19022: the client-side renderer for the Attack Discovery attachment.
+  attackDiscovery = 'security.attack_discovery',
   entity = 'security.entity',
   entityAnalyticsDashboard = 'security.entity_analytics_dashboard',
   entityGraph = 'security.entity_graph',

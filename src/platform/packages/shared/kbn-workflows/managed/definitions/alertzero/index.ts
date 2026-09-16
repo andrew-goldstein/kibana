@@ -9,6 +9,8 @@
 
 import { ALERTZERO_ACTION_CREATE_RULE_WORKFLOW_ID } from './actions/action_create_detection_rule';
 import { ALERTZERO_ACTION_EDIT_RULE_WORKFLOW_ID } from './actions/action_edit_detection_rule';
+// PR-SPLIT #19396: the forensics handoff action.
+import { ALERTZERO_ACTION_HANDOFF_TO_FORENSICS_WORKFLOW_ID } from './actions/action_handoff_to_forensics';
 import {
   ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID,
   ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW_ID,
@@ -24,6 +26,8 @@ import { ALERTZERO_WORKER_DETECTION_RULE_TUNING_WORKFLOW_ID } from './detection_
 import { ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID } from './floor_alert_triage';
 import { ALERTZERO_WORKER_FLOOR_ATTACK_DISCOVERY_WORKFLOW_ID } from './floor_attack_discovery';
 import { ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW_ID } from './hunt_continuous_threat_hunt';
+// PR-SPLIT #19022: the Investigation journal helper.
+import { ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID } from './journal_note';
 import {
   ALERTZERO_DETECTION_COVERAGE_WORKFLOW_ID,
   ALERTZERO_RULE_CREATION_WORKFLOW_ID,
@@ -52,6 +56,11 @@ export {
   ALERTZERO_ACTION_EDIT_RULE_WORKFLOW,
   ALERTZERO_ACTION_EDIT_RULE_WORKFLOW_ID,
 } from './actions/action_edit_detection_rule';
+// PR-SPLIT #19396: the forensics handoff action.
+export {
+  ALERTZERO_ACTION_HANDOFF_TO_FORENSICS_WORKFLOW,
+  ALERTZERO_ACTION_HANDOFF_TO_FORENSICS_WORKFLOW_ID,
+} from './actions/action_handoff_to_forensics';
 export {
   ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW,
   ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID,
@@ -68,6 +77,11 @@ export {
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
 } from './attack_discovery_workflows';
+// PR-SPLIT #19022: the Investigation journal helper.
+export {
+  ALERTZERO_JOURNAL_NOTE_WORKFLOW,
+  ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID,
+} from './journal_note';
 export {
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW,
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW_ID,
@@ -110,11 +124,15 @@ export const ALERTZERO_RULE_WORKFLOW_IDS = [
  * out per attack, the batched generation workflow it delegates generation to, and
  * the per-attack review workflow it launches. Installed globally so the per-space
  * Watch Floor worker can dispatch to them.
+ *
+ * PR-SPLIT: this install set splits across #19022 / #19214 / #19396.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_WORKFLOW_IDS = [
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
+  // PR-SPLIT #19022: the Investigation journal helper.
+  ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID,
 ] as const;
 
 /**
@@ -127,4 +145,6 @@ export const ALERTZERO_ACTION_WORKFLOW_IDS = [
   ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID,
   ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW_ID,
   ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW_ID,
+  // PR-SPLIT #19396: the forensics handoff action.
+  ALERTZERO_ACTION_HANDOFF_TO_FORENSICS_WORKFLOW_ID,
 ] as const;
