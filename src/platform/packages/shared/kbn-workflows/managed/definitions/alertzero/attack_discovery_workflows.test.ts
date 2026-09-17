@@ -479,8 +479,18 @@ describe('Attack Discovery worker chain', () => {
       expect(parallel?.steps).toHaveLength(1);
     });
 
-    it('launches each review with workflow.execute', () => {
-      expect(branch?.type).toBe('workflow.execute');
+    // `executeAsync`, not `execute`: a review parks on its escalation gate for up to
+    // `176h`, and a synchronous launch would park this run with it. Two things then
+    // kill the analyst's decision window, because a run waiting on a child both burns
+    // its own wall clock and holds its concurrency slot: this run's workflow timeout,
+    // and the next scheduled run cancelling this one under `cancel-in-progress`.
+    // Either one cancels the review, which leaves the Investigation open and the
+    // proposal `pending` forever -- nothing settles a cancelled gate, and dispatch
+    // never hands that attack out again. Human time cannot share an execution with
+    // machine cadence. Re-dispatch stays safe without the join: the review's own
+    // `drop max 1`, keyed per attack, turns a second launch away.
+    it('launches each review detached from this run', () => {
+      expect(branch?.type).toBe('workflow.executeAsync');
     });
 
     it('launches the review workflow once per attack', () => {
@@ -623,12 +633,16 @@ describe('Attack Discovery worker chain', () => {
       });
     });
 
-    // `init_review_counts` seeds the variable and each batch adds to it, so the
-    // output has to read the accumulator rather than a copy of it.
-    it('reports the accumulated failed-review count', () => {
-      expect(stepIn(workerSteps, 'emit_result')?.with?.reviews_failed).toContain(
-        'variables.reviews_failed'
-      );
+    // There is no failed-review count to report: the reviews are dispatched detached,
+    // so this run terminalizes without learning any of their outcomes. Reporting a
+    // number here would mean joining them, which is exactly what must not happen.
+    // A failed review is visible in its own execution and in the journal it writes.
+    it('reports no review outcome it cannot observe', () => {
+      expect(stepIn(workerSteps, 'emit_result')?.with?.reviews_failed).toBeUndefined();
+    });
+
+    it('accumulates no per-batch review counts', () => {
+      expect(workerSteps.map(({ name }) => name)).not.toContain('accumulate_failed');
     });
   });
 
@@ -1280,7 +1294,7 @@ describe('Attack Discovery worker chain', () => {
       expect(steps.filter((step) => step.type === 'workflow.output')).toHaveLength(1);
     });
 
-    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_failed', 'reviews_requested'])(
+    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_requested'])(
       'reports %s so a caller can tell an empty run from a failed one',
       (name) => {
         expect((worker.outputs ?? []).map((output) => output.name)).toContain(name);
@@ -1289,7 +1303,7 @@ describe('Attack Discovery worker chain', () => {
 
     // The editor type-checks `workflow.output` `with:` source text, so a
     // `type: number` field cannot be filled with `"${{ ... }}"`.
-    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_failed', 'reviews_requested'])(
+    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_requested'])(
       'declares %s as a string so the templated emit passes editor type checks',
       (name) => {
         expect((worker.outputs ?? []).find((output) => output.name === name)?.type).toBe('string');
@@ -1299,7 +1313,7 @@ describe('Attack Discovery worker chain', () => {
     // `${{ }}` keeps the Liquid value's type. Runtime output validation then
     // rejects a number against `type: string`. `{{ }}` stringifies so the
     // emitted value matches the declared schema.
-    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_failed', 'reviews_requested'])(
+    it.each(['alerts_analyzed', 'attacks_generated', 'reviews_requested'])(
       'stringifies %s in emit_result so runtime matches the string output schema',
       (name) => {
         const value = stepIn(workerSteps, 'emit_result')?.with?.[name];
@@ -1558,12 +1572,31 @@ describe('Attack Discovery worker chain', () => {
     expect(review.settings?.timeout).toBe('176h');
   });
 
-  // The default workflow timeout (6h) must stay above the 35m generation step.
+  // Neither the floor nor the runner sets `settings.timeout`, so both take the
+  // engine's 6h default — and that is correct only because neither one waits on a
+  // human. The runner's longest wait is the 4h generation step, and the floor's is the
+  // runner. Were either to park on the review's escalation gate instead, the same
+  // default would become a 6h guillotine: the timeout is wall-clock from `startedAt`,
+  // so a parked run burns it, and tripping it cancels the child it was waiting on.
   it.each([
     ['floor', floor],
     ['worker', worker],
   ])('leaves the %s workflow-level timeout at its generous default', (_name, workflow) => {
     expect(workflow.settings?.timeout).toBeUndefined();
+  });
+
+  // The invariant that default rests on, asserted directly rather than inferred from
+  // the fan-out's step type. A `workflow.execute` to the review is the one way to
+  // reintroduce the park, and it would regress silently: the YAML stays valid and
+  // every other assertion here still passes.
+  it('never waits synchronously on a review', () => {
+    expect(
+      workerSteps.filter(
+        (step) =>
+          step.type === 'workflow.execute' &&
+          step.with?.['workflow-id'] === ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID
+      )
+    ).toEqual([]);
   });
 
   // Systemic guard, not a point fix. Three separate references to the batched

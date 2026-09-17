@@ -13,12 +13,20 @@ settings:
   # concurrency is always checked within a single space.
   #
   # `cancel-in-progress` with max 1: the newest discoveries are the ones worth
-  # having, and a backlog must never delay a new run. `drop` and `queue` cannot
-  # deliver that — a run that is merely waiting still occupies the single slot, so
-  # a newer run would either wait behind superseded work or be turned away.
+  # having, and a backlog must never delay a new run. Neither alternative delivers
+  # that — `drop` turns the newer run away, and `queue` makes it wait behind
+  # superseded work (a QUEUED run does not hold the slot, but it does not pass the
+  # run ahead of it either, and `queue-ttl` expires it after 24h).
+  #
+  # PR-SPLIT #19214: the gate is what makes this worth stating.
+  # What makes cancelling safe here is that this run is bounded by generation: the
+  # per-attack reviews are dispatched detached (`workflow.executeAsync` below), so no
+  # analyst's decision window is ever inside this execution or its slot. Were they
+  # synchronous instead, each scheduled run would cancel the previous run's parked
+  # gates, leaving those Investigations open and their proposals `pending` forever.
   #
   # Accepted cost: a run cancelled after generation persisted but before the fan-out
-  # finished leaves those attacks with no AlertZero review. Duplicates are not part
+  # dispatched leaves those attacks with no AlertZero review. Duplicates are not part
   # of the cost — the ad-hoc write path ids each attack by a hash of its alert ids,
   # connector, owner and space, so an identical attack is dropped on write; only a
   # regrouped alert set hashes differently and lands as a near-duplicate.
@@ -93,8 +101,10 @@ outputs:
     type: string
   - name: reviews_requested
     type: string
-  - name: reviews_failed
-    type: string
+  # PR-SPLIT #19214: the count goes with the join the gate made unsafe.
+  # No `reviews_failed` counterpart: the reviews are dispatched detached, so this run
+  # terminalizes without learning any of their outcomes. A failed review is visible in
+  # its own execution and in the journal it writes to its Investigation.
   - name: alerts_analyzed
     type: string
   - name: schedule_interval
@@ -181,13 +191,6 @@ steps:
         steps.run_generation.output.batches_failed }} failed). Skipping the
         per-attack fan-out.
 
-  # Failed-review count starts at 0 so an empty generation and the first batch
-  # both have a number to add to. Each batch writes the running total back here.
-  - name: init_review_counts
-    type: data.set
-    with:
-      reviews_failed: 0
-
   # One review execution per attack. Each `chunk: 100` batch stays under the
   # parallel fan-out ceiling so a 101+ generation cannot throw. Branches still
   # run at `concurrency.max` (2). The per-attack body cannot live in a parallel
@@ -206,32 +209,42 @@ steps:
       - name: run_reviews
         type: parallel
         foreach: "${{ steps.current_batch.output.attacks }}"
-        # Settled: one failed review must not abandon the remaining attacks. Failures
-        # stay visible in the aggregate results and counts.
+        # Settled: a branch that fails to LAUNCH its review must not abandon the
+        # remaining attacks. The review's own outcome is not a branch outcome here —
+        # dispatch is detached, so a branch succeeds once the child has started.
         mode: settled
         concurrency:
-          # 2 is the smallest width that still reviews attacks concurrently — `max: 1`
-          # on a `parallel` step is a sequential `foreach` with extra steps. Each
-          # branch above that is one more child workflow execution running at the same
-          # time, and until #19211 puts a real analysis workflow behind the fan-out
-          # every step in the review child is a `console` stub, so a wider width buys
-          # throughput nothing is using. Widen it with evidence then, not before.
-          # DEFAULT_PARALLEL_MAX_CONCURRENCY (20) is the schema ceiling and is enforced
-          # as a validation error rather than clamped. This is not a cap on how many
-          # attacks are reviewed, only on how many at once.
+          # This bounds the rate of DISPATCH, not the width of review. Each branch only
+          # starts a child and terminalizes, so every attack in the batch is reviewed
+          # concurrently regardless of this number; 2 keeps a 100-attack batch from
+          # opening 100 executions in one tick. DEFAULT_PARALLEL_MAX_CONCURRENCY (20)
+          # is the schema ceiling and is enforced as a validation error rather than
+          # clamped.
           max: 2
-          # `count-waiting` is left at its default (true), which counts a parked branch
-          # against `max`. Every branch here parks as soon as it starts its child,
-          # because `workflow.execute` is synchronous, so at `false` this width would
-          # not restrain the fan-out at all.
-          #
-          # Refill is per slot rather than in lockstep: the engine frees a slot as each
-          # branch terminalizes and starts the next queued one on a following tick, so
-          # the branches in flight do not have to finish together. Revisit alongside
-          # #19214, which adds HITL gates and keeps each branch parked far longer.
+          # `count-waiting` is left at its default (true) and now costs nothing: no
+          # branch parks, because `workflow.executeAsync` returns as soon as the child
+          # is started. Refill is per slot rather than in lockstep, so the engine frees
+          # a slot as each branch terminalizes and starts the next on a following tick.
         steps:
+          # PR-SPLIT #19214: detached because this slice adds the gate that parks.
+          # `executeAsync`, not `execute`: a review parks on its escalation gate for up
+          # to `176h`, and a synchronous launch would park this run with it. A run
+          # waiting on a child both burns its own wall clock and holds its concurrency
+          # slot, so two separate things would then kill the analyst's decision window
+          # — this run's workflow timeout (the engine's 6h default, wall-clock from
+          # `startedAt`), and the next scheduled run cancelling this one. Either
+          # cancels the review, and nothing settles a cancelled gate: the Investigation
+          # stays open, the proposal stays `pending` forever, and dispatch never hands
+          # that attack out again. Human time cannot share an execution with machine
+          # cadence.
+          #
+          # Nothing is lost by not joining. Re-dispatch is still safe — the review's
+          # own `drop max 1`, keyed per attack, turns a second launch away — and the
+          # review owns every write the verdict produces, so no step here needs its
+          # result. What goes is the failed-review count, which this run could only
+          # have learned by waiting (see `outputs` above).
           - name: run_review
-            type: workflow.execute
+            type: workflow.executeAsync
             with:
               workflow-id: system-security-attack-discovery-review
               inputs:
@@ -264,20 +277,8 @@ steps:
                 # PR-SPLIT #19022: the runner execution recorded on the Investigation.
                 parent_run_id: "{{ execution.id }}"
 
-      - name: batch_failed
-        type: data.set
-        with:
-          count: "${{ steps.run_reviews.output.failed | default: 0 }}"
-
-      - name: accumulate_failed
-        type: data.set
-        with:
-          reviews_failed: "${{ variables.reviews_failed | plus: steps.batch_failed.output.count }}"
-
-  # Fan-in: every batch has settled. `variables.reviews_failed` needs no `default`
-  # here because `init_review_counts` runs unconditionally before the loop, so the
-  # key is always set; each `accumulate_failed` iteration is its own entry in
-  # `variables`, so the value read here is the last running total written.
+  # Every batch has dispatched. This is not a fan-in: the reviews are still running
+  # on their own executions, and this run reports only what it did itself.
   - name: emit_result
     type: workflow.output
     status: completed
@@ -293,7 +294,6 @@ steps:
       # from the same step is what made `reviews_requested` tautological on
       # elastic/kibana#290732; keep them apart.
       reviews_requested: "{{ steps.resolve_fanout.output.attack_count }}"
-      reviews_failed: "{{ variables.reviews_failed }}"
       alerts_analyzed: "{{ steps.run_generation.output.alerts_analyzed | default: 0 }}"
       schedule_interval: "{{ inputs.schedule_interval }}"
       execution_uuids: "{{ steps.run_generation.output.execution_uuids | join: ',' }}"
