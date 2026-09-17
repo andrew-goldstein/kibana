@@ -246,5 +246,22 @@ describe('createAttackDiscoveryAttachmentType', () => {
         'detection alerts'
       );
     });
+
+    // The guide's bar: describe the user-visible outcome of rendering, not when or
+    // why to use the content.
+    it('describes what inline rendering looks like', () => {
+      expect(createAttackDiscoveryAttachmentType(defaultDeps()).getAgentDescription?.()).toContain(
+        'Rendering this attachment inline displays'
+      );
+    });
+
+    it.each(['Use it as', 'Treat it as', 'You have been provided'])(
+      'does not tell the agent how to use the content ("%s")',
+      (guidance) => {
+        expect(
+          createAttackDiscoveryAttachmentType(defaultDeps()).getAgentDescription?.()
+        ).not.toContain(guidance);
+      }
+    );
   });
 });

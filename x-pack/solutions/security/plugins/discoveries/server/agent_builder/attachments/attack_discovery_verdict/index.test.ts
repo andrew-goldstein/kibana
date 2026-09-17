@@ -155,5 +155,20 @@ describe('createAttackDiscoveryVerdictAttachmentType', () => {
         expect(attachmentType.getAgentDescription?.()).toContain(verdict);
       }
     );
+
+    // The guide's bar: describe the user-visible outcome of rendering, not when or
+    // why to use the content.
+    it('describes what inline rendering looks like', () => {
+      expect(attachmentType.getAgentDescription?.()).toContain(
+        'Rendering this attachment inline displays'
+      );
+    });
+
+    it.each(['Use it as', 'Treat it as', 'You have been provided'])(
+      'does not tell the agent how to use the content ("%s")',
+      (guidance) => {
+        expect(attachmentType.getAgentDescription?.()).not.toContain(guidance);
+      }
+    );
   });
 });

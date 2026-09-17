@@ -87,12 +87,16 @@ export const createAttackDiscoveryVerdictAttachmentType = (): AttachmentTypeDefi
     },
   }),
 
+  // Describes what inline rendering LOOKS LIKE rather than when or why to use the
+  // content: `render_inline` is the workflow's decision and belongs to the task, not
+  // to the type. See the Agent Builder CONTRIBUTOR_GUIDE. The enum is named because it
+  // describes the payload, not when to use it.
   getAgentDescription: () =>
-    `You have been provided with the false-positive / true-positive analysis verdict for ` +
-    `the Attack Discovery under investigation. The verdict is one of: ` +
-    `\`true_positive\` (the attack is real), \`false_positive\` (it is not), ` +
-    `\`inconclusive\` (the evidence did not settle it), or \`failed\` (the analysis itself ` +
-    `did not complete, so no classification was produced). It carries the summary the ` +
-    `verdict was drawn from, and a rationale when the analysis produced one. Treat it as ` +
-    `the conclusion about the attack, distinct from the evidence it was drawn from.`,
+    `Represents the false-positive / true-positive analysis verdict for an Attack Discovery. ` +
+    `The verdict is one of: \`true_positive\` (the attack is real), \`false_positive\` (it ` +
+    `is not), \`inconclusive\` (the evidence did not settle it), or \`failed\` (the analysis ` +
+    `itself did not complete, so no classification was produced). Rendering this attachment ` +
+    `inline displays the verdict as a labelled badge, followed by the summary it was drawn ` +
+    `from and, when the analysis produced one, its rationale — both as formatted markdown in ` +
+    `the conversation UI.`,
 });

@@ -127,9 +127,13 @@ export const createAttackDiscoveryAttachmentType = ({
     };
   },
 
+  // Describes what inline rendering LOOKS LIKE rather than when or why to use the
+  // content: `render_inline` is the workflow's decision and belongs to the task, not
+  // to the type. See the Agent Builder CONTRIBUTOR_GUIDE.
   getAgentDescription: () =>
-    `You have been provided with an Attack Discovery: a correlated set of detection alerts ` +
-    `that Attack Discovery identified as a single attack. It carries the attack's title, a ` +
-    `summary, a detailed markdown narrative, and the ids of the detection alerts it correlated. ` +
-    `Use it as the authoritative description of the attack under investigation.`,
+    `Represents an Attack Discovery: a correlated set of detection alerts that Attack ` +
+    `Discovery identified as a single attack. Rendering this attachment inline displays the ` +
+    `attack's title, then its summary and its detailed narrative as formatted markdown in ` +
+    `the conversation UI, with the referenced detection alert fields rendered as interactive ` +
+    `pills the user can open.`,
 });
