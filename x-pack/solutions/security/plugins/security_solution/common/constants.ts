@@ -751,6 +751,8 @@ export enum SecurityAgentBuilderAttachments {
   alerts = 'security.alerts',
   // PR-SPLIT #19022: the client-side renderer for the Attack Discovery attachment.
   attackDiscovery = 'security.attack_discovery',
+  // PR-SPLIT #19022: the client-side renderer for the FP/TP verdict attachment.
+  attackDiscoveryVerdict = 'security.attack_discovery.verdict',
   entity = 'security.entity',
   entityAnalyticsDashboard = 'security.entity_analytics_dashboard',
   entityGraph = 'security.entity_graph',

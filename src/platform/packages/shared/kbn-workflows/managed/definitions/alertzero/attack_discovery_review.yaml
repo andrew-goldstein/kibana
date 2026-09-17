@@ -371,6 +371,10 @@ steps:
         summary_markdown: "{{ inputs.summary_markdown }}"
         verdict: "{{ inputs.stub_verdict | default: consts.default_verdict }}"
       description: FP/TP analysis verdict and summary
+      # Same as the discovery above: the conclusion is what an analyst opens the
+      # Investigation to read, so it renders on open rather than waiting for the agent
+      # to reference it — which on this path never happens, because nothing wakes it.
+      render_inline: true
     on-failure:
       continue: true
 

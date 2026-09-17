@@ -389,3 +389,30 @@ export const registerAttackDiscoveryAttachment = ({
     register({ attachments });
   });
 };
+
+/**
+ * Registers the `security.attack_discovery.verdict` attachment renderer (per-verdict
+ * header icon and badge, plus the summary and optional rationale via
+ * `AttackDiscoveryMarkdownFormatter`).
+ *
+ * PR-SPLIT #19022: the client-side renderer for the FP/TP verdict attachment.
+ *
+ * Dynamically imports
+ * [./attack_discovery_verdict](./attack_discovery_verdict) so the markdown field-plugin
+ * stack stays off the main `securitySolution` page-load bundle.
+ *
+ * Race-window: same semantics as {@link registerRuleAttachment} — until the chunk
+ * resolves, `security.attack_discovery.verdict` attachments are header-only.
+ */
+export const registerAttackDiscoveryVerdictAttachment = ({
+  attachments,
+}: {
+  attachments: AttachmentServiceStartContract;
+}): void => {
+  void import(
+    /* webpackChunkName: "security_attack_discovery_verdict_attachment" */
+    './attack_discovery_verdict'
+  ).then(({ registerAttackDiscoveryVerdictAttachment: register }) => {
+    register({ attachments });
+  });
+};

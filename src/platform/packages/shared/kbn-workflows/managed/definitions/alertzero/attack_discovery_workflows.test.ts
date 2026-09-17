@@ -914,8 +914,13 @@ describe('Attack Discovery worker chain', () => {
         expect(names.indexOf('attach_discovery')).toBeLessThan(names.indexOf('run_fp_tp_analysis'));
       });
 
-      it('does not render the verdict attachment inline as a substitute comment', () => {
-        expect(stepIn(reviewSteps, 'attach_verdict')?.with?.render_inline).not.toBe(true);
+      // Reversed once the verdict got a client renderer: `render_inline` decides whether
+      // the UI shows the attachment when the Investigation is opened, and shows nothing of
+      // the sort for a type with no renderer. It is not a chat message and does not wake
+      // the agent, so it is not a substitute comment — the journal is the narrative
+      // surface, and the conclusion is what an analyst opens the Investigation to read.
+      it('renders the verdict inline in the Investigation transcript', () => {
+        expect(stepIn(reviewSteps, 'attach_verdict')?.with?.render_inline).toBe(true);
       });
 
       it('does not pass by-value data for the by-reference attachment', () => {

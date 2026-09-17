@@ -87,6 +87,7 @@ import {
   registerAttachmentUiDefinitions,
   registerAiRuleCreationHandler,
   registerAttackDiscoveryAttachment,
+  registerAttackDiscoveryVerdictAttachment,
   registerEntityAnalyticsDashboardAttachment,
   registerEntityRiskScoreHistoryAttachment,
   registerEntityAttachment,
@@ -363,6 +364,10 @@ export class Plugin implements IPlugin<PluginSetup, PluginStart, SetupPlugins, S
       registerAttachmentUiDefinitions(plugins.agentBuilder.attachments);
       // PR-SPLIT #19022: the client-side renderer for the Attack Discovery attachment.
       registerAttackDiscoveryAttachment({
+        attachments: plugins.agentBuilder.attachments,
+      });
+      // PR-SPLIT #19022: the client-side renderer for the FP/TP verdict attachment.
+      registerAttackDiscoveryVerdictAttachment({
         attachments: plugins.agentBuilder.attachments,
       });
       if (this.experimentalFeatures.aiRuleCreationEnabled) {
