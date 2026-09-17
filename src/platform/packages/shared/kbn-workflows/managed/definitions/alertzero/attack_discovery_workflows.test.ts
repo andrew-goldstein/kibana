@@ -716,6 +716,7 @@ describe('Attack Discovery worker chain', () => {
       ['attach_discovery', 'ai.attachment.add'],
       ['attach_alerts', 'foreach'],
       ['attach_alert_batch', 'ai.attachment.add'],
+      ['verify_evidence', 'ai.attachment.read'],
       ['attach_verdict', 'ai.attachment.add'],
       ['close_investigation_false_positive', 'ai.conversation.metadata.patch'],
       ['close_attack_false_positive', 'security.setAttackStatus'],
@@ -864,6 +865,53 @@ describe('Attack Discovery worker chain', () => {
         expect(names.indexOf('verify_investigation')).toBeLessThan(
           names.indexOf('attach_discovery')
         );
+      });
+    });
+
+    // The same split the Investigation guard above makes, applied to the evidence: the
+    // adds have to continue past the 409 a re-review raises, which also swallows a
+    // genuine failure, so the discovery is read back to tell the two apart. Without it
+    // a review that attached nothing would journal that it attached evidence and then
+    // publish a verdict about evidence that is not there.
+    describe('the evidence guard', () => {
+      const verify = stepIn(reviewSteps, 'verify_evidence');
+
+      it('reads the discovery attachment back', () => {
+        expect(verify?.type).toBe('ai.attachment.read');
+      });
+
+      it('reads the fixed discovery attachment id', () => {
+        expect(verify?.with?.attachment_id).toBe('attack-discovery');
+      });
+
+      it('reads from the derived Investigation', () => {
+        expect(verify?.with?.conversation_id).toBe(derivedInvestigationId);
+      });
+
+      it('fails the review when the discovery attachment is not there', () => {
+        expect(verify?.['on-failure']).toBeUndefined();
+      });
+
+      it('runs after the evidence attaches', () => {
+        const names = reviewSteps.map((step) => step.name);
+
+        expect(names.indexOf('verify_evidence')).toBeGreaterThan(names.indexOf('attach_alerts'));
+      });
+
+      // Both claims the guard exists to protect: the journal note and the verdict.
+      it.each(['journal_evidence_attached', 'run_fp_tp_analysis', 'attach_verdict'])(
+        'runs before %s',
+        (name) => {
+          const names = reviewSteps.map((step) => step.name);
+
+          expect(names.indexOf('verify_evidence')).toBeLessThan(names.indexOf(name));
+        }
+      );
+
+      // The alert batches stay best-effort: the discovery carries the full `alert_ids`
+      // set, so a lost batch is a lost convenience rather than lost evidence.
+      it('does not require the alert batches', () => {
+        expect(JSON.stringify(verify?.with)).not.toContain('correlated-alerts');
       });
     });
 
@@ -1534,6 +1582,14 @@ describe('Attack Discovery worker chain', () => {
 
       expect(names.indexOf('journal_evidence_attached')).toBeGreaterThan(
         names.indexOf('attach_alerts')
+      );
+    });
+
+    // An alert batch can fail its add and continue, so the note distinguishes the
+    // discovery `verify_evidence` guarantees from the batches nothing checked.
+    it('does not claim the alert batches landed', () => {
+      expect(JSON.stringify(stepIn(reviewSteps, 'journal_evidence_attached')?.with)).toContain(
+        'Attempted attachment of'
       );
     });
 

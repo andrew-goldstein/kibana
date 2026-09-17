@@ -311,6 +311,28 @@ steps:
         on-failure:
           continue: true
 
+  # The hard stop the attaches above cannot provide on their own. Their 409 on a
+  # re-review is the EXPECTED outcome, so they have to continue — which also swallows a
+  # genuine failure, and a review that attached nothing would still journal that it
+  # attached evidence and then publish a verdict about evidence that is not there.
+  #
+  # Reading the discovery back separates the two, exactly as `verify_investigation`
+  # does for the create: a 409 leaves the attachment readable, any other failure leaves
+  # it absent. No `on-failure`, so absent ends the run here.
+  #
+  # Only the discovery is required. The alert batches stay best-effort for the reason
+  # the attaches give: losing one batch of correlated alert ids is not a reason to
+  # abandon the review, and the discovery already carries the full `alert_ids` set.
+  - name: verify_evidence
+    type: ai.attachment.read
+    with:
+      conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+      attachment_id: attack-discovery
+
+  # Says what is VERIFIED and what was only attempted. The discovery is guaranteed by
+  # `verify_evidence` above; an individual alert batch can have failed its add and
+  # continued, so claiming the count outright would put a claim in the journal that
+  # nothing checked.
   - name: journal_evidence_attached
     type: workflow.execute
     with:
@@ -318,8 +340,9 @@ steps:
       inputs:
         conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
         message: >-
-          Attached the Attack Discovery and
-          {{ inputs.alert_ids | default: consts.no_alert_ids | size }} correlated detection alert(s).
+          Attached the Attack Discovery. Attempted attachment of
+          {{ inputs.alert_ids | default: consts.no_alert_ids | size }} correlated detection
+          alert(s); see the attachment list for the batches that landed.
     on-failure:
       continue: true
 
