@@ -72,6 +72,12 @@ export const createAttackDiscoveryAttachmentType = ({
 }): AttachmentTypeDefinition => ({
   id: ATTACK_DISCOVERY_ATTACHMENT_TYPE,
 
+  // `format` above can emit a 1024-character title plus 8k of summary and 50k of
+  // details, and the framework default is 10k, so without this the details a reader
+  // needs most would silently truncate. Sized to this type's own schema rather than
+  // to `security.alerts`'s 50k.
+  maxContentLength: 60_000,
+
   validate: (input) => {
     const result = attackDiscoveryAttachmentDataSchema.safeParse(input);
     if (result.success) {

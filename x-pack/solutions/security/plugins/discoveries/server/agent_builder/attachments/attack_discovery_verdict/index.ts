@@ -59,6 +59,12 @@ const formatVerdict = (data: AttackDiscoveryVerdictAttachmentData): string =>
 export const createAttackDiscoveryVerdictAttachmentType = (): AttachmentTypeDefinition => ({
   id: ATTACK_DISCOVERY_VERDICT_ATTACHMENT_TYPE,
 
+  // `format` above can emit 8k of summary plus 50k of rationale, and the framework
+  // default is 10k, so without this a verdict would silently truncate for any agent
+  // that reads the Investigation. Sized to this type's own schema rather than to
+  // `security.alerts`'s 50k.
+  maxContentLength: 60_000,
+
   validate: (input) => {
     const result = attackDiscoveryVerdictAttachmentDataSchema.safeParse(input);
     if (result.success) {

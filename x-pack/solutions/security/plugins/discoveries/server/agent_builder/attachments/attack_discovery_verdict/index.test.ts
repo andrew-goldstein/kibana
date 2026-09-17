@@ -40,6 +40,14 @@ describe('createAttackDiscoveryVerdictAttachmentType', () => {
     });
   });
 
+  // The schema accepts 8k of summary plus 50k of rationale, which the 10k framework
+  // default would silently truncate.
+  describe('maxContentLength', () => {
+    it('admits everything the schema accepts', () => {
+      expect(attachmentType.maxContentLength).toBeGreaterThanOrEqual(58_000);
+    });
+  });
+
   describe('validate', () => {
     it.each(['false_positive', 'true_positive', 'inconclusive', 'failed'])(
       'accepts the %s verdict',

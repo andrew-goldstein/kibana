@@ -74,6 +74,16 @@ describe('createAttackDiscoveryAttachmentType', () => {
     });
   });
 
+  // The schema accepts a 1024-character title plus 8k of summary and 50k of details,
+  // which the 10k framework default would silently truncate.
+  describe('maxContentLength', () => {
+    it('admits everything the schema accepts', () => {
+      expect(createAttackDiscoveryAttachmentType(defaultDeps()).maxContentLength).toBeGreaterThan(
+        59_024
+      );
+    });
+  });
+
   describe('validate', () => {
     it('returns valid for a well-formed discovery', () => {
       const result = createAttackDiscoveryAttachmentType(defaultDeps()).validate(validData);
