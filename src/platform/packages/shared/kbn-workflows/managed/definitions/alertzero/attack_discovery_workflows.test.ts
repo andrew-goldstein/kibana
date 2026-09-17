@@ -1255,6 +1255,44 @@ describe('Attack Discovery worker chain', () => {
       ).toBe(false);
     });
 
+    // These five flow into a knowledge indicator's title, description and attributes,
+    // which are persisted and swept by a consumer. The review's own trigger schema
+    // bounds every string it takes; the action has to match, or the bound the review
+    // enforces is undone by the hop that follows it.
+    describe('action input bounds', () => {
+      const properties = (forensicsAction.triggers?.[0]?.inputs?.properties?.actionInput
+        ?.properties ?? {}) as Record<string, { maxLength?: number; type?: string }>;
+
+      it('bounds every string the handoff accepts', () => {
+        expect(
+          Object.entries(properties)
+            .filter(([, property]) => property.type === 'string' && property.maxLength == null)
+            .map(([name]) => name)
+        ).toEqual([]);
+      });
+
+      // The conversation id bound every `ai.*` step already enforces.
+      it('bounds the Investigation id to a conversation id', () => {
+        expect(properties.investigation_id?.maxLength).toBe(256);
+      });
+
+      it('bounds the attack id to the same length the review takes', () => {
+        expect(properties.attack_discovery_id?.maxLength).toBe(
+          (
+            review.triggers?.[0]?.inputs?.properties?.attack_discovery_id as
+              | { maxLength?: number }
+              | undefined
+          )?.maxLength
+        );
+      });
+
+      // An `enum` here would fail the handoff outright if #19211's real analysis adds
+      // an escalating verdict, and the vocabulary is the review's to own.
+      it('does not pin the verdict vocabulary', () => {
+        expect(properties.classification).not.toHaveProperty('enum');
+      });
+    });
+
     // The knowledge indicator IS the handoff contract. Forensics Watch sweeps for it and
     // reads it without ever calling back, so its type and its attribute names belong to
     // that consumer rather than to this producer.

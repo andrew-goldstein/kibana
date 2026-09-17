@@ -57,21 +57,30 @@ triggers:
             `investigation_id` and `attack_discovery_id`, and a second copy here is a
             second copy that can disagree with the first. Forensics dereferences; it is
             not handed a snapshot.
+          # Every string is bounded, matching the review's own trigger schema. These
+          # five flow into a knowledge indicator's title, description and attributes,
+          # which are persisted and swept by a consumer, so an unbounded value here is
+          # an oversized-document footgun rather than a validation nicety.
           properties:
             ai_index_id:
               type: string
+              maxLength: 256
               description: >-
                 AI index the knowledge indicator is written into. The existing
                 Context-Engine-as-IPC producers hardcode `security-investigations`;
                 it is a convention rather than a shared constant.
             attack_discovery_id:
               type: string
+              maxLength: 512
               description: >-
                 Persisted Attack Discovery document id. AUTHORITATIVE for the attack
                 narrative and for the complete set of correlated detection alerts. Also
                 the stable part of the knowledge indicator's id.
             investigation_id:
               type: string
+              # 256 to match CONVERSATION_ID_MAX_LENGTH, which is what the journal
+              # helper and every `ai.*` step already enforce on a conversation id.
+              maxLength: 256
               description: >-
                 Conversation id of the Investigation. AUTHORITATIVE for every attachment
                 the review produced, including the FP/TP report. READ-ONLY for
@@ -80,12 +89,17 @@ triggers:
                 which a watch running under a different principal does not have.
             classification:
               type: string
+              # Bounded rather than an `enum`: the verdict vocabulary is the review's to
+              # own, and pinning it here would fail the handoff outright if #19211's
+              # real analysis ever adds an escalating verdict.
+              maxLength: 128
               description: >-
                 The FP/TP verdict, `true_positive` or `inconclusive`. Carried rather
                 than dereferenced because it is what a consumer routes on, and because
                 the same KI shape has to distinguish the two without a second read.
             workflow_execution_id:
               type: string
+              maxLength: 128
               description: >-
                 Execution id of the review that produced this handoff. The provenance
                 link back to the FP/TP analysis and its report.
