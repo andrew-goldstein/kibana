@@ -438,6 +438,17 @@ steps:
           # evidence — not about the detection alerts underneath, which is why
           # `update_related_alerts` stays false and they are left exactly as they
           # were. An Attack-Discovery-level false positive is not an alert-level one.
+          #
+          # This is the LIFECYCLE, not bookkeeping, so it does NOT continue on failure.
+          # The Investigation is already closed by the time this runs, so a timeout or a
+          # 403 here leaves the attack open on a run that would otherwise report
+          # `completed` — a partial transition nobody is told about. RFC §9 wants a
+          # lifecycle-transition failure observable and retryable, so it journals what
+          # was and was not done and then fails the run.
+          #
+          # Nothing on this arm is post-decision: the false-positive verdict takes no
+          # HITL step, so there is no analyst decision for a failure here to lose. That
+          # is what separates it from the bookkeeping writes that do continue.
           - name: close_attack_false_positive
             type: security.setAttackStatus
             with:
@@ -447,7 +458,26 @@ steps:
               reason: false_positive
               update_related_alerts: false
             on-failure:
-              continue: true
+              fallback:
+                - name: journal_attack_status_false_positive_failed
+                  type: workflow.execute
+                  with:
+                    workflow-id: "{{ consts.journal_note }}"
+                    inputs:
+                      conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+                      message: >-
+                        PARTIAL LIFECYCLE TRANSITION: the Investigation was closed as a
+                        false positive, but the attack could not be closed and is still
+                        open. {{ steps.close_attack_false_positive.error }}
+                  on-failure:
+                    continue: true
+                - name: fail_close_attack_false_positive
+                  type: workflow.fail
+                  with:
+                    message: >-
+                      Failed to close the attack after closing the Investigation as a
+                      false positive.
+                      {{ steps.close_attack_false_positive.error }}
 
           - name: journal_fp_closed
             type: workflow.execute
@@ -703,6 +733,13 @@ steps:
   # analyst only declined an escalation, which says the attack is not worth deeper
   # investigation — not what the attack IS. Guessing a reason from `dismissReason`
   # would attribute a verdict to them that they never gave.
+  #
+  # Like the false-positive close, this is the LIFECYCLE and does NOT continue on
+  # failure: `close_investigation_declined` above has already closed the Investigation,
+  # so swallowing a failure here leaves the attack open and the two objects disagreeing
+  # on a run reported as `completed`. The analyst's decision is not lost by failing —
+  # the gate has already recorded it, and the journal note below says what was and was
+  # not applied.
   - name: close_attack_declined
     type: security.setAttackStatus
     if: "${{ steps.record_decision.output.declined == true }}"
@@ -712,7 +749,25 @@ steps:
       status: closed
       update_related_alerts: false
     on-failure:
-      continue: true
+      fallback:
+        - name: journal_attack_status_declined_failed
+          type: workflow.execute
+          with:
+            workflow-id: "{{ consts.journal_note }}"
+            inputs:
+              conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+              message: >-
+                PARTIAL LIFECYCLE TRANSITION: the escalation was declined and the
+                Investigation was closed, but the attack could not be closed and is
+                still open. {{ steps.close_attack_declined.error }}
+          on-failure:
+            continue: true
+        - name: fail_close_attack_declined
+          type: workflow.fail
+          with:
+            message: >-
+              Failed to close the attack after closing the Investigation on a declined
+              escalation. {{ steps.close_attack_declined.error }}
 
   - name: journal_attack_status_declined
     type: workflow.execute

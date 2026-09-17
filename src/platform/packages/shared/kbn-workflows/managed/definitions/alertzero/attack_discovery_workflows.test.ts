@@ -1043,21 +1043,60 @@ describe('Attack Discovery worker chain', () => {
     });
 
     // The decision already landed by the time these run, so a failed bookkeeping
-    // write must not fail the run and lose it.
+    // write must not fail the run and lose it. The two `security.setAttackStatus`
+    // closes are NOT in this list: they are the lifecycle rather than bookkeeping,
+    // and they fail the run instead. See 'the attack close is the lifecycle' below.
     it('continues past every post-decision bookkeeping write', () => {
       const postDecision = [
         'close_investigation_false_positive',
-        'close_attack_false_positive',
         'record_analysis_failure',
         'record_forensics_handoff',
         'close_investigation_declined',
-        'close_attack_declined',
         'record_decision_lapsed',
       ];
 
       expect(
         postDecision.filter((name) => stepIn(reviewSteps, name)?.['on-failure']?.continue !== true)
       ).toEqual([]);
+    });
+
+    // Both closes run AFTER the matching Investigation close, so swallowing a failure
+    // here leaves the attack open and the two objects disagreeing on a run the parent
+    // counts as `completed`. RFC §9 wants a partial lifecycle transition observable and
+    // retryable, which means the run has to end red.
+    describe('the attack close is the lifecycle, not bookkeeping', () => {
+      const closes = ['close_attack_false_positive', 'close_attack_declined'] as const;
+
+      it.each(closes)('does not continue past a failed %s', (name) => {
+        expect(stepIn(reviewSteps, name)?.['on-failure']?.continue).not.toBe(true);
+      });
+
+      it.each(closes)('journals the partial transition then fails the run in %s', (name) => {
+        expect(
+          (stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? []).map((step) => step.type)
+        ).toEqual(['workflow.execute', 'workflow.fail']);
+      });
+
+      // A failed journal note must not mask the failure the fallback exists to report.
+      it.each(closes)("continues past a failed journal note inside %s's fallback", (name) => {
+        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
+
+        expect(fallback[0]?.['on-failure']?.continue).toBe(true);
+      });
+
+      it.each(closes)("names what was left open in %s's journal note", (name) => {
+        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
+
+        expect(JSON.stringify(fallback[0]?.with)).toContain('PARTIAL LIFECYCLE TRANSITION');
+      });
+
+      it.each(closes)("journals to the Investigation from %s's fallback", (name) => {
+        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
+
+        expect((fallback[0]?.with as { 'workflow-id'?: string } | undefined)?.['workflow-id']).toBe(
+          '{{ consts.journal_note }}'
+        );
+      });
     });
 
     describe('the proposal decision read-back', () => {
@@ -1450,12 +1489,29 @@ describe('Attack Discovery worker chain', () => {
       'journal_attack_status_declined',
     ] as const;
 
+    // Not inflections: these live in the two lifecycle closes' fallbacks and only run
+    // when the attack could not be closed after its Investigation already was.
+    const LIFECYCLE_FAILURE_NOTES: string[] = [
+      'journal_attack_status_false_positive_failed',
+      'journal_attack_status_declined_failed',
+    ];
+
+    const isFailureNote = (name: string) => LIFECYCLE_FAILURE_NOTES.includes(name);
+
     it('points journal executes at the helper id', () => {
       expect(review.consts?.journal_note).toBe(ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID);
     });
 
     it('calls the journal helper at each agreed inflection', () => {
-      expect(reviewJournal.map((step) => step.name)).toEqual([...INFLECTIONS]);
+      expect(reviewJournal.map((step) => step.name).filter((name) => !isFailureNote(name))).toEqual(
+        [...INFLECTIONS]
+      );
+    });
+
+    it('journals both partial lifecycle transitions', () => {
+      expect(reviewJournal.map((step) => step.name).filter(isFailureNote)).toEqual(
+        LIFECYCLE_FAILURE_NOTES
+      );
     });
 
     it.each(INFLECTIONS)('continues past a failed %s note', (name) => {
