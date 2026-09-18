@@ -151,12 +151,17 @@ describe('allowed autonomy levels', () => {
   // the forensics handoff its verdicts propose — so it needs one level that gates that
   // and one that does not. `assisted` sits between them and would be indistinguishable
   // from `manual` here, which is why it is rejected rather than merely unused.
-  it('offers Attack Discovery manual and supervised only', () => {
-    const schema = getCompleteWorkerSettingsSchema(ATTACK_DISCOVERY);
+  it.each(['manual', 'supervised'] as const)('accepts Attack Discovery autonomy %s', (autonomy) => {
     const defaults = createDefaultWorkerSettings(ATTACK_DISCOVERY);
 
-    expect(schema.safeParse({ ...defaults, autonomy: 'manual' }).success).toBe(true);
-    expect(schema.safeParse({ ...defaults, autonomy: 'supervised' }).success).toBe(true);
+    expect(
+      getCompleteWorkerSettingsSchema(ATTACK_DISCOVERY).safeParse({ ...defaults, autonomy }).success
+    ).toBe(true);
+  });
+
+  it('rejects Attack Discovery autonomy assisted', () => {
+    const defaults = createDefaultWorkerSettings(ATTACK_DISCOVERY);
+
     expect(issuesOf(ATTACK_DISCOVERY, { ...defaults, autonomy: 'assisted' })).toContain('autonomy');
   });
 });

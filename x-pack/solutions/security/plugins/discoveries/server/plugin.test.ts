@@ -439,14 +439,15 @@ describe('DiscoveriesPlugin', () => {
 
     // PR-SPLIT #19022: the attachment types the review adds to an Investigation.
     describe('agent builder registration', () => {
+      let mockAgentBuilder: ReturnType<typeof createMockAgentBuilder>;
+
       beforeEach(() => {
         jest.clearAllMocks();
+        mockAgentBuilder = createMockAgentBuilder();
       });
 
-      it('registers agent builder skills and all attachment types when the feature flag is ON', async () => {
-        const mockAgentBuilder = createMockAgentBuilder();
-        const context = createPluginInitializerContext();
-        const plugin = new DiscoveriesPlugin(context);
+      const setupPlugin = () => {
+        const plugin = new DiscoveriesPlugin(createPluginInitializerContext());
 
         plugin.setup(
           coreMock.createSetup(),
@@ -454,40 +455,46 @@ describe('DiscoveriesPlugin', () => {
             agentBuilder: mockAgentBuilder as unknown as DiscoveriesPluginSetupDeps['agentBuilder'],
           })
         );
+      };
 
-        await flushPromises();
+      describe('when the feature flag is ON', () => {
+        beforeEach(async () => {
+          setupPlugin();
+          await flushPromises();
+        });
 
-        expect(registerSkills).toHaveBeenCalledTimes(1);
+        it('registers agent builder skills', () => {
+          expect(registerSkills).toHaveBeenCalledTimes(1);
+        });
+
         // Named rather than counted: every type here has to be on the agent
         // builder allow list, and registering one that is not throws and takes
         // the whole registration — skills included — down with it.
-        expect(
-          mockAgentBuilder.attachments.registerType.mock.calls.map(([type]) => type.id)
-        ).toEqual([
-          DIAGNOSTIC_REPORT_ATTACHMENT_TYPE,
-          ATTACK_DISCOVERY_ATTACHMENT_TYPE,
-          ATTACK_DISCOVERY_VERDICT_ATTACHMENT_TYPE,
-        ]);
+        it('registers every attachment type', () => {
+          expect(
+            mockAgentBuilder.attachments.registerType.mock.calls.map(([type]) => type.id)
+          ).toEqual([
+            DIAGNOSTIC_REPORT_ATTACHMENT_TYPE,
+            ATTACK_DISCOVERY_ATTACHMENT_TYPE,
+            ATTACK_DISCOVERY_VERDICT_ATTACHMENT_TYPE,
+          ]);
+        });
       });
 
-      it('does not register agent builder skills or the attachment type when the feature flag is OFF', async () => {
-        mockIsWorkflowsEnabled.mockResolvedValueOnce(false);
+      describe('when the feature flag is OFF', () => {
+        beforeEach(async () => {
+          mockIsWorkflowsEnabled.mockResolvedValueOnce(false);
+          setupPlugin();
+          await flushPromises();
+        });
 
-        const mockAgentBuilder = createMockAgentBuilder();
-        const context = createPluginInitializerContext();
-        const plugin = new DiscoveriesPlugin(context);
+        it('does not register agent builder skills', () => {
+          expect(registerSkills).not.toHaveBeenCalled();
+        });
 
-        plugin.setup(
-          coreMock.createSetup(),
-          createPluginSetupDeps({
-            agentBuilder: mockAgentBuilder as unknown as DiscoveriesPluginSetupDeps['agentBuilder'],
-          })
-        );
-
-        await flushPromises();
-
-        expect(registerSkills).not.toHaveBeenCalled();
-        expect(mockAgentBuilder.attachments.registerType).not.toHaveBeenCalled();
+        it('does not register attachment types', () => {
+          expect(mockAgentBuilder.attachments.registerType).not.toHaveBeenCalled();
+        });
       });
     });
   });

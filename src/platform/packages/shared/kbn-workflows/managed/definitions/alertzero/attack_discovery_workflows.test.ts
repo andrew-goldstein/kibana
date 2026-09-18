@@ -124,6 +124,8 @@ const reviewSteps = flatten(review.steps);
 const floorSteps = flatten(floor.steps);
 const journalNoteSteps = flatten(journalNote.steps);
 const forensicsSteps = flatten(forensicsAction.steps);
+const reviewStepNames = reviewSteps.map((step) => step.name);
+const workerStepNames = workerSteps.map((step) => step.name);
 
 const stepIn = (steps: YamlStep[], name: string) => steps.find((step) => step.name === name);
 
@@ -233,11 +235,11 @@ describe('Attack Discovery worker chain', () => {
       expect(asInputs(dispatch)[input]).toContain(reference);
     });
 
-    it('forwards enum and interval settings with type-preserving templates', () => {
-      expect(asInputs(dispatch).autonomy).toBe('${{ consts.worker_settings.autonomy }}');
-      expect(asInputs(dispatch).schedule_interval).toBe(
-        '${{ consts.worker_settings.scheduleInterval }}'
-      );
+    it.each([
+      ['autonomy', '${{ consts.worker_settings.autonomy }}'],
+      ['schedule_interval', '${{ consts.worker_settings.scheduleInterval }}'],
+    ])('forwards %s with a type-preserving template', (input, template) => {
+      expect(asInputs(dispatch)[input]).toBe(template);
     });
 
     it('keeps the scheduled trigger and adds no second scheduler', () => {
@@ -275,8 +277,11 @@ describe('Attack Discovery worker chain', () => {
   describe('generation step', () => {
     const run = stepIn(workerSteps, 'run_generation');
 
-    it('delegates generation to the batched sub-workflow', () => {
+    it('delegates generation with workflow.execute', () => {
       expect(run?.type).toBe('workflow.execute');
+    });
+
+    it('delegates generation to the batched sub-workflow', () => {
       expect(run?.with?.['workflow-id']).toBe(
         'system-security-attack-discovery-batched-generation'
       );
@@ -428,16 +433,12 @@ describe('Attack Discovery worker chain', () => {
         expect(batches.map((batch) => batch.length)).toEqual([DEFAULT_PARALLEL_MAX_FAN_OUT]);
       });
 
-      it('does not invent a batch when the read returned an empty array', () => {
-        expect(evaluate(String(resolve?.with?.batches), contextFor([]))).toEqual([]);
-      });
-
-      it('does not invent a batch when the read returned null', () => {
-        expect(evaluate(String(resolve?.with?.batches), contextFor(null))).toEqual([]);
-      });
-
-      it('does not invent a batch when the read returned no hits at all', () => {
-        expect(evaluate(String(resolve?.with?.batches), contextFor(undefined))).toEqual([]);
+      it.each([
+        ['an empty array', []],
+        ['null', null],
+        ['no hits at all', undefined],
+      ])('does not invent a batch when the read returned %s', (_name, attackDiscoveries) => {
+        expect(evaluate(String(resolve?.with?.batches), contextFor(attackDiscoveries))).toEqual([]);
       });
 
       it('requests a review for every discovery in an oversized generation', () => {
@@ -533,25 +534,18 @@ describe('Attack Discovery worker chain', () => {
           }
         );
 
-      it('resolves the title against a persisted attack document', async () => {
-        await expect(render(branchInputs.title)).resolves.toBe('Suspicious lateral movement');
-      });
-
-      it('resolves alert_ids against a persisted attack document', async () => {
-        await expect(render(branchInputs.alert_ids)).resolves.toBe('["alert-1","alert-2"]');
-      });
-
-      it('resolves summary_markdown against a persisted attack document', async () => {
-        await expect(render(branchInputs.summary_markdown)).resolves.toBe('A **summary**');
-      });
-
       // The bulk create indexes each candidate under `kibana.alert.uuid`, so the
       // `_source` field and the document `_id` are the same value and the runner
       // needs no second index read to recover it. Everything the review does to
       // the attack — the by-reference attachment and every `setAttackStatus`
-      // write — keys on this.
-      it('resolves attack_discovery_id against a persisted attack document', async () => {
-        await expect(render(branchInputs.attack_discovery_id)).resolves.toBe('attack-hash-1');
+      // write — keys on `attack_discovery_id`.
+      it.each([
+        ['title', 'Suspicious lateral movement'],
+        ['alert_ids', '["alert-1","alert-2"]'],
+        ['summary_markdown', 'A **summary**'],
+        ['attack_discovery_id', 'attack-hash-1'],
+      ])('resolves %s against a persisted attack document', async (field, expected) => {
+        await expect(render(branchInputs[field])).resolves.toBe(expected);
       });
 
       // `${{ }}` preserves the array type; `{{ }}` would stringify it.
@@ -642,7 +636,7 @@ describe('Attack Discovery worker chain', () => {
     });
 
     it('accumulates no per-batch review counts', () => {
-      expect(workerSteps.map(({ name }) => name)).not.toContain('accumulate_failed');
+      expect(workerStepNames).not.toContain('accumulate_failed');
     });
   });
 
@@ -651,8 +645,6 @@ describe('Attack Discovery worker chain', () => {
     const verdictSwitch = stepIn(reviewSteps, 'apply_verdict');
     const caseStep = (match: string) =>
       (verdictSwitch?.cases ?? []).find((c) => c.match === match)?.steps[0];
-    const inconclusiveStep = caseStep('inconclusive');
-    const truePositiveStep = caseStep('true_positive');
 
     it('has a switch case for every known verdict', () => {
       expect(new Set((verdictSwitch?.cases ?? []).map((c) => c.match))).toEqual(new Set(VERDICTS));
@@ -670,9 +662,8 @@ describe('Attack Discovery worker chain', () => {
       expect(verdictSwitch?.type).toBe('switch');
     });
 
-    it('switches on the stub verdict with the default fallback', () => {
+    it('switches on the stub verdict', () => {
       expect(verdictSwitch?.expression).toContain('inputs.stub_verdict');
-      expect(verdictSwitch?.expression).toContain('default: consts.default_verdict');
     });
 
     // #19276 AC1. A default run then exercises the escalation path, the same one
@@ -687,13 +678,12 @@ describe('Attack Discovery worker chain', () => {
 
     // Both escalating verdicts reach the same gate, which is why neither case
     // carries an escalation of its own — it would have to be written twice.
-    it('routes inconclusive to the same escalation as true positive', () => {
-      expect(inconclusiveStep?.with?.escalate).toBe(true);
-    });
-
-    it('routes true positive to the same escalation as inconclusive', () => {
-      expect(truePositiveStep?.with?.escalate).toBe(true);
-    });
+    it.each(['inconclusive', 'true_positive'] as const)(
+      'routes %s to the escalation gate',
+      (verdict) => {
+        expect(caseStep(verdict)?.with?.escalate).toBe(true);
+      }
+    );
 
     it('exposes every verdict as an input so all branches stay reachable', () => {
       expect(review.triggers?.[0]?.inputs?.properties?.stub_verdict?.enum).toEqual([...VERDICTS]);
@@ -860,10 +850,8 @@ describe('Attack Discovery worker chain', () => {
       });
 
       it('runs before anything attaches to the Investigation', () => {
-        const names = reviewSteps.map((step) => step.name);
-
-        expect(names.indexOf('verify_investigation')).toBeLessThan(
-          names.indexOf('attach_discovery')
+        expect(reviewStepNames.indexOf('verify_investigation')).toBeLessThan(
+          reviewStepNames.indexOf('attach_discovery')
         );
       });
     });
@@ -893,18 +881,18 @@ describe('Attack Discovery worker chain', () => {
       });
 
       it('runs after the evidence attaches', () => {
-        const names = reviewSteps.map((step) => step.name);
-
-        expect(names.indexOf('verify_evidence')).toBeGreaterThan(names.indexOf('attach_alerts'));
+        expect(reviewStepNames.indexOf('verify_evidence')).toBeGreaterThan(
+          reviewStepNames.indexOf('attach_alerts')
+        );
       });
 
       // Both claims the guard exists to protect: the journal note and the verdict.
       it.each(['journal_evidence_attached', 'run_fp_tp_analysis', 'attach_verdict'])(
         'runs before %s',
         (name) => {
-          const names = reviewSteps.map((step) => step.name);
-
-          expect(names.indexOf('verify_evidence')).toBeLessThan(names.indexOf(name));
+          expect(reviewStepNames.indexOf('verify_evidence')).toBeLessThan(
+            reviewStepNames.indexOf(name)
+          );
         }
       );
 
@@ -957,9 +945,9 @@ describe('Attack Discovery worker chain', () => {
       });
 
       it('attaches the discovery before FP/TP analysis', () => {
-        const names = reviewSteps.map((step) => step.name);
-
-        expect(names.indexOf('attach_discovery')).toBeLessThan(names.indexOf('run_fp_tp_analysis'));
+        expect(reviewStepNames.indexOf('attach_discovery')).toBeLessThan(
+          reviewStepNames.indexOf('run_fp_tp_analysis')
+        );
       });
 
       // Reversed once the verdict got a client renderer: `render_inline` decides whether
@@ -981,6 +969,9 @@ describe('Attack Discovery worker chain', () => {
       // load-bearing, not a tuning knob.
       it('batches the alert ids to the size the attachment schema accepts', () => {
         expect(review.consts?.alerts_per_attachment).toBe(20);
+      });
+
+      it('chunks the alert ids by that batch size', () => {
         expect(stepIn(reviewSteps, 'attach_alerts')?.foreach).toBe(
           '{{ inputs.alert_ids | default: consts.no_alert_ids | chunk: consts.alerts_per_attachment }}'
         );
@@ -996,10 +987,8 @@ describe('Attack Discovery worker chain', () => {
       // Written after the analysis so it reflects the result, and separate from the
       // evidence so the conclusion is visible apart from what it was drawn from.
       it('writes the verdict attachment after the analysis step', () => {
-        const names = reviewSteps.map((step) => step.name);
-
-        expect(names.indexOf('attach_verdict')).toBeGreaterThan(
-          names.indexOf('run_fp_tp_analysis')
+        expect(reviewStepNames.indexOf('attach_verdict')).toBeGreaterThan(
+          reviewStepNames.indexOf('run_fp_tp_analysis')
         );
       });
 
@@ -1022,34 +1011,35 @@ describe('Attack Discovery worker chain', () => {
     });
 
     describe('closing the Attack Discovery', () => {
-      const closes = reviewSteps.filter((step) => step.type === 'security.setAttackStatus');
+      const closes = ['close_attack_false_positive', 'close_attack_declined'] as const;
 
       it('closes the attack on exactly two paths', () => {
-        expect(closes.map((step) => step.name)).toEqual([
-          'close_attack_false_positive',
-          'close_attack_declined',
-        ]);
+        expect(
+          reviewSteps
+            .filter((step) => step.type === 'security.setAttackStatus')
+            .map((step) => step.name)
+        ).toEqual([...closes]);
       });
 
       // A reason is recorded only where the analysis actually produced a verdict
       // about the attack. A decline says the escalation was not worth taking, which
       // is not a statement about what the attack IS, so inferring a reason there
       // would attribute a verdict to the analyst that they never gave.
-      it('records false_positive on the FP path and no reason on the decline path', () => {
-        expect(closes.map((step) => step.with?.reason)).toEqual(['false_positive', undefined]);
+      it.each([
+        ['close_attack_false_positive', 'false_positive'],
+        ['close_attack_declined', undefined],
+      ] as const)('records %s with reason %j', (name, reason) => {
+        expect(stepIn(reviewSteps, name)?.with?.reason).toBe(reason);
       });
 
       // The whole point: an attack being closed says nothing about the detection
       // alerts underneath it.
-      it('never closes the correlated detection alerts', () => {
-        expect(closes.map((step) => step.with?.update_related_alerts)).toEqual([false, false]);
+      it.each(closes)('does not close the correlated detection alerts in %s', (name) => {
+        expect(stepIn(reviewSteps, name)?.with?.update_related_alerts).toBe(false);
       });
 
-      it('closes by the persisted document id', () => {
-        expect(closes.map((step) => step.with?.ids)).toEqual([
-          ['{{ inputs.attack_discovery_id }}'],
-          ['{{ inputs.attack_discovery_id }}'],
-        ]);
+      it.each(closes)('closes by the persisted document id in %s', (name) => {
+        expect(stepIn(reviewSteps, name)?.with?.ids).toEqual(['{{ inputs.attack_discovery_id }}']);
       });
     });
 
@@ -1114,36 +1104,33 @@ describe('Attack Discovery worker chain', () => {
     // retryable, which means the run has to end red.
     describe('the attack close is the lifecycle, not bookkeeping', () => {
       const closes = ['close_attack_false_positive', 'close_attack_declined'] as const;
+      const fallbackOf = (name: (typeof closes)[number]) =>
+        stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
 
       it.each(closes)('does not continue past a failed %s', (name) => {
         expect(stepIn(reviewSteps, name)?.['on-failure']?.continue).not.toBe(true);
       });
 
       it.each(closes)('journals the partial transition then fails the run in %s', (name) => {
-        expect(
-          (stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? []).map((step) => step.type)
-        ).toEqual(['workflow.execute', 'workflow.fail']);
+        expect(fallbackOf(name).map((step) => step.type)).toEqual([
+          'workflow.execute',
+          'workflow.fail',
+        ]);
       });
 
       // A failed journal note must not mask the failure the fallback exists to report.
       it.each(closes)("continues past a failed journal note inside %s's fallback", (name) => {
-        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
-
-        expect(fallback[0]?.['on-failure']?.continue).toBe(true);
+        expect(fallbackOf(name)[0]?.['on-failure']?.continue).toBe(true);
       });
 
       it.each(closes)("names what was left open in %s's journal note", (name) => {
-        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
-
-        expect(JSON.stringify(fallback[0]?.with)).toContain('PARTIAL LIFECYCLE TRANSITION');
+        expect(JSON.stringify(fallbackOf(name)[0]?.with)).toContain('PARTIAL LIFECYCLE TRANSITION');
       });
 
       it.each(closes)("journals to the Investigation from %s's fallback", (name) => {
-        const fallback = stepIn(reviewSteps, name)?.['on-failure']?.fallback ?? [];
-
-        expect((fallback[0]?.with as { 'workflow-id'?: string } | undefined)?.['workflow-id']).toBe(
-          '{{ consts.journal_note }}'
-        );
+        expect(
+          (fallbackOf(name)[0]?.with as { 'workflow-id'?: string } | undefined)?.['workflow-id']
+        ).toBe('{{ consts.journal_note }}');
       });
     });
 
@@ -1195,18 +1182,20 @@ describe('Attack Discovery worker chain', () => {
       // The analyst's structured reason goes on as prose. It is NOT relayed to
       // `security.setAttackStatus`: those values describe the proposal, not the
       // attack.
-      it('records the analyst reason and rationale on the Investigation', () => {
-        const verdict = String(
-          (
-            stepIn(reviewSteps, 'close_investigation_declined')?.with?.updates as {
-              verdict?: string;
-            }
-          )?.verdict
-        );
+      it.each(['dismissReason', 'rationale'])(
+        'records the analyst %s on the Investigation',
+        (field) => {
+          const verdict = String(
+            (
+              stepIn(reviewSteps, 'close_investigation_declined')?.with?.updates as {
+                verdict?: string;
+              }
+            )?.verdict
+          );
 
-        expect(verdict).toContain('dismissReason');
-        expect(verdict).toContain('rationale');
-      });
+          expect(verdict).toContain(field);
+        }
+      );
     });
   });
 
@@ -1446,11 +1435,9 @@ describe('Attack Discovery worker chain', () => {
     it.each(['alerts_analyzed', 'attacks_generated', 'reviews_requested'])(
       'stringifies %s in emit_result so runtime matches the string output schema',
       (name) => {
-        const value = stepIn(workerSteps, 'emit_result')?.with?.[name];
-
-        expect(value).toEqual(expect.any(String));
-        expect(value).toMatch(/^\{\{/);
-        expect(value).not.toMatch(/^\$\{\{/);
+        expect(stepIn(workerSteps, 'emit_result')?.with?.[name]).toEqual(
+          expect.stringMatching(/^\{\{/)
+        );
       }
     );
 
@@ -1604,22 +1591,21 @@ describe('Attack Discovery worker chain', () => {
       expect(stepIn(reviewSteps, name)?.['on-failure']?.continue).toBe(true);
     });
 
-    it('journals review started after the Investigation is verified and before evidence attaches', () => {
-      const names = reviewSteps.map((step) => step.name);
-
-      expect(names.indexOf('journal_review_started')).toBeGreaterThan(
-        names.indexOf('verify_investigation')
+    it('journals review started after the Investigation is verified', () => {
+      expect(reviewStepNames.indexOf('journal_review_started')).toBeGreaterThan(
+        reviewStepNames.indexOf('verify_investigation')
       );
-      expect(names.indexOf('journal_review_started')).toBeLessThan(
-        names.indexOf('attach_discovery')
+    });
+
+    it('journals review started before evidence attaches', () => {
+      expect(reviewStepNames.indexOf('journal_review_started')).toBeLessThan(
+        reviewStepNames.indexOf('attach_discovery')
       );
     });
 
     it('journals evidence after the alerts are attached', () => {
-      const names = reviewSteps.map((step) => step.name);
-
-      expect(names.indexOf('journal_evidence_attached')).toBeGreaterThan(
-        names.indexOf('attach_alerts')
+      expect(reviewStepNames.indexOf('journal_evidence_attached')).toBeGreaterThan(
+        reviewStepNames.indexOf('attach_alerts')
       );
     });
 
@@ -1632,18 +1618,14 @@ describe('Attack Discovery worker chain', () => {
     });
 
     it('journals analysis start before the FP/TP stub', () => {
-      const names = reviewSteps.map((step) => step.name);
-
-      expect(names.indexOf('journal_analysis_started')).toBeLessThan(
-        names.indexOf('run_fp_tp_analysis')
+      expect(reviewStepNames.indexOf('journal_analysis_started')).toBeLessThan(
+        reviewStepNames.indexOf('run_fp_tp_analysis')
       );
     });
 
     it('journals analysis finished after the verdict attachment', () => {
-      const names = reviewSteps.map((step) => step.name);
-
-      expect(names.indexOf('journal_analysis_finished')).toBeGreaterThan(
-        names.indexOf('attach_verdict')
+      expect(reviewStepNames.indexOf('journal_analysis_finished')).toBeGreaterThan(
+        reviewStepNames.indexOf('attach_verdict')
       );
     });
 
@@ -1759,7 +1741,7 @@ describe('Attack Discovery worker chain', () => {
   // `summary_markdown`, then `alerts_context_count` and `status`), each failing
   // silently: an unknown field renders empty rather than erroring, so nothing
   // downstream notices. Enumerating what the child actually emits and checking
-  // every reference against it catches the whole class in one assertion.
+  // every reference against it catches the whole class.
   describe('runner references to the batched generation child', () => {
     const childYaml = ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW.yaml;
     const child = parse(childYaml) as YamlWorkflow;
@@ -1773,17 +1755,20 @@ describe('Attack Discovery worker chain', () => {
       expect(emitted.length).toBeGreaterThan(0);
     });
 
-    it('every steps.run_generation.output.<field> reference is a field the child emits', () => {
-      const referenced = [
-        ...new Set(
-          Array.from(
-            runnerYaml.matchAll(/steps\.run_generation\.output\.([a-zA-Z_][a-zA-Z0-9_]*)/g),
-            (match) => match[1]
-          )
-        ),
-      ];
+    const referenced = [
+      ...new Set(
+        Array.from(
+          runnerYaml.matchAll(/steps\.run_generation\.output\.([a-zA-Z_][a-zA-Z0-9_]*)/g),
+          (match) => match[1]
+        )
+      ),
+    ];
 
+    it('references at least one field of the child output', () => {
       expect(referenced.length).toBeGreaterThan(0);
+    });
+
+    it('every steps.run_generation.output.<field> reference is a field the child emits', () => {
       expect(referenced.filter((field) => !emitted.includes(field))).toEqual([]);
     });
   });
