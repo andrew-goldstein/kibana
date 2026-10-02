@@ -42,10 +42,10 @@ const DENYLISTED_FIELD_NAMES = [
 /** Imports that would couple telemetry to request identity or audit data. */
 const FORBIDDEN_IMPORTS = ['KibanaRequest', 'ProposalUser'];
 
-/** The caller fields every event carries. */
+/** The caller fields every event except the cluster-level snapshot carries. */
 const CALLER_FIELD_NAMES = ['caller_run_id', 'is_default_space', 'managed_caller', 'origin'];
 
-/** The caller fields every event requires, rather than merely declares. */
+/** The caller fields every event except the snapshot requires, rather than merely declares. */
 const REQUIRED_CALLER_FIELD_NAMES = ['is_default_space', 'managed_caller', 'origin'];
 
 /** The required ids every per-proposal event carries: its own, and its chain root's. */
@@ -56,6 +56,9 @@ const ACTION_EVENT_TYPES: string[] = [
   PROPOSALS_TELEMETRY_EVENTS.ProposalCreated,
   PROPOSALS_TELEMETRY_EVENTS.ActionExecuted,
 ];
+
+/** Every id field any proposals event may carry, none of which the snapshot may. */
+const ID_FIELD_NAMES = [...PROPOSAL_ID_FIELD_NAMES, 'action_id'];
 
 interface SchemaField {
   path: string;
@@ -201,7 +204,27 @@ const FIXTURES: {
     origin: 'nightshift',
     reason: 'external_principal',
   },
+  [PROPOSALS_TELEMETRY_EVENTS.Snapshot]: {
+    executing_by_age: [{ age_bucket: 'le_1h', count: 1 }],
+    pending_by_age: [
+      { age_bucket: 'le_24h', count: 4 },
+      { age_bucket: 'gt_7d', count: 1 },
+    ],
+    pending_overdue_by_age: [{ age_bucket: 'le_7d', count: 1 }],
+    settled: [
+      { count: 12, status: 'succeeded' },
+      { count: 3, reason: 'deadline', status: 'expired' },
+      { count: 1, reason: 'action', status: 'failed' },
+    ],
+    snapshot_day: '2026-09-28',
+    space_count: 3,
+  },
 };
+
+/** Every event but the cluster-level snapshot: the ones that describe one proposal. */
+const PER_PROPOSAL_EVENT_TYPES = PROPOSALS_TELEMETRY_EVENT_TYPES.filter(
+  ({ eventType }) => eventType !== PROPOSALS_TELEMETRY_EVENTS.Snapshot
+);
 
 const README_PATH = join(__dirname, 'README.md');
 
@@ -224,7 +247,7 @@ describe('proposals telemetry event types', () => {
     expect(new Set(registeredEventNames).size).toBe(registeredEventNames.length);
   });
 
-  it('names the seven events of the telemetry plan', () => {
+  it('names the eight events of the telemetry plan', () => {
     expect([...registeredEventNames].sort()).toEqual([
       'proposals_action_executed',
       'proposals_proposal_created',
@@ -233,6 +256,7 @@ describe('proposals telemetry event types', () => {
       'proposals_proposal_retried',
       'proposals_proposal_revised',
       'proposals_proposal_status_changed',
+      'proposals_snapshot',
     ]);
   });
 
@@ -243,14 +267,14 @@ describe('proposals telemetry event types', () => {
     }
   );
 
-  it.each(PROPOSALS_TELEMETRY_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
+  it.each(PER_PROPOSAL_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
     '%s carries the caller fields',
     (_eventType, { schema }) => {
       expect(CALLER_FIELD_NAMES.filter((field) => !(field in schema))).toEqual([]);
     }
   );
 
-  it.each(PROPOSALS_TELEMETRY_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
+  it.each(PER_PROPOSAL_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
     '%s requires every caller field but the best-effort run id',
     (_eventType, { schema }) => {
       const fields = schema as Record<string, Record<string, unknown>>;
@@ -263,7 +287,7 @@ describe('proposals telemetry event types', () => {
     }
   );
 
-  it.each(PROPOSALS_TELEMETRY_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
+  it.each(PER_PROPOSAL_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
     "%s ships the proposal's origin as a keyword",
     (_eventType, { schema }) => {
       expect((schema as Record<string, unknown>).origin).toEqual(
@@ -272,7 +296,27 @@ describe('proposals telemetry event types', () => {
     }
   );
 
-  describe.each(PROPOSALS_TELEMETRY_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
+  it('keeps the snapshot free of caller fields, because it is a cluster-level aggregate', () => {
+    const snapshot = PROPOSALS_TELEMETRY_EVENT_TYPES.find(
+      ({ eventType }) => eventType === PROPOSALS_TELEMETRY_EVENTS.Snapshot
+    );
+
+    expect(CALLER_FIELD_NAMES.filter((field) => field in (snapshot?.schema ?? {}))).toEqual([]);
+  });
+
+  it('keeps the snapshot free of any proposal or action id, at any depth', () => {
+    const snapshot = PROPOSALS_TELEMETRY_EVENT_TYPES.find(
+      ({ eventType }) => eventType === PROPOSALS_TELEMETRY_EVENTS.Snapshot
+    );
+
+    expect(
+      collectFields((snapshot?.schema ?? {}) as Record<string, unknown>)
+        .filter(({ path }) => ID_FIELD_NAMES.includes(getLeafName(path)))
+        .map(({ path }) => path)
+    ).toEqual([]);
+  });
+
+  describe.each(PER_PROPOSAL_EVENT_TYPES.map((opts) => [opts.eventType, opts]))(
     '%s ids',
     (eventType, { schema }) => {
       const fields = schema as Record<string, Record<string, unknown>>;

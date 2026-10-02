@@ -33,6 +33,11 @@ import {
   readTelemetryOptIn,
   registerProposalsTelemetryEvents,
 } from './telemetry';
+import {
+  createTelemetrySnapshotDependencies,
+  registerTelemetrySnapshotTask,
+  scheduleTelemetrySnapshotTask,
+} from './tasks/telemetry_snapshot';
 import type {
   ProposalsPluginSetup,
   ProposalsPluginStart,
@@ -71,7 +76,13 @@ export class ProposalsPlugin
 
   setup(
     coreSetup: CoreSetup<ProposalsStartDependencies>,
-    { agentBuilder, features, workflowsExtensions, workflowsManagement }: ProposalsSetupDependencies
+    {
+      agentBuilder,
+      features,
+      taskManager,
+      workflowsExtensions,
+      workflowsManagement,
+    }: ProposalsSetupDependencies
   ): ProposalsPluginSetup {
     // The workflows management API is only exposed on the setup contract.
     this.workflowsManagementApi = workflowsManagement.management;
@@ -92,6 +103,19 @@ export class ProposalsPlugin
     // Setup-only, and registering a type twice throws. Emitters report through
     // `createProposalsTelemetryReporter`, which never throws.
     registerProposalsTelemetryEvents(coreSetup.analytics);
+
+    // Core loads this plugin only when `xpack.proposals.enabled` is set, so the daily snapshot task
+    // type exists only then. Its dependencies are resolved per run, once start services exist.
+    if (taskManager) {
+      registerTelemetrySnapshotTask({
+        getDependencies: async () => {
+          const [core, { telemetry }] = await coreSetup.getStartServices();
+          return createTelemetrySnapshotDependencies({ core, telemetry });
+        },
+        logger: this.logger.get('telemetry'),
+        taskManager,
+      });
+    }
 
     // The service only exists from start() onwards, but `format()` is never
     // called before then, so it is resolved lazily rather than captured here.
@@ -162,6 +186,13 @@ export class ProposalsPlugin
       // Lets the reads made only for telemetry be skipped on an opted-out cluster.
       isTelemetryOptedIn: () => this.isTelemetryOptedIn(),
     });
+
+    if (plugins.taskManager) {
+      scheduleTelemetrySnapshotTask({
+        logger: this.logger.get('telemetry'),
+        taskManager: plugins.taskManager,
+      });
+    }
 
     void initializeManagedWorkflows({
       workflowsExtensions: plugins.workflowsExtensions,

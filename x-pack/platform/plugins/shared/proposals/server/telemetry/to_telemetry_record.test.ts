@@ -25,6 +25,7 @@ const storedRecord = (
     attempt: 2,
     callerManaged: true,
     callerRunId: 'exec-root',
+    settledBy: 'deadline',
   },
   ranks: { confidence: 0, impact: 2 },
   revision: 1,
@@ -43,24 +44,15 @@ describe('toTelemetryRecord', () => {
         attempt: 2,
         callerManaged: true,
         callerRunId: 'exec-root',
+        settledBy: 'deadline',
       })
     );
   });
 
   it('adds what only the write in progress knows', () => {
     expect(
-      toTelemetryRecord(storedRecord(), {
-        autoApproveRequested: true,
-        decisionSource: 'autonomy',
-        settledBy: 'deadline',
-      })
-    ).toEqual(
-      expect.objectContaining({
-        autoApproveRequested: true,
-        decisionSource: 'autonomy',
-        settledBy: 'deadline',
-      })
-    );
+      toTelemetryRecord(storedRecord(), { autoApproveRequested: true, decisionSource: 'autonomy' })
+    ).toEqual(expect.objectContaining({ autoApproveRequested: true, decisionSource: 'autonomy' }));
   });
 
   it('reads a record written without provenance as having none', () => {

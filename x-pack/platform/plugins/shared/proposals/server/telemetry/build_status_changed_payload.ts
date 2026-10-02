@@ -12,7 +12,7 @@ import type { ProposalTelemetryRecord } from './types';
 
 /**
  * Describes a real status transition, or `undefined` for a same-status rewrite or a move to
- * `superseded` (a revision or retry reports its own event). `settledBy` is passed only by the
+ * `superseded` (a revision or retry reports its own event). `settledBy` is stored only by the
  * write that settles a proposal outside the loop, so a `failed` without one is the action's own.
  */
 export const buildStatusChangedPayload = ({

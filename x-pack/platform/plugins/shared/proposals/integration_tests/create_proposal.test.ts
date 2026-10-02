@@ -698,6 +698,51 @@ describe('create-investigation-proposal workflow execution', () => {
     });
   });
 
+  describe('stored settle path, for the daily snapshot', () => {
+    it('should record a timed-out gate as settled by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(fixture.onlyProposal().provenance?.settledBy).toBe('deadline');
+    });
+
+    it('should record a spent attempt budget as settled by the iteration limit', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      const { provenance, status } = fixture.onlyProposal();
+      expect([status, provenance?.settledBy]).toEqual(['expired', 'iteration_limit']);
+    });
+
+    it('should record a failed run as settled by the workflow failure', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      const { provenance, status } = fixture.onlyProposal();
+      expect([status, provenance?.settledBy]).toEqual(['expired', 'workflow_failure']);
+    });
+
+    it('should record nothing for an outcome the loop wrote itself', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(fixture.onlyProposal().provenance?.settledBy).toBeUndefined();
+    });
+
+    it('should not reattribute an action failure the loop already recorded', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(fixture.proposals()[0].provenance?.settledBy).toBeUndefined();
+    });
+  });
+
   describe('telemetry', () => {
     const EXTERNAL_PRINCIPAL = 'external_resume:step-exec-1';
 
