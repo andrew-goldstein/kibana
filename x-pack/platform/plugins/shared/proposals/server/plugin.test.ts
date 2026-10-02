@@ -8,6 +8,7 @@
 import { DEFAULT_APP_CATEGORIES } from '@kbn/core/server';
 import { coreMock } from '@kbn/core/server/mocks';
 import { loggerMock } from '@kbn/logging-mocks';
+import { taskManagerMock } from '@kbn/task-manager-plugin/server/mocks';
 import {
   CheckDecidePrivilegesStepId,
   CloneProposalStepId,
@@ -30,6 +31,10 @@ import {
 } from './constants';
 import { registerRoutes } from './routes/register_routes';
 import { PROPOSALS_TELEMETRY_EVENTS } from './telemetry';
+import {
+  TELEMETRY_SNAPSHOT_TASK_ID,
+  TELEMETRY_SNAPSHOT_TASK_TYPE,
+} from './tasks/telemetry_snapshot';
 
 jest.mock('./managed_workflows/initialize_managed_workflows', () => ({
   initializeManagedWorkflows: jest.fn().mockResolvedValue(undefined),
@@ -44,7 +49,7 @@ const createContext = () =>
     logger: { get: () => loggerMock.create() },
   } as unknown as ConstructorParameters<typeof ProposalsPlugin>[0]);
 
-const setupPlugin = () => {
+const setupPlugin = ({ taskManager }: { taskManager?: object } = {}) => {
   const plugin = new ProposalsPlugin(createContext());
   const coreSetup = coreMock.createSetup();
   const features = { registerKibanaFeature: jest.fn() };
@@ -65,6 +70,7 @@ const setupPlugin = () => {
     {
       features,
       agentBuilder,
+      taskManager,
       workflowsExtensions,
       workflowsManagement,
     } as never
@@ -73,7 +79,7 @@ const setupPlugin = () => {
   return { plugin, coreSetup, features, agentBuilder, workflowsExtensions, workflowsManagement };
 };
 
-const startPlugin = (plugin: ProposalsPlugin) => {
+const startPlugin = (plugin: ProposalsPlugin, { taskManager }: { taskManager?: object } = {}) => {
   const coreStart = coreMock.createStart();
   const workflowsExtensions = { initManagedWorkflowsClient: jest.fn() };
 
@@ -82,6 +88,7 @@ const startPlugin = (plugin: ProposalsPlugin) => {
     {
       workflowsExtensions,
       spaces: undefined,
+      taskManager,
     } as never
   );
 
@@ -222,6 +229,46 @@ describe('ProposalsPlugin', () => {
       const { contract } = startPlugin(plugin);
 
       expect(contract.getProposalsService()).toBeDefined();
+    });
+  });
+
+  // With `xpack.proposals.enabled: false` core never loads the plugin, so setup() running at all
+  // means the plugin is enabled: the snapshot task exists only then.
+  describe('telemetry snapshot task', () => {
+    it('registers the snapshot task type during setup', () => {
+      const taskManager = taskManagerMock.createSetup();
+
+      setupPlugin({ taskManager });
+
+      expect(
+        taskManager.registerTaskDefinitions.mock.calls.map(([types]) => Object.keys(types))
+      ).toEqual([[TELEMETRY_SNAPSHOT_TASK_TYPE]]);
+    });
+
+    it('does not resolve start services while registering the task', () => {
+      const { coreSetup } = setupPlugin({ taskManager: taskManagerMock.createSetup() });
+
+      expect(coreSetup.getStartServices).not.toHaveBeenCalled();
+    });
+
+    it('schedules the daily snapshot during start', () => {
+      const taskManager = taskManagerMock.createStart();
+      const { plugin } = setupPlugin({ taskManager: taskManagerMock.createSetup() });
+
+      startPlugin(plugin, { taskManager });
+
+      expect(taskManager.ensureScheduled).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: TELEMETRY_SNAPSHOT_TASK_ID,
+          taskType: TELEMETRY_SNAPSHOT_TASK_TYPE,
+        })
+      );
+    });
+
+    it('sets up and starts without Task Manager', () => {
+      const { plugin } = setupPlugin();
+
+      expect(startPlugin(plugin).contract.getProposalsService()).toBeDefined();
     });
   });
 

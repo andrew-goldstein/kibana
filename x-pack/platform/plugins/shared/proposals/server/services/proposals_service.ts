@@ -128,10 +128,7 @@ export interface UpdateProposalParams {
    * and not stored: nothing reads it back.
    */
   decisionSource?: ProposalDecisionSource;
-  /**
-   * The settle path. Reported only with the write that moves the proposal to a
-   * terminal status, and not stored.
-   */
+  /** The settle path. Stored only by the write that moves the proposal to a terminal status. */
   settledBy?: ProposalSettledBy;
 }
 
@@ -699,6 +696,9 @@ export class ProposalsService {
       ...(params.decision !== undefined
         ? { decidedBy: params.decidedBy ?? proposal.decidedBy }
         : {}),
+      ...(settles && params.settledBy !== undefined
+        ? { provenance: { ...proposal.provenance, settledBy: params.settledBy } }
+        : {}),
       ...(params.dismissReason !== undefined ? { dismissReason: params.dismissReason } : {}),
       ...(params.rationale !== undefined ? { rationale: params.rationale } : {}),
       ...(params.executionError !== undefined ? { executionError: params.executionError } : {}),
@@ -709,14 +709,13 @@ export class ProposalsService {
 
     // Diffed against the loaded record rather than the params, because a
     // same-status rewrite is allowed and must report nothing. The decision
-    // source and the settle path are only known to this write, so they travel
-    // as context.
+    // source is only known to this write, so it travels as context.
     this.report(() =>
       buildUpdateEvents({
-        after: toTelemetryRecord(updated, {
-          ...(params.decision !== undefined ? { decisionSource: params.decisionSource } : {}),
-          ...(settles && params.settledBy !== undefined ? { settledBy: params.settledBy } : {}),
-        }),
+        after: toTelemetryRecord(
+          updated,
+          params.decision !== undefined ? { decisionSource: params.decisionSource } : {}
+        ),
         before: toTelemetryRecord(proposal),
         now: Date.now(),
       })
@@ -739,7 +738,8 @@ export class ProposalsService {
    * still running and parked — approving the clone resumes that same execution.
    * The caller provenance is inherited for the same reason: the retry continues
    * the same run. So are `rootProposalId`, keeping the retry in its chain, and
-   * `actionId`, because the retry re-offers the same action.
+   * `actionId`, because the retry re-offers the same action. The outcome
+   * provenance is reset with the rest of the outcome.
    */
   async clone(
     { id, executionError }: CloneProposalParams,
@@ -773,7 +773,7 @@ export class ProposalsService {
     // What the predecessor will carry once the supersession write below lands,
     // resolved here so both documents agree on it.
     const failure = executionError ?? original.executionError;
-    const inherited = original.provenance ?? {};
+    const { settledBy: _settledBy, ...inherited } = original.provenance ?? {};
 
     const document: ProposalDocument = {
       ...original,
@@ -888,6 +888,7 @@ export class ProposalsService {
 
     const revisionId = uuidv4();
     const rootProposalId = original.rootProposalId ?? id;
+    const { settledBy: _settledBy, ...inherited } = original.provenance ?? {};
     // `?? 1` covers records created before this field existed. Bound to a `number`
     // local so the spread below does not widen it back to `number | undefined`.
     const revision: number = (original.revision ?? 1) + 1;
@@ -909,8 +910,11 @@ export class ProposalsService {
       // revision corrects a proposal, it does not run anything, so the last
       // attempt to fail is still the one the predecessor was re-offered for.
       ...(nextTitle !== undefined ? { title: nextTitle } : {}),
-      // The caller, attempt and action carry over with the rest of the
-      // document; nothing here describes the predecessor's outcome.
+      // The caller, attempt and action carry over; the settle path is the
+      // predecessor's outcome, not this revision's. `?? 1` covers a record
+      // written before provenance existed, so the revision always has an
+      // attempt, which is how the snapshot tells it from such a record.
+      provenance: { ...inherited, attempt: inherited.attempt ?? 1 },
       ...(comment !== undefined ? { comment } : {}),
       ...(mergedActionInput !== undefined ? { actionInput: mergedActionInput } : {}),
       impact: nextImpact,

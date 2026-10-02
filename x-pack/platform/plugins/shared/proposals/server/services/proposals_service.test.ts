@@ -2544,6 +2544,7 @@ describe('ProposalsService storage-only provenance', () => {
     attempt: 2,
     callerManaged: true,
     callerRunId: 'exec-root',
+    settledBy: 'deadline',
   };
 
   const CALLER = {
@@ -2687,6 +2688,61 @@ describe('ProposalsService storage-only provenance', () => {
   });
 
   describe('update', () => {
+    it.each([
+      ['deadline', 'pending', 'expired', undefined],
+      ['iteration_limit', 'pending', 'expired', undefined],
+      ['workflow_failure', 'executing', 'failed', 'approved'],
+    ] as const)(
+      'should record settledBy %s when a %s proposal settles as %s',
+      async (settledBy, from, to, decision) => {
+        const storage = createStorage(baseDocument({ decision, status: from }));
+        const { service } = createService(storage);
+
+        await service.update({ id: 'proposal-1', settledBy, status: to }, SPACE_ID);
+
+        expect(indexedDocument(storage).provenance?.settledBy).toBe(settledBy);
+      }
+    );
+
+    it('should keep the rest of the provenance when it records the settle path', async () => {
+      const { settledBy: _settledBy, ...rest } = PROVENANCE;
+      const storage = createStorage(baseDocument({ provenance: rest }));
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', settledBy: 'deadline', status: 'expired' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance).toEqual({ ...rest, settledBy: 'deadline' });
+    });
+
+    it('should not reattribute a proposal that had already settled with the same status', async () => {
+      // The workflow's failure handler re-writes `failed` onto a record whose
+      // action already failed; the action, not the handler, settled it.
+      const storage = createStorage(baseDocument({ decision: 'approved', status: 'failed' }));
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', settledBy: 'workflow_failure', status: 'failed' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance?.settledBy).toBeUndefined();
+    });
+
+    it('should ignore settledBy on a write that does not settle the proposal', async () => {
+      const storage = createStorage(baseDocument());
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', rationale: 'Noted', settledBy: 'deadline' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance?.settledBy).toBeUndefined();
+    });
+
     it('should not return the storage-only provenance', async () => {
       const storage = createStorage(baseDocument({ provenance: PROVENANCE }));
       const { service } = createService(storage);
@@ -2712,6 +2768,15 @@ describe('ProposalsService storage-only provenance', () => {
       await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
 
       expect(indexedDocument(storage).provenance).toEqual(expect.objectContaining(CALLER));
+    });
+
+    it('should drop the settle path, which describes the original', async () => {
+      const storage = createStorage(failedWithProvenance());
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('settledBy');
     });
 
     it('should count the retry as the next attempt', async () => {
@@ -2753,7 +2818,8 @@ describe('ProposalsService storage-only provenance', () => {
   });
 
   describe('revise', () => {
-    const pendingWithProvenance = () => baseDocument({ provenance: { ...CALLER, attempt: 2 } });
+    const pendingWithProvenance = () =>
+      baseDocument({ provenance: { ...CALLER, attempt: 2, settledBy: 'deadline' } });
 
     it('should inherit the caller and the attempt, since a revision is not a retry', async () => {
       const storage = createStorage(pendingWithProvenance());
@@ -2764,6 +2830,15 @@ describe('ProposalsService storage-only provenance', () => {
       expect(indexedDocument(storage).provenance).toEqual(
         expect.objectContaining({ ...CALLER, attempt: 2 })
       );
+    });
+
+    it('should give a revision of a record written before provenance its first attempt', async () => {
+      const storage = createStorage(baseDocument());
+      const { service } = createService(storage);
+
+      await service.revise({ comment: 'Tightened', id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).toEqual({ attempt: 1 });
     });
 
     it('should inherit the action id, since a revision keeps the same action', async () => {
@@ -2783,6 +2858,15 @@ describe('ProposalsService storage-only provenance', () => {
       );
 
       expect(indexedDocument(storage).provenance?.actionId).toBe('security-isolate-host');
+    });
+
+    it('should drop the settle path on the new revision', async () => {
+      const storage = createStorage(pendingWithProvenance());
+      const { service } = createService(storage);
+
+      await service.revise({ comment: 'Tightened', id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('settledBy');
     });
   });
 

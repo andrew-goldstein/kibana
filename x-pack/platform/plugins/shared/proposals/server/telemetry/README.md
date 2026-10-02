@@ -2,7 +2,7 @@
 
 Event-Based Telemetry (EBT) events registered by the `proposals` plugin. They go through core analytics (`core.analytics`), so opted-out clusters send nothing. The events are registered once in `setup()`. See the plugin [README](../../README.md).
 
-Gate reliability (a gate workflow that failed, was cancelled or timed out) is not duplicated here. It comes from the Workflows engine's own terminal execution events for the `system-create-proposal` workflow. Proposals events cover what the engine cannot know: what was proposed, who decided and how, and where each proposal settled.
+Gate reliability (a gate workflow that failed, was cancelled or timed out) is not duplicated here. It comes from the Workflows engine's own terminal execution events for the `system-create-proposal` workflow. Proposals events cover what the engine cannot know: what was proposed, who decided and how, where each proposal settled, and a daily view of what is still open.
 
 ## Privacy contract
 
@@ -11,14 +11,15 @@ Gate reliability (a gate workflow that failed, was cancelled or timed out) is no
 - **No space ids.** Events carry `is_default_space` instead.
 - **What a join reaches.** "No space ids" holds only within the proposals events. `caller_run_id` joins to the Workflows engine's own run events (`workflows_execution_workflow_completed`, `_failed` and `_cancelled`) for that run, and to its child runs (such as the gate and the action it runs) wherever the engine reports their lineage. Those events already carry the raw `spaceId` and `workflowId` (for a custom workflow, usually derived from its name), the `ruleId` of a rule-triggered run, and two free-text fields: `errorMessage` on a failed run and `cancellationReason` on a cancelled one. The engine's `errorMessage` for a failed action run carries the same text the gate stores as `executionError` and a retry carries as `previousExecutionError`, which these events never ship themselves. All of these are existing engine fields, outside this plugin.
 - **No custom workflow ids.** The action workflow id and the calling workflow id never ship. The caller is described only by `managed_caller` and the proposal's own `origin` (a closed enum). The action ships only as `action_id`: the registered managed workflow definition id it was installed from (its `originManagedWorkflowId`, which only a managed install records), or `custom` for a workflow no plugin manages.
-- **Caller-asserted fields.** `auto_approve_requested`, `decision_source` and `expiry_reason` (with `failure_source`, which follows from the same `settledBy`) come from the `autoApprove`, `decisionSource` and `settledBy` step inputs, which any workflow calling the proposals steps can set. They report what the caller says happened, not a server check. `managed_caller`, `caller_run_id` and `attempt` are derived on the server and `action_id` comes from the action read. `origin` is the proposal's stored value, which its creator declared (see [Caller fields](#caller-fields)).
+- **Caller-asserted fields.** `auto_approve_requested`, `decision_source` and `expiry_reason` (with `failure_source`, which follows from the same stored `settledBy`) come from the `autoApprove`, `decisionSource` and `settledBy` step inputs, which any workflow calling the proposals steps can set. They report what the caller says happened, not a server check. `managed_caller`, `caller_run_id` and `attempt` are derived on the server and `action_id` comes from the action read. `origin` is the proposal's stored value, which its creator declared (see [Caller fields](#caller-fields)).
 - **System ids ship raw.** `caller_run_id` is a generated execution UUID that the Workflows engine already ships. `proposal_id` and `root_proposal_id` are generated proposal UUIDs: `create()`, `clone()` and `revise()` each mint one with `uuidv4()`, and no request or step input can choose one.
+- **Snapshots are cluster-level aggregates.** `proposals_snapshot` is summed across spaces and carries `space_count`, never a per-space breakdown, a proposal or action id, or a caller field.
 - **Closed schemas.** No field is `pass_through`. In dev mode, a payload with an undeclared key throws, and the schema tests check this.
 - **Never throw.** Every emission goes through `safeReportEvent`, which catches everything and logs at debug level, so telemetry cannot fail the write it follows. Emitters report after their write resolves, never inside an optimistic-concurrency callback, and only on a real transition diffed against the loaded document.
 
 The schema tests (`event_types.test.ts`) enforce the following:
-- every field has a description, and every event carries the caller fields (requiring `origin`, `managed_caller` and `is_default_space`) and requires both proposal id fields;
-- only `proposals_proposal_created` and `proposals_action_executed` declare `action_id`;
+- every field has a description, and every event except the snapshot carries the caller fields (requiring `origin`, `managed_caller` and `is_default_space`) and requires both proposal id fields;
+- only `proposals_proposal_created` and `proposals_action_executed` declare `action_id`, and the snapshot declares no id at any depth;
 - no field is `text` or `pass_through`;
 - no field name is in the denylist (`user`, `username`, `email`, `name`, `title`, `message`, `rationale`, `comment`, `description`, `space_id`, `spaceId`, `decidedBy`, `executionError`, `previousExecutionError`, `previous_execution_error`, `actionInput`);
 - this README documents exactly the registered events;
@@ -32,15 +33,17 @@ The schema tests (`event_types.test.ts`) enforce the following:
 | `event_types.ts` | One `EventTypeOpts` and one payload type per event, plus `PROPOSALS_TELEMETRY_EVENT_TYPES` |
 | `register_telemetry_events.ts` | `registerProposalsTelemetryEvents(analytics)`, called once in `setup()` |
 | `safe_report_event.ts` | `safeReportEvent` and `createProposalsTelemetryReporter`, the never-throw reporters; both return whether the event was reported |
-| `bucket_duration.ts`, `bucket_expires_in.ts` | The duration buckets behind `expires_in_bucket` |
+| `bucket_duration.ts`, `bucket_expires_in.ts` | The duration buckets behind `expires_in_bucket` and the snapshot's age buckets |
 | `to_telemetry_category.ts` | Maps the open action category onto the closed vocabulary |
 | `is_default_space.ts`, `build_caller_fields.ts` | The caller fields, from the stored `origin` and provenance |
 | `build_proposal_id_fields.ts` | `proposal_id` and `root_proposal_id`, from the stored record |
-| `to_telemetry_record.ts` | `toTelemetryRecord`, the builders' view of a stored proposal: its public fields, its nested provenance flattened, and the write-time context (`autoApproveRequested`, `decisionSource`, `settledBy`) that is reported but not stored |
+| `to_telemetry_record.ts` | `toTelemetryRecord`, the builders' view of a stored proposal: its public fields, its nested provenance flattened, and the write-time context (`autoApproveRequested`, `decisionSource`) that is reported but not stored |
 | `to_telemetry_action_id.ts` | The `action_id` the service stores at creation: a managed action workflow's definition id, or `custom` |
 | `build_*_payload.ts` | One pure payload builder per event, from the stored record (never the stripped public proposal). `payload_builders_privacy.test.ts` checks that none of them reads `title` or `previousExecutionError` |
 | `build_update_events.ts` | The events one `update()` write produces, diffed from the loaded record to the written one |
 | `to_resume_rejected_reason.ts` | The `resume_rejected` reason a refusal error stands for |
+| `to_settled_reason.ts` | The snapshot's settled `reason` from a head's stored `settledBy`, matching the per-write `expiry_reason` and `failure_source` |
+| `to_snapshot_day.ts` | The UTC `snapshot_day` of a snapshot run |
 | `types.ts` | `ProposalTelemetryRecord` (the stored fields the builders read) and `ProposalsTelemetryEvent` |
 
 ## Where each event is emitted
@@ -57,19 +60,20 @@ The schema tests (`event_types.test.ts`) enforce the following:
 | `proposals_proposal_revised` | `revise()` | After both the revision and the superseded predecessor are written. A revision that loses its race and is retired sends nothing |
 | `proposals_proposal_resume_rejected` | `releaseGate()` | A typed refusal: `already_decided`, `settled`, `input_changed`, `no_execution` or `not_waiting` |
 | `proposals_proposal_resume_rejected` | the `proposals.checkDecidePrivileges` step, through `reportResumeRejected()` | `external_principal` or `unprivileged`, behind the gate |
+| `proposals_snapshot` | the `proposals:telemetry_snapshot` task (`../tasks/telemetry_snapshot/`) | Once per UTC day, when telemetry is opted in. See [Daily snapshot](#daily-snapshot) |
 
 One approval can send several events of different types (for example `decided` and `status_changed` from the write that records the approval and starts the action), but never two of the same type for one write.
 
 Semantics decided at the emission points:
 - **`decision_source` without a recorded source** reads as `unknown`, not `human`. It happens only for a gate parked under an older definition (an autonomy decision never parks) or a direct step call.
-- **`failure_source`** is `action` when the loop recorded the failure itself, and `workflow_failure` when a settle path did (the only writes that pass a `settledBy`, which is reported with that write and not stored).
+- **`failure_source`** is `action` when the loop recorded the failure itself, and `workflow_failure` when a settle path did (the only writes that store `settledBy`).
 - **`proposals_action_executed`** is sent only for an outcome the loop recorded. A gate failure settled onto a running action sends its `status_changed` (with `failure_source: workflow_failure`) and no `action_executed`, because the action's own outcome is unknown.
 - **`time_to_decision_ms`** is still sent for a late decision, together with `decided_after_deadline: true`.
 - **`action_id`** is resolved once, in `create()`, from the action read it already makes for the metadata and input check, and stored as the storage-only `actionId`. `clone()` and `revise()` inherit it with the action, so no later event reads the action again. It is absent when the action could not be read at creation: unknown, rather than a guess.
 
 ## Caller fields
 
-Every event carries these fields.
+Every event except `proposals_snapshot` carries these fields.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -93,7 +97,7 @@ The walk runs only while telemetry is opted in (read once per gate creation, wit
 
 ## Proposal id fields
 
-Every event also carries these fields, so a dashboard can follow one proposal from created to decided to executed and group a whole chain of retries and revisions.
+Every event except `proposals_snapshot` also carries these fields, so a dashboard can follow one proposal from created to decided to executed and group a whole chain of retries and revisions.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -201,10 +205,41 @@ A decision attempt was refused. One event per attempt.
 | proposal id fields | | | See above |
 | `reason` | keyword | yes | `already_decided`, `settled`, `input_changed`, `not_waiting`, `no_execution`, `unprivileged` or `external_principal`. A decision on a proposal the gate has already settled `expired` is `settled` |
 
+### `proposals_snapshot`
+
+One cluster-level aggregate per UTC day, counting **chain heads** only, so a chain of retries and revisions counts once. It carries no caller fields and no proposal or action id.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `snapshot_day` | keyword | yes | The UTC day (`YYYY-MM-DD`); dedupe on it |
+| `space_count` | long | yes | Spaces with at least one proposal |
+| `pending_by_age` | array | yes | `{ age_bucket, count }`: still `pending`, by time since the chain root's creation |
+| `pending_overdue_by_age` | array | yes | `{ age_bucket, count }`: still `pending` past the deadline, by overdue time. Cancelled gates and missed wake-ups show here |
+| `executing_by_age` | array | yes | `{ age_bucket, count }`: still `executing`, by time since approval. A restart mid-action strands proposals here |
+| `settled` | array | yes | `{ status, reason?, count }`: settled heads (all time), by `succeeded`, `failed`, `expired` or `no_action`, with the expiry reason or failure source when recorded |
+
+## Daily snapshot
+
+The `proposals:telemetry_snapshot` Task Manager task reports `proposals_snapshot`. It is registered in `setup()` and scheduled in `start()` with a stable id and a `24h` interval (the scheduling call's rejection is caught and logged). Task Manager and telemetry are both optional plugins: without Task Manager there is no task, and without telemetry every run counts as opted out.
+
+- **Task settings:** `timeout: '5m'`, `cost: Normal`, `priority: Maintenance`, and a versioned state schema holding only `lastSnapshotDay`.
+- **Opt-in first.** Each run reads `telemetry.isOptedIn$` before any Elasticsearch work. A missing telemetry plugin, an opt-in that is still undecided after 5s, or a stream error all count as opted out, and the run does nothing.
+- **Once per UTC day.** A run whose day equals `lastSnapshotDay` does nothing, so a catch-up run after downtime or a second Kibana node claiming the task cannot report the day twice. The day is recorded only once the event is reported. Consumers can still dedupe on `snapshot_day`.
+- **One search, no documents.** A single `size: 0` search runs as the internal user over `.kibana-proposals` in every space, with the run's abort signal. It is a raw client search rather than the storage client's, because the storage client's reads first check the index mappings with calls that cannot carry the signal. A missing index gives an empty snapshot (`space_count: 0`, empty arrays), not an error.
+- **Chain heads only.** A head is a proposal with no `supersededBy` and a status other than `superseded`. A retried original keeps its `failed` status but gains `supersededBy`, so it does not count.
+- **Ages.** `pending` is aged from the chain root's `createdAt` (a retry or revision inherits it), `pending` past its deadline (`expiresAt` at or before the run time) from `expiresAt`, and `executing` from `decidedAt` (the approval). The buckets have the same upper-inclusive boundaries as every other duration bucket (`le_1h` through `gt_7d`); empty buckets are left out.
+- **Settled reasons** come from the head's stored `settledBy`, as the per-write events do: `expired` carries its expiry reason (none when the gate settled under an older definition), and `failed` is `action` without a `settledBy` and `workflow_failure` with one. A `failed` head written before provenance existed (no `provenance.attempt`) has no reason, because any path could have settled it. `succeeded` and `no_action` carry no reason.
+- **`space_count`** is a `cardinality` aggregation over the heads' `spaceId`, near-exact below 3,000 spaces. Space ids never leave the search.
+- **Failures.** A run never throws. A failed search is logged as a warning and the day is skipped: a recurring task simply runs again at the next interval. An aborted run (the 5m timeout, or shutdown) is logged at debug level and reports nothing.
+- **Disabled plugin.** With `xpack.proposals.enabled: false` core never loads the plugin, so the task type is not registered. A task document scheduled earlier is then never claimed.
+
 ## Known gaps
 
 - Counts are lower bounds: EBT drops events on a full queue, a send failure or a crash.
-- A gate that is cancelled or stranded by a restart sends no settle event. The daily snapshot, in its own follow-up PR, is how it becomes visible.
+- A gate that is cancelled or stranded by a restart sends no settle event; the snapshot's age buckets are how it becomes visible.
+- A snapshot run that fails, times out or finds telemetry undecided sends nothing for that day, so a day can be missing from the series.
+- The snapshot and the per-write proposals events must merge back to back, before any serverless promotion picks up the per-write events alone. A settle path is stored only once the snapshot ships, so a workflow failure settled while only the per-write events were deployed has provenance but no settle path, and would count as an action failure.
+- A `failed` head written before provenance existed has no settled `reason`, because any path could have settled it. It stays in the all-time counts until it is retried.
 - An unprivileged decision through the HTTP API is refused before the handler runs, so it sends no `resume_rejected`.
 - A refused resume can be reported twice when Kibana restarts within moments of it and the gate step re-runs.
 - A refusal that is not typed (a missing proposal, a lost annotation race, or the resume API failing) sends no `resume_rejected`.

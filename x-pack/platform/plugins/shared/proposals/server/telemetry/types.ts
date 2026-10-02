@@ -5,7 +5,7 @@
  * 2.0.
  */
 
-import type { ProposalDecisionSource, ProposalSettledBy } from '@kbn/proposals-common';
+import type { ProposalDecisionSource } from '@kbn/proposals-common';
 import type { ProposalProvenance } from '../storage/proposal_provenance';
 import type { ProposalDocument } from '../storage/proposals_storage';
 import type { ProposalsTelemetryEventType } from './constants';
@@ -13,18 +13,13 @@ import type { ProposalsTelemetryEventPayloads } from './event_types';
 
 /**
  * What only the write in progress knows, and so is passed to telemetry rather than stored:
- * no later write reads any of these values back.
+ * no later write reads either value back.
  */
 export interface ProposalWriteContext {
   /** Whether the caller asked the gate to auto-approve, whatever the gate then decided. Creation only. */
   autoApproveRequested?: boolean;
   /** Who made the decision. Only on the write that records it. */
   decisionSource?: ProposalDecisionSource;
-  /**
-   * The settle path that moved the proposal to a terminal status without the loop recording an
-   * outcome itself. Only on the write that settles it; absent when the loop settled it.
-   */
-  settledBy?: ProposalSettledBy;
 }
 
 /**

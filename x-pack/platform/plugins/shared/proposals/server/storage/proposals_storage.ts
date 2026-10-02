@@ -95,6 +95,7 @@ const storageSettings = {
           attempt: types.long({}),
           callerManaged: types.boolean({}),
           callerRunId: types.keyword({}),
+          settledBy: types.keyword({}),
         },
       }),
     },

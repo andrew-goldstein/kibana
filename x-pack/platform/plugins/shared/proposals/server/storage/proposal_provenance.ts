@@ -5,8 +5,10 @@
  * 2.0.
  */
 
+import type { ProposalSettledBy } from '@kbn/proposals-common';
+
 /**
- * Where a proposal came from, for reporting only.
+ * Where a proposal came from and how it settled, for reporting only.
  *
  * Storage-only, like the sort ranks, and nested under one `provenance` key for
  * the same reason: the document shape says these are derived rather than
@@ -15,10 +17,10 @@
  * attachment or a workflow step's output.
  *
  * Only what a later write needs is stored. What only the write in progress
- * knows (whether the caller asked for auto-approval, who made the decision,
- * and which path settled it) reaches telemetry as write-time context instead
- * (see `toTelemetryRecord`). Every field is optional because a proposal
- * created outside the gate has no caller.
+ * knows, such as whether the caller asked for auto-approval or who made the
+ * decision, reaches telemetry as write-time context instead (see
+ * `toTelemetryRecord`). Every field is optional because a proposal created
+ * outside the gate has no caller.
  */
 export interface ProposalProvenance {
   /**
@@ -52,6 +54,12 @@ export interface ProposalProvenance {
    * ancestor is unreadable.
    */
   callerRunId?: string;
+  /**
+   * The settle path that moved the proposal to a terminal status without the
+   * loop recording an outcome itself. Absent when the loop settled it. Stored
+   * because the daily snapshot aggregates settled proposals by it.
+   */
+  settledBy?: ProposalSettledBy;
 }
 
 /** The stored document's provenance key. Absent on a record written before it existed. */
@@ -61,3 +69,13 @@ export interface ProposalProvenanceField {
 
 /** What the gate knows about its caller when it creates a proposal. */
 export type ProposalCallerProvenance = Pick<ProposalProvenance, 'callerManaged' | 'callerRunId'>;
+
+/** The snapshot's search path to the stored settle path. */
+export const SETTLED_BY_FIELD = 'provenance.settledBy' as const;
+
+/**
+ * The snapshot's search path to a field every proposal written since provenance existed has
+ * (`create()`, `clone()` and `revise()` always write an attempt), so a head without it predates
+ * any stored settle path.
+ */
+export const PROVENANCE_ATTEMPT_FIELD = 'provenance.attempt' as const;

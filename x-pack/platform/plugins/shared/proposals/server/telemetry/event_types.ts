@@ -24,22 +24,26 @@ import {
 } from '@kbn/proposals-common';
 import type {
   ProposalActionOutcome,
+  ProposalDurationBucket,
   ProposalExpiresInBucket,
   ProposalExpiryReason,
   ProposalFailureSource,
   ProposalReportedDecisionSource,
   ProposalResumeRejectedReason,
+  ProposalSettledReason,
   ProposalTelemetryCategory,
 } from './constants';
 import {
   ACTION_OUTCOMES,
   CUSTOM_ACTION_ID,
   DECISION_SOURCES,
+  DURATION_BUCKETS,
   EXPIRES_IN_BUCKETS,
   EXPIRY_REASONS,
   FAILURE_SOURCES,
   PROPOSALS_TELEMETRY_EVENTS,
   RESUME_REJECTED_REASONS,
+  SETTLED_REASONS,
   TELEMETRY_CATEGORIES,
 } from './constants';
 import { formatVocabulary } from './format_vocabulary';
@@ -122,6 +126,29 @@ export interface ProposalsProposalResumeRejectedPayload
   reason: ProposalResumeRejectedReason;
 }
 
+/** A settled status a chain head can hold. `superseded` is never a head. */
+export type ProposalSettledStatus = Exclude<ProposalStatus, 'pending' | 'executing' | 'superseded'>;
+
+export interface ProposalsSnapshotAgeBucketCount {
+  age_bucket: ProposalDurationBucket;
+  count: number;
+}
+
+export interface ProposalsSnapshotSettledCount {
+  count: number;
+  reason?: ProposalSettledReason;
+  status: ProposalSettledStatus;
+}
+
+export interface ProposalsSnapshotPayload {
+  executing_by_age: ProposalsSnapshotAgeBucketCount[];
+  pending_by_age: ProposalsSnapshotAgeBucketCount[];
+  pending_overdue_by_age: ProposalsSnapshotAgeBucketCount[];
+  settled: ProposalsSnapshotSettledCount[];
+  snapshot_day: string;
+  space_count: number;
+}
+
 /** The payload each proposals event type carries. */
 export interface ProposalsTelemetryEventPayloads {
   [PROPOSALS_TELEMETRY_EVENTS.ProposalCreated]: ProposalsProposalCreatedPayload;
@@ -131,6 +158,7 @@ export interface ProposalsTelemetryEventPayloads {
   [PROPOSALS_TELEMETRY_EVENTS.ProposalRevised]: ProposalsProposalRevisedPayload;
   [PROPOSALS_TELEMETRY_EVENTS.ProposalRetried]: ProposalsProposalRetriedPayload;
   [PROPOSALS_TELEMETRY_EVENTS.ProposalResumeRejected]: ProposalsProposalResumeRejectedPayload;
+  [PROPOSALS_TELEMETRY_EVENTS.Snapshot]: ProposalsSnapshotPayload;
 }
 
 const ACTION_ID_DESCRIPTION = `The action workflow's registered managed workflow definition id (its \`originManagedWorkflowId\`), resolved once when the proposal was created and kept by its retries and revisions, or \`${CUSTOM_ACTION_ID}\` for a workflow no plugin manages. Never a customer-chosen workflow id. Absent when the proposal has no action, or its action workflow could not be read at creation`;
@@ -139,6 +167,8 @@ const ATTEMPT_DESCRIPTION =
 const CATEGORY_DESCRIPTION = `Action category (${formatVocabulary(
   TELEMETRY_CATEGORIES
 )}); any category outside the known vocabulary ships as \`other\`. Absent when the proposal has none`;
+const DURATION_BUCKET_VOCABULARY = formatVocabulary(DURATION_BUCKETS);
+const SNAPSHOT_COUNT_DESCRIPTION = 'Number of chain heads in the bucket, summed across spaces';
 
 const CALLER_FIELDS_SCHEMA: RootSchema<ProposalsCallerFields> = {
   caller_run_id: {
@@ -194,6 +224,23 @@ const PROPOSAL_ID_FIELDS_SCHEMA: RootSchema<ProposalsProposalIdFields> = {
     },
   },
 };
+
+const AGE_BUCKET_ITEMS_SCHEMA = (ageDescription: string) => ({
+  properties: {
+    age_bucket: {
+      type: 'keyword' as const,
+      _meta: {
+        description: `${ageDescription}, bucketed: ${DURATION_BUCKET_VOCABULARY}`,
+        optional: false as const,
+      },
+    },
+    count: {
+      type: 'long' as const,
+      _meta: { description: SNAPSHOT_COUNT_DESCRIPTION, optional: false as const },
+    },
+  },
+  _meta: { description: 'One count per age bucket; empty buckets are omitted' },
+});
 
 export const PROPOSALS_PROPOSAL_CREATED_EVENT: EventTypeOpts<ProposalsProposalCreatedPayload> = {
   eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalCreated,
@@ -456,6 +503,78 @@ export const PROPOSALS_PROPOSAL_RESUME_REJECTED_EVENT: EventTypeOpts<ProposalsPr
     },
   };
 
+export const PROPOSALS_SNAPSHOT_EVENT: EventTypeOpts<ProposalsSnapshotPayload> = {
+  eventType: PROPOSALS_TELEMETRY_EVENTS.Snapshot,
+  schema: {
+    executing_by_age: {
+      type: 'array',
+      items: AGE_BUCKET_ITEMS_SCHEMA('Time since the approval'),
+      _meta: {
+        description:
+          'Chain heads still `executing`, by time since approval. A restart mid-action strands proposals here',
+      },
+    },
+    pending_by_age: {
+      type: 'array',
+      items: AGE_BUCKET_ITEMS_SCHEMA("Time since the chain root's creation"),
+      _meta: { description: 'Chain heads still `pending`, by age' },
+    },
+    pending_overdue_by_age: {
+      type: 'array',
+      items: AGE_BUCKET_ITEMS_SCHEMA('Time since the deadline'),
+      _meta: {
+        description:
+          'Chain heads still `pending` past their deadline, by overdue time. A gate that was cancelled or never woke up shows here',
+      },
+    },
+    settled: {
+      type: 'array',
+      items: {
+        properties: {
+          count: {
+            type: 'long',
+            _meta: { description: SNAPSHOT_COUNT_DESCRIPTION, optional: false },
+          },
+          reason: {
+            type: 'keyword',
+            _meta: {
+              description: `Why it settled there (${formatVocabulary(
+                SETTLED_REASONS
+              )}): an expiry reason for \`expired\`, a failure source for \`failed\`; absent otherwise or when unrecorded`,
+              optional: true,
+            },
+          },
+          status: {
+            type: 'keyword',
+            _meta: {
+              description:
+                'Settled status (`succeeded`, `failed`, `expired` or `no_action`). Superseded proposals are never chain heads',
+              optional: false,
+            },
+          },
+        },
+        _meta: { description: 'One count per settled status and reason combination' },
+      },
+      _meta: { description: 'Settled chain heads (all time), by status and reason' },
+    },
+    snapshot_day: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'UTC day (`YYYY-MM-DD`) the snapshot describes; one snapshot per day, used to dedupe catch-up runs',
+        optional: false,
+      },
+    },
+    space_count: {
+      type: 'long',
+      _meta: {
+        description: 'Number of spaces with at least one proposal that the aggregate covers',
+        optional: false,
+      },
+    },
+  },
+};
+
 /** Every proposals event type, in registration order. */
 export const PROPOSALS_TELEMETRY_EVENT_TYPES = [
   PROPOSALS_PROPOSAL_CREATED_EVENT,
@@ -465,4 +584,5 @@ export const PROPOSALS_TELEMETRY_EVENT_TYPES = [
   PROPOSALS_PROPOSAL_REVISED_EVENT,
   PROPOSALS_PROPOSAL_RETRIED_EVENT,
   PROPOSALS_PROPOSAL_RESUME_REJECTED_EVENT,
+  PROPOSALS_SNAPSHOT_EVENT,
 ] as const;
