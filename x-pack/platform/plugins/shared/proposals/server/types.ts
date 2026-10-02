@@ -8,6 +8,7 @@
 import type { IRouter, KibanaRequest, Logger } from '@kbn/core/server';
 import type { SpacesPluginStart } from '@kbn/spaces-plugin/server';
 import type { SecurityPluginStart } from '@kbn/security-plugin-types-server';
+import type { TelemetryPluginStart } from '@kbn/telemetry-plugin/server';
 import type { FeaturesPluginSetup } from '@kbn/features-plugin/server';
 import type {
   WorkflowsExtensionsServerPluginSetup,
@@ -42,6 +43,11 @@ export interface ProposalsStartDependencies {
    */
   security?: SecurityPluginStart;
   spaces?: SpacesPluginStart;
+  /**
+   * Read for the telemetry opt-in before the gate makes a read that only telemetry needs.
+   * Optional: without it the cluster reads as opted out.
+   */
+  telemetry?: TelemetryPluginStart;
   workflowsExtensions: WorkflowsExtensionsServerPluginStart;
   /** Writes the conversation attachment that surfaces a new proposal in the chat. */
   agentBuilder: AgentBuilderPluginStart;
