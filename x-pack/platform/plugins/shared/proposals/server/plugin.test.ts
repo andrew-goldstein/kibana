@@ -29,6 +29,7 @@ import {
   PROPOSALS_MANAGED_WORKFLOW_OWNER_ID,
 } from './constants';
 import { registerRoutes } from './routes/register_routes';
+import { PROPOSALS_TELEMETRY_EVENTS } from './telemetry';
 
 jest.mock('./managed_workflows/initialize_managed_workflows', () => ({
   initializeManagedWorkflows: jest.fn().mockResolvedValue(undefined),
@@ -194,6 +195,15 @@ describe('ProposalsPlugin', () => {
       setupPlugin();
 
       expect(registerRoutes).toHaveBeenCalledTimes(1);
+    });
+
+    it('registers every proposals telemetry event type with core analytics', () => {
+      const { coreSetup } = setupPlugin();
+
+      const registered = coreSetup.analytics.registerEventType.mock.calls.map(
+        ([{ eventType }]) => eventType
+      );
+      expect(registered.sort()).toEqual(Object.values(PROPOSALS_TELEMETRY_EVENTS).sort());
     });
   });
 

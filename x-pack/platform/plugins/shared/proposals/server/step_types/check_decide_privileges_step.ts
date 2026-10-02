@@ -11,6 +11,7 @@ import {
   isExternalResumePrincipal,
 } from '@kbn/proposals-common';
 import type { ProposalPrivilegesChecker } from '../services/check_proposal_privileges';
+import type { ProposalsService } from '../services/proposals_service';
 import { parseStepInput } from './parse_step_input';
 import { toStepError } from './to_step_error';
 
@@ -23,8 +24,11 @@ import { toStepError } from './to_step_error';
  * whereas a failure here would spend the gate and strand the proposal.
  */
 export const getCheckDecidePrivilegesStepDefinition = ({
+  getProposalsService,
   privileges,
 }: {
+  /** Only to report a refusal; the check itself never reads the proposal. */
+  getProposalsService: () => ProposalsService;
   privileges: ProposalPrivilegesChecker;
 }) =>
   createServerStepDefinition({
@@ -35,6 +39,22 @@ export const getCheckDecidePrivilegesStepDefinition = ({
           checkDecidePrivilegesStepCommonDefinition.inputSchema,
           context.input
         );
+        const spaceId = context.contextManager.getContext().workflow.spaceId;
+
+        // A refusal is reported here because the gate re-parks on it without
+        // the service ever seeing the attempt. Never allowed to fail the step:
+        // the refusal is the answer, and the telemetry only describes it.
+        const reportRefusal = async (reason: 'external_principal' | 'unprivileged') => {
+          try {
+            await getProposalsService().reportResumeRejected({ id: proposalId, reason, spaceId });
+          } catch (error) {
+            context.logger.debug(
+              `Did not report the refused decision on proposal ${proposalId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
+        };
 
         // Refused without consulting the privilege service at all: on this path
         // the execution identity is the workflow runner, so a check would
@@ -43,6 +63,7 @@ export const getCheckDecidePrivilegesStepDefinition = ({
           context.logger.warn(
             `Proposal ${proposalId} cannot be decided through an external resume, whose execution identity is the workflow runner rather than the responder`
           );
+          await reportRefusal('external_principal');
           return { output: { canDecide: false } };
         }
 
@@ -50,6 +71,7 @@ export const getCheckDecidePrivilegesStepDefinition = ({
 
         if (!canDecide) {
           context.logger.info(`Resumer is not allowed to decide proposal ${proposalId}`);
+          await reportRefusal('unprivileged');
         }
 
         return { output: { canDecide } };

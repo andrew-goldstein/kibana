@@ -9,6 +9,7 @@
 
 import { parse } from 'yaml';
 import type { z } from '@kbn/zod/v4';
+import { CREATE_PROPOSAL_WORKFLOW } from './create_proposal';
 import CREATE_PROPOSAL_YAML from './create_proposal.yaml';
 import { isValidDuration, parseDuration } from '../../../common/utils';
 import {
@@ -141,8 +142,21 @@ const updateProposalSteps = (): WorkflowStep[] => {
   ];
 };
 
+/** Every `proposals.settleIncompleteProposal` step anywhere in the definition. */
+const settleIncompleteProposalSteps = (): WorkflowStep[] =>
+  allSteps().filter((step) => step.type === 'proposals.settleIncompleteProposal');
+
 describe('create-investigation-proposal workflow', () => {
   describe('contract', () => {
+    it('ships at version 3, bumped with the reporting inputs its steps now pass', () => {
+      // Version 2 added trigger inputs (#293324). Version 3 changes only step
+      // inputs (`autoApprove`, `decisionSource`, `settledBy`). The installer
+      // already reinstalls on any YAML change, so the bump is not what delivers
+      // it: it is for telemetry, where the engine reports `managedVersion` and
+      // so separates gate runs from before and after `decisionSource`.
+      expect(CREATE_PROPOSAL_WORKFLOW.version).toBe(3);
+    });
+
     it('declares inputs under the manual trigger, since a top-level inputs block is not valid', () => {
       const manualTrigger = workflow.triggers.find(({ type }) => type === 'manual');
 
@@ -177,6 +191,15 @@ describe('create-investigation-proposal workflow', () => {
 
       expect(String(create?.with?.category)).toContain('inputs.category');
       expect(String(create?.with?.impact)).toContain('inputs.impact');
+    });
+
+    it('forwards autoApprove to the create step as a real boolean, matching the gate', () => {
+      // `${{ }}` rather than `{{ }}`: the plain form renders text, which the
+      // step's boolean input would reject. Compared with `== true` exactly as
+      // `needs_gate` does, so the stored request and the gate cannot disagree.
+      const create = findStep(workflow.steps, 'create_proposal');
+
+      expect(create?.with?.autoApprove).toBe('${{ inputs.autoApprove == true }}');
     });
 
     it('types actionInput as a free-form object so any action shape can pass through', () => {
@@ -428,6 +451,39 @@ describe('create-investigation-proposal workflow', () => {
       }
     });
 
+    it('attributes every decision it writes to a decision source', () => {
+      const decisionWrites = updateProposalSteps().filter(
+        (step) => step.with?.decision !== undefined
+      );
+
+      expect(decisionWrites.length).toBeGreaterThan(0);
+      for (const step of decisionWrites) {
+        expect(step.with?.decisionSource).toBeDefined();
+      }
+    });
+
+    it('attributes a dismissal to a human, since autonomy only ever approves', () => {
+      expect(findStep(workflow.steps, 'record_dismissal')?.with?.decisionSource).toBe('human');
+    });
+
+    it.each(['record_approval_no_action', 'record_approval_executing'])(
+      'attributes %s to the branch that resolved the gate',
+      (name) => {
+        expect(String(findStep(workflow.steps, name)?.with?.decisionSource)).toContain(
+          'variables.decision_source'
+        );
+      }
+    );
+
+    it.each([
+      ['resolve_gate', 'human'],
+      ['resolve_auto', 'autonomy'],
+    ])('sets decision_source in %s to %s', (name, source) => {
+      // Both branches set it: variables outlive an iteration, so an autonomy
+      // pass that left it alone would carry a gated pass's source forward.
+      expect(findStep(workflow.steps, name)?.with?.decision_source).toBe(source);
+    });
+
     it('writes a recognised status everywhere else', () => {
       // A status-only write inherits whatever decision the record already
       // carries, which the YAML cannot know — so this only catches a status
@@ -553,6 +609,23 @@ describe('create-investigation-proposal workflow', () => {
       expect(record?.with?.status).toBe('expired');
       expect(String(record?.with?.executionError)).toContain('variables.gate_error');
       expect(findStep(workflow.steps, 'break_gate_expiry')?.type).toBe('loop.break');
+    });
+
+    it.each([
+      ['record_gate_expiry', 'deadline'],
+      ['record_unfinished', 'iteration_limit'],
+      ['settle_on_failure', 'workflow_failure'],
+    ])('records %s as settled by %s', (name, settledBy) => {
+      const settle = settleIncompleteProposalSteps().find((step) => step.name === name);
+
+      expect(settle?.with?.settledBy).toBe(settledBy);
+    });
+
+    it('records a distinct settledBy on every settle path, so each one is attributable', () => {
+      const settledBy = settleIncompleteProposalSteps().map((step) => step.with?.settledBy);
+
+      expect(settledBy).toHaveLength(3);
+      expect(new Set(settledBy).size).toBe(settledBy.length);
     });
 
     it('settles a timeout before the dismissal branch, which would invent a decision', () => {

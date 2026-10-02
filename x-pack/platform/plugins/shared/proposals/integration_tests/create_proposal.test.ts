@@ -37,6 +37,13 @@ describe('create-investigation-proposal workflow execution', () => {
     fixture = createProposalGateFixture();
   });
 
+  /** The payloads of every reported event of one type, in order. */
+  const reportedPayloads = (eventType: string) =>
+    fixture
+      .reportedEvents()
+      .filter((event) => event.eventType === eventType)
+      .map(({ payload }) => payload);
+
   describe('parking on the gate', () => {
     it('should create an undecided proposal and wait for a human', async () => {
       await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
@@ -469,6 +476,684 @@ describe('create-investigation-proposal workflow execution', () => {
       // Declaring the policy explicitly must behave like declaring nothing;
       // only `always-gate` overrides the caller.
       expect(fixture.proposals()[0].decision).toBe('approved');
+    });
+  });
+
+  describe('caller provenance', () => {
+    const REVIEW = {
+      context: { parentWorkflowExecutionId: 'exec-runner' },
+      id: 'exec-review',
+      isTestRun: false,
+      managed: true,
+      managedBy: 'alertzero',
+      spaceId: 'fake_space_id',
+      workflowId: 'wf-review',
+    };
+    const RUNNER = {
+      ...REVIEW,
+      context: { parent: { executionId: 'exec-floor', workflowId: 'wf-floor' } },
+      id: 'exec-runner',
+      workflowId: 'wf-runner',
+    };
+    const FLOOR = { ...REVIEW, context: {}, id: 'exec-floor', workflowId: 'wf-floor' };
+    /** The AlertZero bridge every Worker now reaches the gate through, as the gate's direct parent. */
+    const WRAPPER = {
+      ...REVIEW,
+      context: { parentWorkflowExecutionId: 'exec-review' },
+      id: 'exec-wrapper',
+      workflowId: 'system-create-alertzero-proposal',
+    };
+
+    it('should verify the caller as managed and record the root of its run', async () => {
+      fixture.setCallerLineage([REVIEW, RUNNER, FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).toEqual(
+        expect.objectContaining({ callerManaged: true, callerRunId: 'exec-floor' })
+      );
+    });
+
+    it('should not verify a caller no plugin manages', async () => {
+      fixture.setCallerLineage([{ ...FLOOR, managed: false, managedBy: null }]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance?.callerManaged).toBe(false);
+    });
+
+    it('should walk through the wrapper to the root of the Worker run', async () => {
+      fixture.setCallerLineage([WRAPPER, REVIEW, RUNNER, FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      // The gate's literal parent is the wrapper, but the run is the Worker's,
+      // so it joins the Worker's own events. The wrapper itself is not stored.
+      const proposal = fixture.onlyProposal();
+      expect(proposal.provenance).toEqual(
+        expect.objectContaining({ callerManaged: true, callerRunId: 'exec-floor' })
+      );
+    });
+
+    it('should not verify a custom workflow that calls the managed wrapper', async () => {
+      const CUSTOM = { ...FLOOR, id: 'exec-custom', managed: false, managedBy: null };
+      fixture.setCallerLineage([
+        { ...WRAPPER, context: { parentWorkflowExecutionId: 'exec-custom' } },
+        CUSTOM,
+      ]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).toEqual(
+        expect.objectContaining({ callerManaged: false, callerRunId: 'exec-custom' })
+      );
+    });
+
+    it('should still create the proposal when an ancestor cannot be read', async () => {
+      // The runner is missing, so the run root is unknown: a best-effort field
+      // must never be what stops the gate.
+      fixture.setCallerLineage([REVIEW]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      const { provenance } = fixture.onlyProposal();
+      expect(provenance?.callerManaged).toBe(false);
+      expect(provenance?.callerRunId).toBeUndefined();
+      expect(fixture.executionStatus()).toBe(ExecutionStatus.WAITING_FOR_INPUT);
+    });
+
+    it('should record no caller for a gate run directly', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).not.toHaveProperty('callerManaged');
+    });
+
+    it('should carry the caller onto a retry, which continues the same run', async () => {
+      fixture.setCallerLineage([REVIEW, RUNNER, FLOOR]);
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [, clone] = fixture.proposals();
+      expect(clone.provenance?.callerRunId).toBe('exec-floor');
+    });
+
+    it.each([
+      [true, true],
+      [undefined, false],
+    ])(
+      'should report auto_approve_requested as %p when the caller passes %p',
+      async (autoApprove, expected) => {
+        await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove });
+
+        expect(reportedPayloads('proposals_proposal_created')).toEqual([
+          expect.objectContaining({ auto_approve_requested: expected }),
+        ]);
+      }
+    );
+  });
+
+  describe('attempts', () => {
+    it('should start at the first attempt and count a retry as the next', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [original, clone] = fixture.proposals();
+      expect([original.provenance?.attempt, clone.provenance?.attempt]).toEqual([1, 2]);
+    });
+  });
+
+  describe('decision source', () => {
+    /** The decision source of every decided event, in order. */
+    const decisionSources = () =>
+      reportedPayloads('proposals_proposal_decided').map((payload) =>
+        'decision_source' in payload ? payload.decision_source : undefined
+      );
+
+    it('should attribute a dismissal to a human', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(decisionSources()).toEqual(['human']);
+    });
+
+    it('should attribute an approval through the gate to a human', async () => {
+      await fixture.start();
+
+      await fixture.resume(true);
+
+      expect(decisionSources()).toEqual(['human']);
+    });
+
+    it('should attribute an approval the caller authorised to autonomy', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      expect(decisionSources()[0]).toBe('autonomy');
+    });
+
+    it('should attribute the gated retry of an autonomous approval to a human', async () => {
+      // The autonomy pass leaves `decision_source` set; the gated pass after
+      // the failed action must report its own rather than inherit it.
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      await fixture.resume(false);
+
+      expect(decisionSources()).toEqual(['autonomy', 'human']);
+    });
+  });
+
+  describe('settle path', () => {
+    /** The status changes reported so far, as `[to_status, expiry_reason, failure_source]`. */
+    const settledStatusChanges = () =>
+      reportedPayloads('proposals_proposal_status_changed').map((payload) => [
+        'to_status' in payload ? payload.to_status : undefined,
+        'expiry_reason' in payload ? payload.expiry_reason : undefined,
+        'failure_source' in payload ? payload.failure_source : undefined,
+      ]);
+
+    it('should report a timed-out gate as settled by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(settledStatusChanges()).toEqual([['expired', 'deadline', undefined]]);
+    });
+
+    it('should report a spent attempt budget as settled by the iteration limit', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([['expired', 'iteration_limit', undefined]]);
+    });
+
+    it('should report a failed run as settled by the workflow failure', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([['expired', 'workflow_failure', undefined]]);
+    });
+
+    it('should report no settle path for an outcome the loop wrote itself', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(settledStatusChanges()).toEqual([['no_action', undefined, undefined]]);
+    });
+
+    it('should attribute an action failure the loop recorded to the action', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([
+        ['executing', undefined, undefined],
+        ['failed', undefined, 'action'],
+      ]);
+    });
+  });
+
+  describe('telemetry', () => {
+    const EXTERNAL_PRINCIPAL = 'external_resume:step-exec-1';
+
+    /** The engine fixture runs in a non-default space, with no calling workflow by default. */
+    const CUSTOM_CALLER = { is_default_space: false, managed_caller: false, origin: 'alertzero' };
+
+    const eventTypes = () => fixture.reportedEvents().map(({ eventType }) => eventType);
+
+    /** The id fields of the `index`-th proposal written; every chain here is rooted at the first. */
+    const idFieldsOf = (index = 0) => {
+      const all = fixture.proposals();
+      return { proposal_id: all[index].id, root_proposal_id: all[0].id };
+    };
+
+    const payloadOf = (eventType: string) =>
+      fixture.reportedEvents().find((event) => event.eventType === eventType)?.payload;
+
+    afterEach(() => {
+      // Every payload the gate produced passed the dev-mode schema validation.
+      expect(fixture.rejectedReports()).toEqual([]);
+    });
+
+    it('should report a human approval, its failed action and the retry', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_decided',
+        'proposals_proposal_status_changed',
+        'proposals_proposal_status_changed',
+        'proposals_action_executed',
+        'proposals_proposal_retried',
+      ]);
+      expect(payloadOf('proposals_proposal_decided')).toEqual({
+        ...CUSTOM_CALLER,
+        ...idFieldsOf(0),
+        attempt: 1,
+        decided_after_deadline: false,
+        decision: 'approved',
+        decision_source: 'human',
+        time_to_decision_ms: expect.any(Number),
+      });
+      expect(
+        fixture
+          .reportedEvents()
+          .filter(({ eventType }) => eventType === 'proposals_proposal_status_changed')
+          .map(({ payload }) => payload)
+      ).toEqual([
+        { ...CUSTOM_CALLER, ...idFieldsOf(0), from_status: 'pending', to_status: 'executing' },
+        {
+          ...CUSTOM_CALLER,
+          ...idFieldsOf(0),
+          failure_source: 'action',
+          from_status: 'executing',
+          to_status: 'failed',
+        },
+      ]);
+      expect(payloadOf('proposals_action_executed')).toEqual(
+        expect.objectContaining({
+          ...idFieldsOf(0),
+          action_id: 'custom',
+          attempt: 1,
+          outcome: 'failed',
+        })
+      );
+      // The clone's own id, with the chain root it inherited from the original.
+      expect(payloadOf('proposals_proposal_retried')).toEqual({
+        ...CUSTOM_CALLER,
+        ...idFieldsOf(1),
+        attempt: 2,
+      });
+    });
+
+    it("should carry each proposal's own id and its chain root on every event", async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [original, clone] = fixture.proposals();
+      expect(clone.id).not.toBe(original.id);
+      expect(
+        fixture
+          .reportedEvents()
+          .map(({ eventType, payload }) => [
+            eventType,
+            'proposal_id' in payload ? payload.proposal_id : undefined,
+            'root_proposal_id' in payload ? payload.root_proposal_id : undefined,
+          ])
+      ).toEqual([
+        ['proposals_proposal_created', original.id, original.id],
+        ['proposals_proposal_decided', original.id, original.id],
+        ['proposals_proposal_status_changed', original.id, original.id],
+        ['proposals_proposal_status_changed', original.id, original.id],
+        ['proposals_action_executed', original.id, original.id],
+        ['proposals_proposal_retried', clone.id, original.id],
+      ]);
+    });
+
+    it("should report a managed action's origin definition id as the action id", async () => {
+      fixture.setManagedAction('alertzero-action-create-rule');
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      await fixture.resume(true);
+
+      expect(fixture.proposals()[0].provenance?.actionId).toBe('alertzero-action-create-rule');
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ action_id: 'alertzero-action-create-rule' })
+      );
+      expect(payloadOf('proposals_action_executed')).toEqual(
+        expect.objectContaining({ action_id: 'alertzero-action-create-rule' })
+      );
+    });
+
+    it('should report a custom action as custom, never by its workflow id', async () => {
+      await fixture.start({ actionWorkflowId: 'secret-customer-workflow' });
+      await fixture.resume(true);
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ action_id: 'custom' })
+      );
+      expect(payloadOf('proposals_action_executed')).toEqual(
+        expect.objectContaining({ action_id: 'custom' })
+      );
+      expect(JSON.stringify(fixture.reportedEvents())).not.toContain('secret-customer-workflow');
+    });
+
+    it('should report the created proposal', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.reportedEvents()).toEqual([
+        {
+          eventType: 'proposals_proposal_created',
+          payload: {
+            ...CUSTOM_CALLER,
+            ...idFieldsOf(0),
+            action_id: 'custom',
+            auto_approve_requested: false,
+            // The fixture's action declares `tune`, outside the known vocabulary.
+            category: 'other',
+            confidence_bucket: 'medium',
+            expires_in_bucket: 'le_72h',
+            has_action: true,
+            impact_class: 'low',
+          },
+        },
+      ]);
+    });
+
+    it('should report a dismissal', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_decided',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_decided')).toEqual(
+        expect.objectContaining({ decision: 'dismissed', decision_source: 'human' })
+      );
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual({
+        ...CUSTOM_CALLER,
+        ...idFieldsOf(0),
+        from_status: 'pending',
+        to_status: 'no_action',
+      });
+    });
+
+    it('should report an autonomy approval without a time to decision', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ auto_approve_requested: true })
+      );
+      const decided = payloadOf('proposals_proposal_decided');
+      expect(decided).toEqual(expect.objectContaining({ decision_source: 'autonomy' }));
+      expect(decided).not.toHaveProperty('time_to_decision_ms');
+    });
+
+    it('should report a late decision through the generic resume', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resumeAfterDeadline(true);
+
+      expect(payloadOf('proposals_proposal_decided')).toEqual(
+        expect.objectContaining({ decided_after_deadline: true, decision_source: 'human' })
+      );
+    });
+
+    it('should report an unanswered gate as expired by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual({
+        ...CUSTOM_CALLER,
+        ...idFieldsOf(0),
+        expiry_reason: 'deadline',
+        from_status: 'pending',
+        to_status: 'expired',
+      });
+    });
+
+    it('should report a spent attempt budget as expired by the iteration limit', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual(
+        expect.objectContaining({ expiry_reason: 'iteration_limit', to_status: 'expired' })
+      );
+    });
+
+    it('should report a failed run as expired by the workflow failure', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual(
+        expect.objectContaining({ expiry_reason: 'workflow_failure', to_status: 'expired' })
+      );
+    });
+
+    it('should report an unprivileged resumer as a rejected resume, and nothing else', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_resume_rejected',
+          payload: { ...CUSTOM_CALLER, ...idFieldsOf(0), reason: 'unprivileged' },
+        },
+      ]);
+    });
+
+    it('should report an external resume as a rejected resume', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true, EXTERNAL_PRINCIPAL);
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_resume_rejected',
+          payload: { ...CUSTOM_CALLER, ...idFieldsOf(0), reason: 'external_principal' },
+        },
+      ]);
+    });
+
+    it('should report a revision, and no status change for the superseded predecessor', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.revise({ comment: 'Tune the noisier rule' });
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_revised',
+          // The new revision's own id, with the chain root it inherited.
+          payload: {
+            ...CUSTOM_CALLER,
+            ...idFieldsOf(1),
+            action_input_changed: false,
+            comment_changed: true,
+            confidence_changed: false,
+            impact_changed: false,
+            revision: 2,
+          },
+        },
+      ]);
+    });
+
+    it("should carry a managed caller's provenance on every event", async () => {
+      const FLOOR = {
+        context: {},
+        id: 'exec-floor',
+        isTestRun: false,
+        managed: true,
+        managedBy: 'alertzero',
+        spaceId: 'fake_space_id',
+        workflowId: 'wf-floor',
+      };
+      fixture.setCallerLineage([FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      await fixture.resume(false);
+
+      expect(fixture.reportedEvents().map(({ payload }) => payload)).toEqual(
+        Array(3).fill(
+          expect.objectContaining({
+            caller_run_id: 'exec-floor',
+            is_default_space: false,
+            managed_caller: true,
+            origin: 'alertzero',
+          })
+        )
+      );
+    });
+
+    it('should report the origin a caller-less gate run declares', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, origin: 'nightshift' });
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ managed_caller: false, origin: 'nightshift' })
+      );
+      expect(payloadOf('proposals_proposal_created')).not.toHaveProperty('caller_run_id');
+    });
+
+    it('should never report the title or the error a retry re-offers', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, title: 'Secret host name' });
+
+      await fixture.resume(true);
+
+      const [, clone] = fixture.proposals();
+      // The failed action's error, which the retry stores for the queue.
+      expect(clone.previousExecutionError).toEqual(expect.any(String));
+      const shipped = JSON.stringify(fixture.reportedEvents());
+      expect(
+        ['Secret host name', clone.previousExecutionError].filter(
+          (text) => text !== undefined && shipped.includes(text)
+        )
+      ).toEqual([]);
+    });
+
+    it('should report a test run of a managed caller as unmanaged on every event', async () => {
+      // A test run copies the managed identity of the workflow it tests; its
+      // gate is not the managing plugin's own use of proposals.
+      const TEST_RUN_FLOOR = {
+        context: {},
+        id: 'exec-floor-test',
+        isTestRun: true,
+        managed: true,
+        managedBy: 'alertzero',
+        spaceId: 'fake_space_id',
+        workflowId: 'wf-floor',
+      };
+      fixture.setCallerLineage([TEST_RUN_FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      await fixture.resume(false);
+
+      expect(fixture.reportedEvents().map(({ payload }) => payload)).toEqual(
+        Array(3).fill(
+          expect.objectContaining({
+            caller_run_id: 'exec-floor-test',
+            is_default_space: false,
+            managed_caller: false,
+            origin: 'alertzero',
+          })
+        )
+      );
+    });
+
+    describe('through the AlertZero wrapper', () => {
+      /** Every hop a scheduled AD run makes: floor, runner, review, then the wrapper above the gate. */
+      const workerLineage = (overrides: { isTestRun?: boolean } = {}) => {
+        const hop = {
+          isTestRun: false,
+          managed: true,
+          managedBy: 'alertzero',
+          spaceId: 'fake_space_id',
+          ...overrides,
+        };
+        return [
+          {
+            ...hop,
+            context: { parentWorkflowExecutionId: 'exec-review' },
+            id: 'exec-wrapper',
+            workflowId: 'system-create-alertzero-proposal',
+          },
+          {
+            ...hop,
+            context: { parentWorkflowExecutionId: 'exec-runner' },
+            id: 'exec-review',
+            workflowId: 'system-security-attack-discovery-review',
+          },
+          {
+            ...hop,
+            context: { parent: { executionId: 'exec-floor', workflowId: 'wf-floor' } },
+            id: 'exec-runner',
+            workflowId: 'system-security-attack-discovery-worker',
+          },
+          { ...hop, context: {}, id: 'exec-floor', workflowId: 'wf-floor' },
+        ];
+      };
+
+      it("should carry the Worker run's root id, managed_caller and origin on every event", async () => {
+        fixture.setCallerLineage(workerLineage());
+
+        await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+        await fixture.resume(true);
+
+        expect(eventTypes()).toHaveLength(6);
+        expect(fixture.reportedEvents().map(({ payload }) => payload)).toEqual(
+          Array(6).fill(
+            expect.objectContaining({
+              caller_run_id: 'exec-floor',
+              managed_caller: true,
+              origin: 'alertzero',
+            })
+          )
+        );
+      });
+
+      it('should report a test run of the Worker as unmanaged, since the engine marks every hop', async () => {
+        fixture.setCallerLineage(workerLineage({ isTestRun: true }));
+
+        await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+        await fixture.resume(false);
+
+        expect(fixture.reportedEvents().map(({ payload }) => payload)).toEqual(
+          Array(3).fill(
+            expect.objectContaining({ caller_run_id: 'exec-floor', managed_caller: false })
+          )
+        );
+      });
+
+      it('should report a custom workflow that calls the wrapper as unmanaged, with its declared origin', async () => {
+        fixture.setCallerLineage([
+          {
+            ...workerLineage()[0],
+            context: { parentWorkflowExecutionId: 'exec-custom' },
+          },
+          {
+            context: {},
+            id: 'exec-custom',
+            isTestRun: false,
+            managed: false,
+            managedBy: null,
+            spaceId: 'fake_space_id',
+            workflowId: 'wf-custom',
+          },
+        ]);
+
+        await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+        expect(payloadOf('proposals_proposal_created')).toEqual(
+          expect.objectContaining({
+            caller_run_id: 'exec-custom',
+            managed_caller: false,
+            origin: 'alertzero',
+          })
+        );
+      });
     });
   });
 });
