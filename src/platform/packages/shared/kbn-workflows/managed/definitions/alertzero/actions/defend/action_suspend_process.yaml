@@ -112,11 +112,11 @@ steps:
       - name: missing_actions_log_privilege
         type: workflow.fail
         with:
-          message: >
-            Cannot wait for suspend-process completion: GET /api/endpoint/action/{id}
-            failed ({{ steps.probe_action_details.error.message }}). The
-            approver needs the Actions log privilege in addition to Process
-            Operations.
+          # The engine ships this as telemetry `errorMessage`, and analysts see it as the
+          # proposal's error. It carries only the probe's HTTP status (at most 8 characters,
+          # `HTTP <code>`), never the response body, which can echo Elasticsearch errors.
+          message: >-
+            {% if variables.probe_http_status == "HTTP 401" or variables.probe_http_status == "HTTP 403" %}Cannot wait for suspend-process completion: the approver needs the Actions log privilege in addition to Process Operations ({{ variables.probe_http_status }}).{% else %}Cannot wait for suspend-process completion: the privilege probe failed ({{ variables.probe_http_status }}). Retry, or contact an administrator.{% endif %}
 
   # POST queues the command; 200 means accepted, not that the process is suspended.
   # kibana.request is sent verbatim, so the path is prefixed with the executing space.

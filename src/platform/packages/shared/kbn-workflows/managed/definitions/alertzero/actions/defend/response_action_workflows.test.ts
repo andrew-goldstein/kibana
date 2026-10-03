@@ -21,6 +21,7 @@ import {
   ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW_ID,
 } from './action_suspend_process';
 import { ALERTZERO_ACTION_WORKFLOW_IDS } from '../..';
+import { createWorkflowLiquidEngine } from '../../../../../common/utils';
 import { WorkflowSchema } from '../../../../../spec/schema';
 
 /**
@@ -58,6 +59,10 @@ interface ResponseActionCase {
   id: string;
   workflow: { id: string; yaml: string };
   dispatchPath: string;
+  /** The Endpoint privilege the action itself needs, as its fail message names it. */
+  privilege: string;
+  /** The action as its fail message names it. */
+  verb: string;
 }
 
 const CASES: ResponseActionCase[] = [
@@ -65,16 +70,22 @@ const CASES: ResponseActionCase[] = [
     id: ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID,
     workflow: ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW,
     dispatchPath: '/s/{{ workflow.spaceId }}/api/endpoint/action/isolate',
+    privilege: 'Host isolation',
+    verb: 'isolate',
   },
   {
     id: ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW_ID,
     workflow: ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW,
     dispatchPath: '/s/{{ workflow.spaceId }}/api/endpoint/action/kill_process',
+    privilege: 'Process Operations',
+    verb: 'kill-process',
   },
   {
     id: ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW_ID,
     workflow: ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW,
     dispatchPath: '/s/{{ workflow.spaceId }}/api/endpoint/action/suspend_process',
+    privilege: 'Process Operations',
+    verb: 'suspend-process',
   },
 ];
 
@@ -150,9 +161,52 @@ describe('AlertZero response-action workflows', () => {
       expect(failIfCannotPoll?.condition).toContain('HTTP 404');
       expect(failStep?.type).toBe('workflow.fail');
       expect(failStep?.with?.message).toEqual(expect.stringContaining('Actions log privilege'));
+      // Only the probe's HTTP status reaches the message: its response body can echo
+      // Elasticsearch errors, and the message ships as telemetry and as the proposal's error.
+      expect(failStep?.with?.message).not.toEqual(expect.stringContaining('probe_action_details'));
+      expect(failStep?.with?.message).toEqual(
+        expect.stringContaining('variables.probe_http_status == "HTTP 403"')
+      );
+      expect(failStep?.with?.message).toEqual(
+        expect.stringContaining('the privilege probe failed')
+      );
 
       expect(probeIndex).toBeGreaterThanOrEqual(0);
       expect(probeIndex).toBeLessThan(dispatchIndex);
+    });
+
+    // Rendered the way the engine renders it: the probe's error message becomes the captured
+    // status, which is all the fail message carries, so the response body never reaches it.
+    describe('the rendered fail message', () => {
+      const liquid = createWorkflowLiquidEngine({ strictFilters: true, strictVariables: false });
+      const renderFailMessage = (probeError: string): string => {
+        const status = liquid.parseAndRenderSync(
+          String(stepByName('capture_probe_status')?.with?.probe_http_status),
+          { steps: { probe_action_details: { error: { message: probeError } } } }
+        );
+        return liquid.parseAndRenderSync(
+          String(stepByName('missing_actions_log_privilege')?.with?.message),
+          { variables: { probe_http_status: status } }
+        );
+      };
+
+      it.each(['HTTP 401', 'HTTP 403'])('names the missing privilege for %s', (status) => {
+        expect(
+          renderFailMessage(`${status}: {"message":"forbidden on .logs-endpoint.actions"}`)
+        ).toBe(
+          `Cannot wait for ${spec.verb} completion: the approver needs the Actions log privilege in addition to ${spec.privilege} (${status}).`
+        );
+      });
+
+      it('reports any other probe failure with its status and no response body', () => {
+        expect(
+          renderFailMessage(
+            'HTTP 500: {"error":{"root_cause":[{"index":".ds-logs-endpoint.actions-default"}]}}'
+          )
+        ).toBe(
+          `Cannot wait for ${spec.verb} completion: the privilege probe failed (HTTP 500). Retry, or contact an administrator.`
+        );
+      });
     });
 
     it('dispatches the response action to the public API with the versioned header and no retry', () => {
