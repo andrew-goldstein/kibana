@@ -86,6 +86,7 @@ steps:
         'output',
         'workflow',
         'parent',
+        'root',
         'steps',
         'execution',
         'inputs',
@@ -105,6 +106,7 @@ steps:
         '"{{ context$0 }}"',
         '"{{ now$0 }}"',
         '"{{ parent$0 }}"',
+        '"{{ root$0 }}"',
         '"{{ steps$0 }}"',
         '"{{ variables$0 }}"',
       ].sort()
@@ -137,6 +139,7 @@ steps:
         '{{ context$0 }}',
         '{{ now$0 }}',
         '{{ parent$0 }}',
+        '{{ root$0 }}',
         '{{ steps$0 }}',
         '{{ variables$0 }}',
       ].sort()

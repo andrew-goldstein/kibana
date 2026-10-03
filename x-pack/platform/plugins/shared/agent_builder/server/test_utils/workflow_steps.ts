@@ -18,6 +18,20 @@ interface CreateStepHandlerContextParams {
   overrides?: Partial<StepHandlerContext>;
 }
 
+/** The workflow and execution the step handler contexts below run in. */
+export const stepExecutionContext = {
+  execution: { id: 'workflow-execution-1', isTestRun: false },
+  workflow: { id: 'workflow-1', spaceId: 'default' },
+};
+
+/** The conversation source a conversation step running in {@link stepExecutionContext} binds. */
+export const stepConversationSource = {
+  isTestRun: false,
+  type: 'workflow',
+  workflowExecutionId: 'workflow-execution-1',
+  workflowId: 'workflow-1',
+} as const;
+
 export const createStepHandlerContext = ({
   input = {},
   config = {},
@@ -29,6 +43,7 @@ export const createStepHandlerContext = ({
     rawInput: input,
     config,
     contextManager: {
+      getContext: jest.fn().mockReturnValue(stepExecutionContext),
       getFakeRequest: jest.fn().mockReturnValue({} as KibanaRequest),
     },
     logger: {

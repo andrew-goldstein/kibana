@@ -106,12 +106,24 @@ import {
   updateConversation,
   type Document,
 } from './converters';
-import type { ScopedConversationEventEmitter } from '../../../workflows/triggers/conversation_event_bus';
+import type {
+  ConversationMetadataPatchedPayload,
+  ScopedConversationEventEmitter,
+} from '../../../workflows/triggers/conversation_event_bus';
 import type { ConversationEventsServiceStart } from '../../conversation_events';
+import type {
+  ConversationLifecycleNotification,
+  ScopedConversationLifecycleNotifier,
+} from '../../conversation_lifecycle';
 import {
   materializeConversationEvents,
   validateConversationEvents,
 } from '../../conversation_events';
+import {
+  buildCreatedLifecycleChanges,
+  buildMetadataLifecycleChanges,
+  toSerializedMetadata,
+} from './lifecycle_changes';
 
 // Note: comparison is order-sensitive for arrays — reordering elements counts as a change.
 // This is intentional: metadata arrays (e.g. ordered checklists) preserve insertion order.
@@ -229,6 +241,7 @@ export const createClient = ({
   agentRegistry,
   conversationEvents,
   eventEmitter,
+  lifecycleNotifier,
 }: {
   space: string;
   logger: Logger;
@@ -237,6 +250,8 @@ export const createClient = ({
   agentRegistry: AgentRegistry;
   conversationEvents: ConversationEventsServiceStart;
   eventEmitter?: ScopedConversationEventEmitter;
+  /** Reports lifecycle events with the source and space the client was constructed for. */
+  lifecycleNotifier?: ScopedConversationLifecycleNotifier;
 }): ConversationClient => {
   const storage = createStorage({ logger, esClient });
   return new ConversationClientImpl({
@@ -248,6 +263,7 @@ export const createClient = ({
     conversationEvents,
     logger,
     eventEmitter,
+    lifecycleNotifier,
   });
 };
 
@@ -282,6 +298,7 @@ class ConversationClientImpl implements ConversationClient {
   private readonly conversationEvents: ConversationEventsServiceStart;
   private readonly logger: Logger;
   private readonly eventEmitter?: ScopedConversationEventEmitter;
+  private readonly lifecycleNotifier?: ScopedConversationLifecycleNotifier;
 
   constructor({
     storage,
@@ -292,6 +309,7 @@ class ConversationClientImpl implements ConversationClient {
     conversationEvents,
     logger,
     eventEmitter,
+    lifecycleNotifier,
   }: {
     storage: ConversationStorage;
     esClient: ElasticsearchClient;
@@ -301,6 +319,7 @@ class ConversationClientImpl implements ConversationClient {
     conversationEvents: ConversationEventsServiceStart;
     logger: Logger;
     eventEmitter?: ScopedConversationEventEmitter;
+    lifecycleNotifier?: ScopedConversationLifecycleNotifier;
   }) {
     this.storage = storage;
     this.esClient = esClient;
@@ -310,6 +329,7 @@ class ConversationClientImpl implements ConversationClient {
     this.conversationEvents = conversationEvents;
     this.logger = logger;
     this.eventEmitter = eventEmitter;
+    this.lifecycleNotifier = lifecycleNotifier;
   }
 
   /**
@@ -329,6 +349,62 @@ class ConversationClientImpl implements ConversationClient {
     } catch (error) {
       this.logger.warn(
         `Failed to notify attachment events for conversation "${conversationId}": ${error}`
+      );
+    }
+  }
+
+  /**
+   * Notifies the metadata-patched listener with the fields that were just persisted.
+   * Best-effort: listener failures are logged and never fail the write.
+   */
+  private notifyMetadataPatched(payload: ConversationMetadataPatchedPayload): void {
+    if (!this.eventEmitter || payload.changedFields.length === 0) {
+      return;
+    }
+    try {
+      this.eventEmitter.emitMetadataPatched(payload);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to notify metadata patched for conversation "${payload.conversationId}": ${error}`
+      );
+    }
+  }
+
+  /**
+   * Reports a lifecycle event for a conversation that was just written. Only conversations with a
+   * template are reported, and metadata updates only when a value changed.
+   * Best-effort: notifier failures are logged and never fail the write.
+   */
+  private notifyLifecycle(
+    kind: 'created' | 'metadata_updated',
+    {
+      changes,
+      conversationId,
+      templateId,
+      templateVersion,
+    }: Omit<ConversationLifecycleNotification, 'templateId'> & { templateId?: string }
+  ): void {
+    if (!this.lifecycleNotifier || !templateId) {
+      return;
+    }
+    if (kind === 'metadata_updated' && Object.keys(changes).length === 0) {
+      return;
+    }
+    const notification: ConversationLifecycleNotification = {
+      changes,
+      conversationId,
+      templateId,
+      ...(templateVersion !== undefined ? { templateVersion } : {}),
+    };
+    try {
+      if (kind === 'created') {
+        this.lifecycleNotifier.notifyCreated(notification);
+      } else {
+        this.lifecycleNotifier.notifyMetadataUpdated(notification);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to notify conversation lifecycle "${kind}" for conversation "${conversationId}": ${error}`
       );
     }
   }
@@ -674,6 +750,12 @@ class ConversationClientImpl implements ConversationClient {
     }
 
     this.notifyAttachmentEvents(id, conversation.events ?? []);
+    this.notifyLifecycle('created', {
+      changes: buildCreatedLifecycleChanges(toSerializedMetadata(resolvedMetadata)),
+      conversationId: id,
+      templateId: resolvedTemplateId,
+      templateVersion: resolvedTemplateVersion,
+    });
 
     return this.get(id);
   }
@@ -685,11 +767,31 @@ class ConversationClientImpl implements ConversationClient {
     const { id: conversationId, ...fields } = conversationUpdate;
     const { access, retryOnConflict = false } = options;
 
+    // `fields` may run more than once on OCC retry; the last run is the one that was written.
+    let lifecycleChanges: ConversationLifecycleNotification['changes'] = {};
+
     const result = await this.writeConversation({
       conversationId,
       access,
       ...(retryOnConflict ? {} : { maxRetries: 0 }),
-      fields: () => withBoundedTitle(fields),
+      fields: (current) => {
+        // The update replaces the stored metadata as a whole.
+        lifecycleChanges =
+          fields.metadata === undefined
+            ? {}
+            : buildMetadataLifecycleChanges({
+                next: toSerializedMetadata(fields.metadata),
+                previous: toSerializedMetadata(current.metadata),
+              });
+        return withBoundedTitle(fields);
+      },
+    });
+
+    this.notifyLifecycle('metadata_updated', {
+      changes: lifecycleChanges,
+      conversationId: result.id,
+      templateId: result.template_id,
+      templateVersion: result.template_version,
     });
 
     return result;
@@ -982,6 +1084,9 @@ class ConversationClientImpl implements ConversationClient {
     const newTemplateFieldNames = new Set(Object.keys(template.fields));
     const newTemplateMetadata = buildMetadataFromTemplate(template);
 
+    // `fields` may run more than once on OCC retry; the last run is the one that was written.
+    let lifecycleChanges: ConversationLifecycleNotification['changes'] = {};
+
     const result = await this.writeConversation({
       conversationId,
       access: 'owner',
@@ -1002,12 +1107,24 @@ class ConversationClientImpl implements ConversationClient {
         const preservedValues = Object.fromEntries(
           Object.entries(storedMetadata).filter(([key]) => newTemplateFieldNames.has(key))
         );
+        const metadata = { ...newTemplateMetadata, ...preservedValues };
+        lifecycleChanges = buildMetadataLifecycleChanges({
+          next: toSerializedMetadata(metadata),
+          previous: toSerializedMetadata(storedMetadata),
+        });
         return {
-          metadata: { ...newTemplateMetadata, ...preservedValues },
+          metadata,
           template_id: templateId,
           template_version: template.version,
         };
       },
+    });
+
+    this.notifyLifecycle('metadata_updated', {
+      changes: lifecycleChanges,
+      conversationId: result.id,
+      templateId: result.template_id,
+      templateVersion: result.template_version,
     });
 
     return result;
@@ -1019,6 +1136,7 @@ class ConversationClientImpl implements ConversationClient {
     { access = 'owner' }: { access?: ConversationAccess } = {}
   ): Promise<{ conversation: Conversation; changedFields: string[] }> {
     let changedFields: string[] = [];
+    let lifecycleChanges: ConversationLifecycleNotification['changes'] = {};
 
     const result = await this.writeConversation({
       conversationId,
@@ -1052,18 +1170,28 @@ class ConversationClientImpl implements ConversationClient {
         // Track which fields actually changed to suppress no-op trigger events.
         changedFields = computeChangedFields(serialized, storedMetadata);
 
-        return { metadata: { ...storedMetadata, ...serialized } };
+        const metadata = { ...storedMetadata, ...serialized };
+        lifecycleChanges = buildMetadataLifecycleChanges({
+          next: toSerializedMetadata(metadata),
+          previous: toSerializedMetadata(storedMetadata),
+        });
+
+        return { metadata };
       },
     });
 
-    if (changedFields.length > 0 && this.eventEmitter) {
-      this.eventEmitter.emitMetadataPatched({
-        conversationId: result.id,
-        templateId: result.template_id,
-        parentId: result.parent_conversation?.id,
-        changedFields,
-      });
-    }
+    this.notifyMetadataPatched({
+      conversationId: result.id,
+      templateId: result.template_id,
+      parentId: result.parent_conversation?.id,
+      changedFields,
+    });
+    this.notifyLifecycle('metadata_updated', {
+      changes: lifecycleChanges,
+      conversationId: result.id,
+      templateId: result.template_id,
+      templateVersion: result.template_version,
+    });
 
     return { conversation: result, changedFields };
   }

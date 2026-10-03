@@ -29,3 +29,22 @@ export const isSyncParentInvocation = (
 } =>
   context?.parentWorkflowInvocation === 'sync' &&
   typeof context?.parentWorkflowExecutionId === 'string';
+
+/** Root of a composition chain, carried in a child execution's context bag. */
+export interface RootWorkflowLineage {
+  rootWorkflowExecutionId: string;
+  rootWorkflowId: string;
+}
+
+/** True when the context belongs to an execution started by a parent workflow step. */
+export const hasParentWorkflowExecution = (
+  context: Record<string, unknown> | undefined
+): context is Record<string, unknown> & { parentWorkflowExecutionId: string } =>
+  typeof context?.parentWorkflowExecutionId === 'string';
+
+/** True when the context carries both root lineage keys as strings. */
+export const hasRootWorkflowLineage = (
+  context: Record<string, unknown> | undefined
+): context is Record<string, unknown> & RootWorkflowLineage =>
+  typeof context?.rootWorkflowExecutionId === 'string' &&
+  typeof context?.rootWorkflowId === 'string';

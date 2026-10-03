@@ -590,6 +590,112 @@ describe('buildWorkflowContext', () => {
     });
   });
 
+  describe('parent and root lineage', () => {
+    it('should expose a top-level execution as its own root with no parent', () => {
+      const context = buildWorkflowContext(baseExecution, undefined, dependencies);
+
+      expect(context.parent).toBeUndefined();
+      expect(context.root).toEqual({
+        workflowId: 'test-workflow-id',
+        executionId: 'test-execution-id',
+      });
+    });
+
+    it('should ignore root keys on a top-level execution and expose it as its own root', () => {
+      const execution: EsWorkflowExecution = {
+        ...baseExecution,
+        context: { rootWorkflowExecutionId: 'other-exec', rootWorkflowId: 'other-workflow-id' },
+      };
+
+      const context = buildWorkflowContext(execution, undefined, dependencies);
+
+      expect(context.root).toEqual({
+        workflowId: 'test-workflow-id',
+        executionId: 'test-execution-id',
+      });
+    });
+
+    it('should expose the stored root and the parent for a child execution', () => {
+      const execution: EsWorkflowExecution = {
+        ...baseExecution,
+        context: {
+          parentWorkflowExecutionId: 'parent-exec-1',
+          parentWorkflowId: 'parent-workflow-id',
+          parentDepth: 1,
+          rootWorkflowExecutionId: 'root-exec-1',
+          rootWorkflowId: 'root-workflow-id',
+        },
+      };
+
+      const context = buildWorkflowContext(execution, undefined, dependencies);
+
+      expect(context.parent).toEqual({
+        workflowId: 'parent-workflow-id',
+        executionId: 'parent-exec-1',
+        depth: 2,
+      });
+      expect(context.root).toEqual({
+        workflowId: 'root-workflow-id',
+        executionId: 'root-exec-1',
+      });
+    });
+
+    it('should leave root undefined for a pre-upgrade child with no stored root', () => {
+      const execution: EsWorkflowExecution = {
+        ...baseExecution,
+        context: {
+          parentWorkflowExecutionId: 'parent-exec-1',
+          parentWorkflowId: 'parent-workflow-id',
+          parentDepth: 0,
+        },
+      };
+
+      const context = buildWorkflowContext(execution, undefined, dependencies);
+
+      expect(context.parent).toEqual({
+        workflowId: 'parent-workflow-id',
+        executionId: 'parent-exec-1',
+        depth: 1,
+      });
+      expect(context.root).toBeUndefined();
+    });
+
+    it('should leave root undefined for a child whose stored root keys are not strings', () => {
+      const execution: EsWorkflowExecution = {
+        ...baseExecution,
+        context: {
+          parentWorkflowExecutionId: 'parent-exec-1',
+          parentWorkflowId: 'parent-workflow-id',
+          rootWorkflowExecutionId: 42,
+          rootWorkflowId: { id: 'root-workflow-id' },
+        },
+      };
+
+      const context = buildWorkflowContext(execution, undefined, dependencies);
+
+      expect(context.root).toBeUndefined();
+    });
+
+    it('should expose root in the Liquid render context', () => {
+      const execution: EsWorkflowExecution = {
+        ...baseExecution,
+        context: {
+          parentWorkflowExecutionId: 'parent-exec-1',
+          parentWorkflowId: 'parent-workflow-id',
+          rootWorkflowExecutionId: 'root-exec-1',
+          rootWorkflowId: 'root-workflow-id',
+        },
+      };
+
+      const context = buildWorkflowRenderContext(execution, undefined, dependencies);
+
+      expect(context.root).toEqual({
+        workflowId: 'root-workflow-id',
+        executionId: 'root-exec-1',
+      });
+    });
+  });
+
   describe('metadata context', () => {
     it('should include metadata from execution document when present', () => {
       const execution: EsWorkflowExecution = {

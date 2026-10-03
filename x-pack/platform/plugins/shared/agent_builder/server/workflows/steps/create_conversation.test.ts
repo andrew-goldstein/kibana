@@ -11,6 +11,7 @@ import {
   createStepHandlerContext,
   createWorkflowStepAgentRegistryMock,
   createWorkflowStepConversationClientMock,
+  stepConversationSource,
 } from '../../test_utils/workflow_steps';
 
 const isExperimentalEnabled = jest.fn().mockResolvedValue(true);
@@ -201,5 +202,19 @@ describe('createConversationStepDefinition', () => {
       });
       expect(parsed.success).toBe(false);
     });
+  });
+
+  it('builds the conversation client with the workflow source from the step context', async () => {
+    const { conv, definition } = buildDefinition({
+      create: jest.fn().mockResolvedValue(createdConversation),
+    });
+    const context = createStepHandlerContext({ input: baseInput });
+
+    await definition.handler(context);
+
+    expect(conv.getConversationClient).toHaveBeenCalledWith(
+      jest.mocked(context.contextManager.getFakeRequest).mock.results[0].value,
+      stepConversationSource
+    );
   });
 });

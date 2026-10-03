@@ -1301,6 +1301,12 @@ export const WorkflowContextSchema = z.object({
       depth: z.number().optional(),
     })
     .optional(),
+  root: z
+    .object({
+      workflowId: z.string(),
+      executionId: z.string(),
+    })
+    .optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type WorkflowContext = z.infer<typeof WorkflowContextSchema>;

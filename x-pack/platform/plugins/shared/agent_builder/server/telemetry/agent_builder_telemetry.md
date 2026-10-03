@@ -232,6 +232,7 @@ Fired at the end of each successful conversation round.
 | `origin` | keyword | no | External system the conversation came from. See [Conversation origin](#conversation-origin). |
 | `input_tokens` | integer | yes | Input tokens consumed in this round. |
 | `cached_input_tokens` | integer | no | Input tokens served from cache in this round (subset of `input_tokens`), when reported by the provider. |
+| `interactive` | boolean | no | Whether the round ran interactively. See [Conversation template and interactivity](#conversation-template-and-interactivity). |
 | `llm_calls` | integer | yes | Number of LLM calls made during the round. |
 | `message_length` | integer | yes | Character length of the user's input message. |
 | `model` | keyword | no | LLM model identifier. |
@@ -242,6 +243,7 @@ Fired at the end of each successful conversation round.
 | `response_length` | integer | yes | Character length of the assistant's response. |
 | `round_number` | integer | yes | 1-based round index within the conversation. |
 | `started_at` | keyword | yes | ISO timestamp when the round started. |
+| `template_id` | keyword | no | Conversation template ID, if a template is applied. See [Conversation template and interactivity](#conversation-template-and-interactivity). |
 | `time_to_first_token` | integer | yes | Milliseconds to first token. |
 | `time_to_last_token` | integer | yes | Milliseconds to last token (end-to-end latency). |
 | `tool_calls` | integer | yes | Total number of tool-call steps in this round. |
@@ -262,6 +264,8 @@ Fired when a round fails with an unrecoverable error.
 | `model_provider` | keyword | no | LLM provider identifier. |
 | `error_type` | keyword | yes | Sanitized/normalized error type or code. |
 | `error_message` | keyword | yes | Error message (truncated to 500 chars). |
+| `template_id` | keyword | no | Conversation template ID, if a template is applied. See [Conversation template and interactivity](#conversation-template-and-interactivity). |
+| `interactive` | boolean | no | Whether the round ran interactively. See [Conversation template and interactivity](#conversation-template-and-interactivity). |
 
 ### `agent_builder_tool_call_success`
 
@@ -309,6 +313,23 @@ only value.
 started from the Agent Builder UI or a direct call to the converse API carry no `origin`, and
 neither do rounds and tool calls from sub-agent runs, since a sub-agent opens its own execution
 without inheriting the parent's origin.
+
+### Conversation template and interactivity
+
+`agent_builder_round_complete` and `agent_builder_round_error` carry two optional fields that
+describe the conversation the round ran in:
+
+- `template_id` is the ID of the conversation template applied to the conversation (for example
+  `investigation`). Templates are registered in code by plugins during setup, and a conversation can
+  only reference a registered template, so the ID is sent as is rather than hashed. The field is
+  **omitted** when the conversation has no template.
+- `interactive` is the round's resolved interactivity (`InteractivityConfig.enabled`): whether the
+  agent could pause the round to prompt the user. Conversation-mode runs default to `true`; callers
+  can turn it off, and the workflow `ai.agent` step always runs non-interactively (`false`).
+
+Together they separate rounds a user drives in the chat UI from automated rounds (for example a
+workflow that drives a templated conversation) without joining to other data. Tool-call events do
+not carry them.
 
 ### Skill CRUD events
 

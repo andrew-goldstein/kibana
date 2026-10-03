@@ -9,6 +9,7 @@ import { getConversationMetadataStepDefinition } from './get_conversation_metada
 import {
   createStepHandlerContext,
   createWorkflowStepConversationClientMock,
+  stepConversationSource,
 } from '../../test_utils/workflow_steps';
 
 const experimentalEnabled = jest.fn().mockResolvedValue(true);
@@ -128,5 +129,24 @@ describe('getConversationMetadataStepDefinition', () => {
     expect(result).toEqual({
       error: expect.objectContaining({ message: expect.stringContaining('experimental features') }),
     });
+  });
+
+  it('builds the conversation client with the workflow source from the step context', async () => {
+    const { getConversationClient } = createWorkflowStepConversationClientMock({
+      get: jest.fn().mockResolvedValue({ id: 'conv-1', metadata: {} }),
+    });
+    const definition = getConversationMetadataStepDefinition({
+      getConversationClient,
+      getAgentRegistry,
+      isExperimentalEnabled: experimentalEnabled,
+    });
+    const context = createStepHandlerContext({ input: { conversation_id: 'conv-1' } });
+
+    await definition.handler(context);
+
+    expect(getConversationClient).toHaveBeenCalledWith(
+      jest.mocked(context.contextManager.getFakeRequest).mock.results[0].value,
+      stepConversationSource
+    );
   });
 });

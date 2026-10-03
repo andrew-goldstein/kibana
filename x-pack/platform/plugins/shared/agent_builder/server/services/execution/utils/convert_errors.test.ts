@@ -140,4 +140,30 @@ describe('convertErrors', () => {
       expect.objectContaining({ roundOrigin: ConversationOriginType.Slack })
     );
   });
+
+  it('forwards the conversation template id and interactivity to the reported round error', async () => {
+    const reportRoundError = jest.fn();
+    const source$ = throwError(() => new Error('llm exploded'));
+
+    await expect(
+      lastValueFrom(
+        source$.pipe(
+          convertErrors({
+            agentId: 'agent-1',
+            logger: loggingSystemMock.createLogger(),
+            analyticsService: { reportRoundError } as never,
+            modelProvider: 'openai' as never,
+            conversationId: 'conv-1',
+            executionId: 'exec-1',
+            interactive: false,
+            templateId: 'investigation',
+          })
+        )
+      )
+    ).rejects.toMatchObject({ code: AgentBuilderErrorCode.internalError });
+
+    expect(reportRoundError).toHaveBeenCalledWith(
+      expect.objectContaining({ interactive: false, templateId: 'investigation' })
+    );
+  });
 });

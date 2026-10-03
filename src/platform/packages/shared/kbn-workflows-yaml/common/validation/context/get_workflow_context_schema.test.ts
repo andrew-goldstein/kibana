@@ -530,3 +530,31 @@ describe('getWorkflowContextSchema - HITL template context', () => {
     expect(getSchemaAtPath(contextSchema, 'context.hitl.externalQueryLink').schema).toBeDefined();
   });
 });
+
+describe('getWorkflowContextSchema - composition lineage', () => {
+  const workflow: WorkflowYaml = {
+    version: '1',
+    name: 'Composed Workflow',
+    description: undefined,
+    settings: undefined,
+    enabled: true,
+    tags: undefined,
+    triggers: [{ type: 'manual' }],
+    steps: [],
+  };
+
+  it.each(['root.workflowId', 'root.executionId', 'parent.workflowId', 'parent.executionId'])(
+    'should expose %s for template validation',
+    (path) => {
+      const contextSchema = getWorkflowContextSchema(emptyRegistry, workflow);
+
+      expect(getSchemaAtPath(contextSchema, path).schema).not.toBeNull();
+    }
+  );
+
+  it('should not expose a depth on root', () => {
+    const contextSchema = getWorkflowContextSchema(emptyRegistry, workflow);
+
+    expect(getSchemaAtPath(contextSchema, 'root.depth').schema).toBeNull();
+  });
+});
