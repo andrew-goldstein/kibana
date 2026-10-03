@@ -149,7 +149,10 @@ steps:
     type: workflow.fail
     if: "${{ steps.fetch_rule.error != nil }}"
     with:
-      message: "{{ steps.fetch_rule.error.message }}"
+      # A fixed message: the engine ships it as telemetry `errorMessage`.
+      message: >-
+        The rule could not be read, so this tuning can't be applied. The rule
+        fetch step's output has the error.
 
   - name: fail_rule_changed
     type: workflow.fail
@@ -157,10 +160,10 @@ steps:
       ${{ inputs.actionInput.expected_revision != nil
         and steps.fetch_rule.output.revision != inputs.actionInput.expected_revision }}
     with:
+      # No user name: the engine ships this as telemetry `errorMessage`.
       message: >-
-        The rule was changed by "{{ steps.fetch_rule.output.updated_by }}" after this
-        proposal was created, so this tuning can't be applied. Approving again won't
-        work, so decline it. If the rule keeps producing false positives, a new review
+        The rule was changed after this proposal was created, so this tuning can't
+        be applied. Approving again won't work, so decline it. If the rule keeps producing false positives, a new review
         will follow.
 
   # Sends only the rule fields that were given. When you make a new field

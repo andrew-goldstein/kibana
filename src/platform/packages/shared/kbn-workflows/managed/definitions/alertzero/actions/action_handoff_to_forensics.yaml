@@ -206,9 +206,10 @@ steps:
         - name: fail_handoff
           type: workflow.fail
           with:
+            # A fixed message: the engine ships it as telemetry `errorMessage`.
             message: >-
-              Forensics handoff failed: knowledge indicator write failed.
-              {{ steps.write_analyze_endpoint_ki.error }}
+              Forensics handoff failed: the knowledge indicator write failed. The
+              write step's output has the error.
 
   - name: journal_handoff_succeeded
     type: workflow.execute

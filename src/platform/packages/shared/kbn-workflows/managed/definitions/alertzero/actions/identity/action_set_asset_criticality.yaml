@@ -101,11 +101,13 @@ steps:
       - name: missing_asset_criticality_privilege
         type: workflow.fail
         with:
+          # A fixed message: the engine ships it as telemetry `errorMessage`, so it names
+          # no entity and carries no probe error. The inputs and the probe step's output
+          # have both.
           message: >
-            Cannot set asset criticality for {{ inputs.actionInput.id_field }}
-            {{ inputs.actionInput.id_value }}: the approver lacks the Entity
+            Cannot set asset criticality: the approver lacks the Entity
             Analytics privileges or write access to the asset criticality
-            index{% if steps.probe_privileges.error != blank %} ({{ steps.probe_privileges.error.message }}){% endif %}.
+            index.
 
   # The API upserts, so read the current level first to report what changed
   # and give the approver the value to put back. A 404 means none was set.

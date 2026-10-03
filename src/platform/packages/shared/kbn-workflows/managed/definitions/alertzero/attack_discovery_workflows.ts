@@ -31,12 +31,19 @@ export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID =
 export const ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID =
   'system-security-attack-discovery-fp-tp-analysis';
 
+/**
+ * Version 5 carries the `report_run_completed` and `report_worker_run_completed`
+ * steps, which report the run's counts and outcome through
+ * `alertzero.reportWorkerOutcome`, in the Attack Discovery Worker's own vocabulary
+ * and in the one every Worker shares. The bump makes the upgrade visible in
+ * `managedVersion`; the content hash alone would also apply it.
+ */
 export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 4,
+  version: 5,
   yaml: ATTACK_DISCOVERY_RUNNER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
@@ -50,13 +57,20 @@ export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
  * Version 8 carries the impact steps, which record the hosts and users an attack
  * touched on its Investigation, so the landing page's Impact pills match Attack
  * Discovery proposals.
+ *
+ * Version 9 carries the review's five `alertzero.reportWorkerOutcome` steps:
+ * `report_review_started`, `report_analysis_completed`, the escalation-only
+ * `report_handoff_resolved`, and the two Investigation close reports,
+ * `report_investigation_closed_false_positive` and
+ * `report_investigation_closed_declined`. The bump makes the upgrade visible in
+ * `managedVersion`; the content hash alone would also apply it.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 8,
+  version: 9,
   yaml: ATTACK_DISCOVERY_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
