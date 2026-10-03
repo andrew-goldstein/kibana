@@ -34,10 +34,9 @@ import { getManagedWorkflowDefinitions } from '../..';
  * event, and the run id joins it to the Worker that started the run. So a `workflow.fail`
  * message in any AlertZero managed workflow may interpolate only definition constants
  * (`consts.*`), counts computed with `| size` in a `data.set` step, and the few values listed
- * in NUMERIC_VALUES and STATUS_VALUES, which are always numbers or an engine execution status.
- * Anything else, such as a
- * step, input, event, variable or `workflow.*` value, could carry an id, model output, a step
- * error or input text.
+ * in NUMERIC_VALUES, STATUS_VALUES and OPAQUE_VALUES, which never carry free text. Anything
+ * else, such as a step, input, event, variable or `workflow.*` value, could carry an id, model
+ * output, a step error or input text.
  */
 
 interface YamlStep {
@@ -79,14 +78,17 @@ const STATUS_VALUES: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * The response actions belong to @elastic/security-defend-workflows (CODEOWNERS). Their fail
- * messages are fixed in that team's own PR, which removes them from this list.
+ * The response actions may also name the Endpoint action (a random UUID, which analysts need to
+ * find it in the response actions history) and the privilege probe's HTTP status (at most 8
+ * characters). Neither carries free text.
  */
-const OWNED_ELSEWHERE: readonly string[] = [
-  ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID,
-  ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW_ID,
-  ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW_ID,
-];
+const RESPONSE_ACTION_VALUES = ['steps.poll_status.output.data.id', 'variables.probe_http_status'];
+
+const OPAQUE_VALUES: Readonly<Record<string, readonly string[]>> = {
+  [ALERTZERO_ACTION_ISOLATE_HOST_WORKFLOW_ID]: RESPONSE_ACTION_VALUES,
+  [ALERTZERO_ACTION_KILL_PROCESS_WORKFLOW_ID]: RESPONSE_ACTION_VALUES,
+  [ALERTZERO_ACTION_SUSPEND_PROCESS_WORKFLOW_ID]: RESPONSE_ACTION_VALUES,
+};
 
 /** Any valid values will do: the fail messages do not depend on the Worker settings. */
 const workerTemplateValues: Partial<ManagedWorkflowTemplateValuesById> = {
@@ -155,10 +157,11 @@ const isAllowed = (id: string, steps: YamlStep[], value: string): boolean =>
   value.startsWith('consts.') ||
   isCount(steps, value) ||
   (NUMERIC_VALUES[id] ?? []).includes(value) ||
-  (STATUS_VALUES[id] ?? []).includes(value);
+  (STATUS_VALUES[id] ?? []).includes(value) ||
+  (OPAQUE_VALUES[id] ?? []).includes(value);
 
 const definitions = getManagedWorkflowDefinitions()
-  .filter(({ id }) => ALERTZERO_WORKFLOW_IDS.includes(id) && !OWNED_ELSEWHERE.includes(id))
+  .filter(({ id }) => ALERTZERO_WORKFLOW_IDS.includes(id))
   .map((definition): [string, YamlStep[]] => [
     definition.id,
     allSteps(parse(renderYaml(definition))),
@@ -166,9 +169,7 @@ const definitions = getManagedWorkflowDefinitions()
 
 describe('AlertZero managed workflow fail messages', () => {
   it('scans every AlertZero managed workflow definition', () => {
-    expect(definitions.map(([id]) => id).sort()).toEqual(
-      ALERTZERO_WORKFLOW_IDS.filter((id) => !OWNED_ELSEWHERE.includes(id)).sort()
-    );
+    expect(definitions.map(([id]) => id).sort()).toEqual([...ALERTZERO_WORKFLOW_IDS].sort());
   });
 
   it.each(definitions)(

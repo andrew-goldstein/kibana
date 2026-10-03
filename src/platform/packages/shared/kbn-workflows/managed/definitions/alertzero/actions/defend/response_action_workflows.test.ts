@@ -150,6 +150,15 @@ describe('AlertZero response-action workflows', () => {
       expect(failIfCannotPoll?.condition).toContain('HTTP 404');
       expect(failStep?.type).toBe('workflow.fail');
       expect(failStep?.with?.message).toEqual(expect.stringContaining('Actions log privilege'));
+      // Only the probe's HTTP status reaches the message: its response body can echo
+      // Elasticsearch errors, and the message ships as telemetry and as the proposal's error.
+      expect(failStep?.with?.message).not.toEqual(expect.stringContaining('probe_action_details'));
+      expect(failStep?.with?.message).toEqual(
+        expect.stringContaining('variables.probe_http_status == "HTTP 403"')
+      );
+      expect(failStep?.with?.message).toEqual(
+        expect.stringContaining('the privilege probe failed')
+      );
 
       expect(probeIndex).toBeGreaterThanOrEqual(0);
       expect(probeIndex).toBeLessThan(dispatchIndex);
