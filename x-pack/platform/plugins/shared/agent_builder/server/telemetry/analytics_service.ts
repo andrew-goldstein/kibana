@@ -296,6 +296,7 @@ export class AnalyticsService {
     agentId,
     conversationId,
     executionId,
+    interactive,
     modelProvider,
     round,
     roundCount,
@@ -304,6 +305,7 @@ export class AnalyticsService {
     agentId: string;
     conversationId?: string;
     executionId?: string;
+    interactive?: boolean;
     modelProvider: ModelProvider;
     round: ConversationRound;
     roundCount: number;
@@ -337,6 +339,7 @@ export class AnalyticsService {
           origin: round.origin?.type,
           input_tokens: round.model_usage.input_tokens,
           cached_input_tokens: round.model_usage.cached_input_tokens,
+          interactive,
           llm_calls: round.model_usage.llm_calls,
           message_length: round.input.message.length,
           model: round.model_usage.model,
@@ -445,6 +448,7 @@ export class AnalyticsService {
     conversationId,
     executionId,
     error,
+    interactive,
     modelProvider,
     roundId,
     roundOrigin,
@@ -453,6 +457,7 @@ export class AnalyticsService {
     conversationId?: string;
     executionId?: string;
     error: unknown;
+    interactive?: boolean;
     modelProvider: ModelProvider;
     roundId?: string;
     roundOrigin?: TelemetryConversationOrigin;
@@ -470,6 +475,7 @@ export class AnalyticsService {
         model_provider: modelProvider,
         error_message: errorMessage,
         error_type: errorType,
+        interactive,
       });
     } catch (err) {
       // Do not fail the request if telemetry fails

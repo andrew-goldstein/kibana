@@ -356,3 +356,48 @@ describe('billing unit', () => {
     expect(drive([{ own: usage(10_000), folded: usage(10_000), paused: true }])).toEqual([]);
   });
 });
+
+describe('interactive', () => {
+  const report = (
+    interactive: boolean | undefined,
+    roundParts: Partial<ConversationRound> = {}
+  ) => {
+    const analyticsService = {
+      reportExecutionComplete: jest.fn(),
+      reportRoundComplete: jest.fn(),
+    };
+    reportRoundTelemetry({
+      event: completeEvent({ round: round(roundParts) }),
+      conversation: conversation({ schema_version: CONVERSATION_SCHEMA_VERSION }),
+      agentId: 'agent-1',
+      executionId: 'execution-0',
+      interactive,
+      modelProvider: 'OpenAI' as never,
+      meteringService: { reportExecution: jest.fn().mockResolvedValue(undefined) } as never,
+      analyticsService: analyticsService as never,
+      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
+    });
+    return analyticsService;
+  };
+
+  it.each([true, false])('passes interactive: %s through to the round event', (interactive) => {
+    expect(report(interactive).reportRoundComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ interactive })
+    );
+  });
+
+  it('keeps interactive off the execution event', () => {
+    const [[call]] = report(false).reportExecutionComplete.mock.calls;
+
+    expect(call).not.toHaveProperty('interactive');
+  });
+
+  it('sends no round event, and so no interactive, for a paused round', () => {
+    const analyticsService = report(true, {
+      status: ConversationRoundStatus.awaitingPrompt,
+      response: { message: '' },
+    });
+
+    expect(analyticsService.reportRoundComplete).not.toHaveBeenCalled();
+  });
+});

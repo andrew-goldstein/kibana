@@ -53,6 +53,29 @@ describe('AnalyticsService', () => {
         expect(analytics.registerEventType).toHaveBeenCalledWith(eventConfig);
       });
     });
+
+    describe.each([AGENT_BUILDER_EVENT_TYPES.RoundComplete, AGENT_BUILDER_EVENT_TYPES.RoundError])(
+      'round event schema: %s',
+      (eventType) => {
+        const getSchema = () =>
+          agentBuilderServerEbtEvents.find((event) => event.eventType === eventType)?.schema;
+
+        it('does not declare template_id', () => {
+          expect(getSchema()).not.toHaveProperty('template_id');
+        });
+
+        it('declares interactive as an optional boolean', () => {
+          expect(getSchema()).toEqual(
+            expect.objectContaining({
+              interactive: {
+                type: 'boolean',
+                _meta: { description: expect.any(String), optional: true },
+              },
+            })
+          );
+        });
+      }
+    );
   });
 
   describe('reportRoundComplete', () => {
@@ -115,6 +138,7 @@ describe('AnalyticsService', () => {
         execution_id: undefined,
         origin: undefined,
         input_tokens: 4,
+        interactive: undefined,
         llm_calls: 3,
         message_length: 2,
         model: 'gpt-97q',
@@ -249,6 +273,7 @@ describe('AnalyticsService', () => {
         execution_id: undefined,
         origin: undefined,
         input_tokens: 4,
+        interactive: undefined,
         llm_calls: 3,
         message_length: 2,
         model: 'gpt-97q',
@@ -280,6 +305,37 @@ describe('AnalyticsService', () => {
       expect(analytics.reportEvent).toHaveBeenCalledWith(
         AGENT_BUILDER_EVENT_TYPES.RoundComplete,
         expect.objectContaining({ origin: ConversationOriginType.Slack })
+      );
+    });
+
+    it('does not report template_id', () => {
+      service.reportRoundComplete({
+        agentId: agentBuilderDefaultAgentId,
+        conversationId: 'conversation-1',
+        round,
+        roundCount: 2,
+        modelProvider,
+        conversationAttachments: [],
+      });
+
+      const [[, payload]] = analytics.reportEvent.mock.calls;
+      expect(payload).not.toHaveProperty('template_id');
+    });
+
+    it.each([true, false])('reports interactive as %s', (interactive) => {
+      service.reportRoundComplete({
+        agentId: agentBuilderDefaultAgentId,
+        conversationId: 'conversation-1',
+        round,
+        roundCount: 2,
+        modelProvider,
+        conversationAttachments: [],
+        interactive,
+      });
+
+      expect(analytics.reportEvent).toHaveBeenCalledWith(
+        AGENT_BUILDER_EVENT_TYPES.RoundComplete,
+        expect.objectContaining({ interactive })
       );
     });
 
@@ -815,6 +871,22 @@ describe('AnalyticsService', () => {
       expect(analytics.reportEvent).toHaveBeenCalledWith(
         AGENT_BUILDER_EVENT_TYPES.RoundError,
         expect.objectContaining({ origin: undefined })
+      );
+    });
+
+    it('does not report template_id', () => {
+      service.reportRoundError(defaultArgs);
+
+      const [[, payload]] = analytics.reportEvent.mock.calls;
+      expect(payload).not.toHaveProperty('template_id');
+    });
+
+    it.each([true, false])('reports interactive as %s', (interactive) => {
+      service.reportRoundError({ ...defaultArgs, interactive });
+
+      expect(analytics.reportEvent).toHaveBeenCalledWith(
+        AGENT_BUILDER_EVENT_TYPES.RoundError,
+        expect.objectContaining({ interactive })
       );
     });
   });

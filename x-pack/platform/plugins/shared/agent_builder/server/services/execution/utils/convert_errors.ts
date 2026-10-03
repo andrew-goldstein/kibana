@@ -57,6 +57,7 @@ export function convertErrors<T>({
   analyticsService,
   conversationId,
   executionId,
+  interactive,
   logger,
   modelProvider,
   roundOrigin,
@@ -66,6 +67,7 @@ export function convertErrors<T>({
   analyticsService?: AnalyticsService;
   conversationId?: string;
   executionId?: string;
+  interactive?: boolean;
   logger: Logger;
   modelProvider: ModelProvider;
   roundOrigin?: ConversationOriginType;
@@ -89,6 +91,7 @@ export function convertErrors<T>({
           conversationId,
           executionId,
           error: err,
+          interactive,
           modelProvider,
           roundOrigin,
         });

@@ -195,6 +195,7 @@ export const reportRoundTelemetry = ({
   nextInput,
   agentId,
   executionId,
+  interactive,
   modelProvider,
   meteringService,
   trackingService,
@@ -206,6 +207,8 @@ export const reportRoundTelemetry = ({
   nextInput?: ConverseInput;
   agentId: string;
   executionId: string;
+  /** Whether HITL prompts were enabled for the round; reported on the round event only. */
+  interactive?: boolean;
   modelProvider: ModelProvider;
   meteringService: MeteringService;
   trackingService?: TrackingService;
@@ -264,6 +267,7 @@ export const reportRoundTelemetry = ({
         agentId,
         conversationId: conversation.id,
         executionId,
+        interactive,
         modelProvider,
         round: roundTotals,
         roundCount,

@@ -1667,6 +1667,146 @@ describe('handleAgentExecution — interrupted executions', () => {
   });
 });
 
+describe('handleAgentExecution — round telemetry interactivity', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    generateTitleMock.mockReturnValue(of('Generated title'));
+  });
+
+  const makeFailedRoundInterruptedEvent = (): RoundInterruptedEvent => ({
+    type: ChatEventType.roundInterrupted,
+    data: {
+      round_id: 'round-1',
+      started_at: '2024-01-01T00:00:00.000Z',
+      input: { message: 'Hello' },
+      steps: [],
+      summary: { time_to_last_token: 1 },
+      attachments: [],
+    },
+  });
+
+  const createClient = ({ templateId }: { templateId?: string }) => {
+    const conversation = createEmptyConversation({
+      agent_id: 'test-agent',
+      id: 'conversation-1',
+      ...(templateId ? { template_id: templateId } : {}),
+    });
+    const conversationClient = createConversationClientMock();
+    conversationClient.get.mockResolvedValue(conversation);
+    conversationClient.appendEvents.mockImplementation(async (request) => ({
+      ...conversation,
+      events: request.events,
+      schema_version: 1,
+    }));
+    conversationClient.replaceRoundEvents.mockImplementation(async (request) => ({
+      ...conversation,
+      events: request.events,
+      schema_version: 1,
+    }));
+    return conversationClient;
+  };
+
+  const run = async ({
+    conversationClient,
+    interactivity,
+    reportRoundComplete = jest.fn(),
+    reportRoundError = jest.fn(),
+  }: {
+    conversationClient: ReturnType<typeof createConversationClientMock>;
+    interactivity?: { enabled: boolean };
+    reportRoundComplete?: jest.Mock;
+    reportRoundError?: jest.Mock;
+  }) => {
+    stubResolveServices(conversationClient);
+
+    const events$ = await handleAgentExecution({
+      abortSignal: new AbortController().signal,
+      deps: createDeps({
+        analyticsService: { reportRoundComplete, reportRoundError },
+        conversationClient,
+      }),
+      execution: {
+        agentParams: {
+          agentId: 'test-agent',
+          conversationId: 'conversation-1',
+          conversationOperation: 'UPDATE',
+          nextInput: { message: 'Hello' },
+          receivedAt: '2024-01-01T00:00:00.000Z',
+          roundId: 'round-1',
+        },
+        executionId: 'execution-1',
+        executionMode: AgentExecutionMode.conversation,
+        owner: { id: 'owner-1', username: 'owner' },
+      } as never,
+      interactivity,
+      request: { headers: {} } as never,
+    });
+
+    // failure scenarios surface the error on the stream; the assertions are on telemetry
+    await lastValueFrom(events$.pipe(toArray())).catch(() => undefined);
+    await flushMicrotasks();
+  };
+
+  it('does not report the conversation template id on round complete', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({
+      conversationClient: createClient({ templateId: 'investigation' }),
+      reportRoundComplete,
+    });
+
+    expect(reportRoundComplete).toHaveBeenCalledTimes(1);
+    const [[reported]] = reportRoundComplete.mock.calls;
+    expect(reported).not.toHaveProperty('templateId');
+  });
+
+  it('reports a conversation-mode round as interactive by default on round complete', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({ conversationClient: createClient({}), reportRoundComplete });
+
+    expect(reportRoundComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ interactive: true })
+    );
+  });
+
+  it('reports a non-interactive round as non-interactive on round complete', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({
+      conversationClient: createClient({}),
+      interactivity: { enabled: false },
+      reportRoundComplete,
+    });
+
+    expect(reportRoundComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ interactive: false })
+    );
+  });
+
+  it('reports interactivity, and no template id, on round error', async () => {
+    const reportRoundError = jest.fn();
+    mockAgentStream(
+      [makeRoundStartedEvent(), makeFailedRoundInterruptedEvent()],
+      'asyncShared',
+      new Error('llm exploded')
+    );
+
+    await run({
+      conversationClient: createClient({ templateId: 'investigation' }),
+      interactivity: { enabled: false },
+      reportRoundError,
+    });
+
+    expect(reportRoundError).toHaveBeenCalledWith(expect.objectContaining({ interactive: false }));
+    const [[reported]] = reportRoundError.mock.calls;
+    expect(reported).not.toHaveProperty('templateId');
+  });
+});
+
 describe('collectAndWriteEvents — error flush', () => {
   it('flushes the pending batch before rejecting', async () => {
     const executionClient = { appendEvents: jest.fn().mockResolvedValue(undefined) };

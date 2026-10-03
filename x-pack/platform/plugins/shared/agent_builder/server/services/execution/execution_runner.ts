@@ -387,6 +387,7 @@ const handleConversationExecution = async ({
                 nextInput,
                 agentId,
                 executionId: execution.executionId,
+                interactive: interactivity.enabled,
                 modelProvider: connectorProvider,
                 meteringService,
                 trackingService,
@@ -407,6 +408,7 @@ const handleConversationExecution = async ({
             conversationId: conversation.id,
             executionId: execution.executionId,
             roundOrigin: telemetryOrigin,
+            interactive: interactivity.enabled,
           })
         );
       }

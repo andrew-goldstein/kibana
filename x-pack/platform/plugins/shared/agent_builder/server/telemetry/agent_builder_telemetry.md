@@ -235,6 +235,7 @@ execution. For per-execution figures, and for pauses that were never resumed, se
 | `origin` | keyword | no | External system the conversation came from. See [Conversation origin](#conversation-origin). |
 | `input_tokens` | integer | yes | Input tokens consumed in this round. |
 | `cached_input_tokens` | integer | no | Input tokens served from cache in this round (subset of `input_tokens`), when reported by the provider. |
+| `interactive` | boolean | no | Whether HITL prompts were enabled for the round. See [Round interactivity](#round-interactivity). |
 | `llm_calls` | integer | yes | Number of LLM calls made during the round. |
 | `message_length` | integer | yes | Character length of the user's input message. |
 | `model` | keyword | no | LLM model identifier. |
@@ -309,6 +310,7 @@ Fired when a round fails with an unrecoverable error.
 | `model_provider` | keyword | no | LLM provider identifier. |
 | `error_type` | keyword | yes | Sanitized/normalized error type or code. |
 | `error_message` | keyword | yes | Error message (truncated to 500 chars). |
+| `interactive` | boolean | no | Whether HITL prompts were enabled for the round. See [Round interactivity](#round-interactivity). |
 
 ### `agent_builder_tool_call_success`
 
@@ -356,6 +358,25 @@ only value.
 started from the Agent Builder UI or a direct call to the converse API carry no `origin`, and
 neither do rounds and tool calls from sub-agent runs, since a sub-agent opens its own execution
 without inheriting the parent's origin.
+
+### Round interactivity
+
+`agent_builder_round_complete` and `agent_builder_round_error` carry an optional `interactive`
+field: whether human-in-the-loop (HITL) prompts, such as confirmations and `ask_user_question`,
+were enabled for the round. It is the round's resolved `InteractivityConfig.enabled`. It does
+**not** tell whether a person drove the round, so it does not separate UI usage from automation.
+
+- Rounds from the converse API default to `true`, whether a person (for example in the Agent
+  Builder UI) or a script made the call.
+- Rounds from the workflow `ai.agent` step report `false`.
+- Rounds of persistent sub-agents report `false` too: they run in conversation mode with a
+  non-interactive config (`createNonInteractiveConfig`).
+- Other callers of the execution service can set it explicitly.
+
+Standalone runs report no round events. Tool-call events do not carry `interactive`, and neither
+does `agent_builder_execution_complete`: it already reports which prompts an execution asked and
+answered. Since `agent_builder_round_complete` fires only when a round finishes, a round paused at
+a prompt reports `interactive` once, on its final execution.
 
 ### Skill CRUD events
 
