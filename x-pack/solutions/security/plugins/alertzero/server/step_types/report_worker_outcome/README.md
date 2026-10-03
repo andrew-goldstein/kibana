@@ -16,6 +16,21 @@ A workflow step that reports an allowlisted AlertZero Worker outcome as an EBT e
 
 Liquid renders a missing value as `''`, so every count and flag treats `''` and `null` as absent, and a count or flag also accepts the text a `{{ }}` template renders (`'12'`, `'true'`). Prefer `${{ }}` typed values with a `default`. The engine does not apply the input schema at runtime, so the handler parses it itself.
 
+## Shipped callers
+
+The Attack Discovery Worker YAML in `@kbn/workflows/managed` (`definitions/alertzero/`) is the only caller. Each report step has `on-failure: continue` and `timeout: 30s`, and is a top-level step, except `report_investigation_closed_false_positive`, which sits in the verdict switch's `false_positive` arm (a switch arm, unlike a `parallel` branch, accepts both).
+
+| Workflow | Step | `event` | Placement |
+|---|---|---|---|
+| `attack_discovery_runner.yaml` | `report_run_completed` | `ad_worker_run_completed` | After `run_review_batches`, right before `emit_result` |
+| `attack_discovery_review.yaml` | `report_review_started` | `ad_worker_review_started` | Right after `verify_investigation` |
+| `attack_discovery_review.yaml` | `report_analysis_completed` | `ad_worker_analysis_completed` | Right after `refresh_verdict`, for every verdict |
+| `attack_discovery_review.yaml` | `report_investigation_closed_false_positive` | `ad_worker_investigation_closed` | Right after `close_investigation_false_positive` in the `false_positive` arm, only when that close left no error and changed `status` |
+| `attack_discovery_review.yaml` | `report_handoff_resolved` | `ad_worker_handoff_resolved` | Right after `record_decision`, only when `resolve_escalation.output.escalate` is true |
+| `attack_discovery_review.yaml` | `report_investigation_closed_declined` | `ad_worker_investigation_closed` | Right after `close_investigation_declined`, only when the escalation was declined and that close left no error and changed `status` |
+
+`shipped_yaml_contract.test.ts` renders each of these `with` blocks the way the engine does and validates it against the input schema, so a YAML edit that the schema would reject fails in CI instead of logging `invalid_input` at runtime.
+
 ## Output
 
 `{ reported: boolean }` and nothing else. The step never throws, so a telemetry problem never fails a Worker run. Still run it with `on-failure: continue` and a short `timeout`, and never inside a `parallel` branch or a `waitForApproval` branch.

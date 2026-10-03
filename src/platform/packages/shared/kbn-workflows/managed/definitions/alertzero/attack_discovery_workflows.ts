@@ -31,28 +31,35 @@ export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID =
 export const ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID =
   'system-security-attack-discovery-fp-tp-analysis';
 
+/**
+ * The version carries the `report_run_completed` step, which reports the run's
+ * counts and `run_outcome` through `alertzero.reportWorkerOutcome`. The bump makes
+ * the upgrade visible in `managedVersion`; the content hash alone would also apply it.
+ */
 export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 4,
+  version: 5,
   yaml: ATTACK_DISCOVERY_RUNNER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
 /**
- * The version carries the `resolve_display_text` step, which reads the discovery from
- * the Attack Discovery find API so the Investigation title, its summary, the journal
- * and the proposal's title and comment show its text with field tokens rendered and
- * original values restored. Bumped as a deliberate rollout signal for that step; the YAML
- * change alone already rolls out through `definitionHash`.
+ * The version carries the review's five `alertzero.reportWorkerOutcome` steps:
+ * `report_review_started`, `report_analysis_completed`, the escalation-only
+ * `report_handoff_resolved`, and the two Investigation close reports,
+ * `report_investigation_closed_false_positive` and
+ * `report_investigation_closed_declined`. Version 7 was the `resolve_display_text`
+ * step. The bump makes the upgrade visible in `managedVersion`; the content hash
+ * alone would also apply it.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 7,
+  version: 8,
   yaml: ATTACK_DISCOVERY_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 

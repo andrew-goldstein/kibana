@@ -146,13 +146,16 @@ steps:
 
   # An empty search SUCCEEDS, so the step above cannot catch an id that names no
   # document.
+  #
+  # No `workflow.fail` message in this workflow interpolates an id, the space or the
+  # model's output: the engine ships a failed run's error message in its terminal
+  # telemetry event. The ids stay readable in this execution's inputs.
   - name: require_attack_discovery
     type: workflow.fail
     if: "${{ steps.load_attack_discovery.output.hits.total.value == 0 }}"
     with:
       message: >-
-        No persisted Attack Discovery found for id
-        "{{ inputs.attack_discovery_id }}" in space {{ workflow.spaceId }}.
+        No persisted Attack Discovery found for the requested id in this space.
         Required source unavailable; no classification was produced.
 
   # A metadata READ and nothing else: posting to this conversation, or running
@@ -195,7 +198,7 @@ steps:
     with:
       message: >-
         Only {{ steps.count_alerts.output.found }} of {{ steps.count_alerts.output.cited }}
-        cited alerts were found for Attack Discovery "{{ inputs.attack_discovery_id }}".
+        cited alerts were found for the Attack Discovery.
         Required source unavailable; no classification was produced.
 
   # Optional. An empty or failed query does not fail the run. The verdict rules
@@ -476,16 +479,18 @@ steps:
   # would instead send an unknown verdict through the review's switch.
   #
   # `== false` rather than a bare negation, so an undefined never fires this.
+  #
+  # The message names no verdict: the verdict is model output, and the engine ships
+  # this message as telemetry. The `analyze` step's output in this execution keeps
+  # what the model returned.
   - name: require_supported_verdict
     type: workflow.fail
     if: "${{ steps.check_payload.output.payload_valid == false }}"
     with:
       message: >-
-        FP/TP analysis produced no usable payload for Attack Discovery
-        "{{ inputs.attack_discovery_id }}": verdict
-        "{{ steps.analyze.output.structured_output.verdict }}" is not one of
-        {{ consts.supported_verdicts | join: ", " }}, or the summary was empty.
-        No classification was produced.
+        FP/TP analysis produced no usable payload for the Attack Discovery: the
+        verdict is not one of {{ consts.supported_verdicts | join: ", " }}, or the
+        summary was empty. No classification was produced.
 
   # A truncated entity or event page is missing evidence. The review closes the
   # attack on `false_positive`, so that verdict becomes `inconclusive` before it is

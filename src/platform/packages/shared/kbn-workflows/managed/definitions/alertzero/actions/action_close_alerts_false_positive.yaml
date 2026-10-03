@@ -93,6 +93,8 @@ steps:
     type: workflow.fail
     if: "${{ steps.close_alerts.output.updated != inputs.actionInput.alertIds.size }}"
     with:
+      # The engine ships this as telemetry `errorMessage`, and analysts see it as the
+      # proposal's error, so it carries the two counts (numbers) and no free text.
       message: >-
         Closed {{ steps.close_alerts.output.updated }} of
         {{ inputs.actionInput.alertIds.size }} requested alert(s) as false
