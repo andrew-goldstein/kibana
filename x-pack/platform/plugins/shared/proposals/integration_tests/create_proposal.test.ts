@@ -503,6 +503,25 @@ describe('create-investigation-proposal workflow execution', () => {
       );
     });
 
+    it('should record the root the engine carries without reading past the caller', async () => {
+      // Only the caller is readable: the run can come from nowhere but the
+      // root lineage the engine stamped onto the gate's context.
+      fixture.setCallerLineage([
+        {
+          ...REVIEW,
+          context: {
+            parentWorkflowExecutionId: 'exec-runner',
+            rootWorkflowExecutionId: 'exec-floor',
+            rootWorkflowId: 'wf-floor',
+          },
+        },
+      ]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().callerRunId).toBe('exec-floor');
+    });
+
     it('should record no manager for a caller no plugin manages', async () => {
       fixture.setCallerLineage([{ ...FLOOR, managed: false, managedBy: null }]);
 

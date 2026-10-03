@@ -6,13 +6,17 @@
  */
 
 import { SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID } from '@kbn/alertzero-common';
-import type { WorkerChainExecution } from './verify_worker_chain';
+import type { WorkerChainExecution } from './worker_chain_execution';
 
 export const SPACE_ID = 'default';
 
 export const REVIEW_EXECUTION_ID = 'exec-review';
 export const RUNNER_EXECUTION_ID = 'exec-runner';
 export const ROOT_EXECUTION_ID = 'exec-root';
+export const ROOT_WORKFLOW_ID = 'wf-floor';
+
+/** The engine-provided `root` a post-upgrade execution of the fixture chain carries in its context. */
+export const ENGINE_ROOT = { executionId: ROOT_EXECUTION_ID, workflowId: ROOT_WORKFLOW_ID };
 
 /** A persisted, managed, non-test AlertZero execution in the fixture space. */
 export const createExecution = (
@@ -26,6 +30,7 @@ export const createExecution = (
   spaceId: SPACE_ID,
   triggeredBy: 'workflow-step',
   workflowDefinition: { consts: {} },
+  workflowId: 'wf-custom',
   ...overrides,
 });
 
@@ -38,6 +43,7 @@ export const createAttackDiscoveryChain = (): Record<string, WorkerChainExecutio
   [REVIEW_EXECUTION_ID]: createExecution({
     context: { parentWorkflowExecutionId: RUNNER_EXECUTION_ID },
     id: REVIEW_EXECUTION_ID,
+    workflowId: 'system-alertzero-attack-discovery-review',
   }),
   [ROOT_EXECUTION_ID]: createExecution({
     context: {},
@@ -45,10 +51,12 @@ export const createAttackDiscoveryChain = (): Record<string, WorkerChainExecutio
     originManagedWorkflowId: SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID,
     triggeredBy: 'scheduled',
     workflowDefinition: { consts: { worker_settings: { autonomy: 'assisted' } } },
+    workflowId: ROOT_WORKFLOW_ID,
   }),
   [RUNNER_EXECUTION_ID]: createExecution({
-    context: { parent: { executionId: ROOT_EXECUTION_ID, workflowId: 'wf-floor' } },
+    context: { parent: { executionId: ROOT_EXECUTION_ID, workflowId: ROOT_WORKFLOW_ID } },
     id: RUNNER_EXECUTION_ID,
+    workflowId: 'system-alertzero-attack-discovery-runner',
   }),
 });
 

@@ -28,6 +28,12 @@ export interface ResolveCallerProvenanceParams {
   getExecution: (executionId: string) => Promise<CallerExecution | null | undefined>;
   /** The gate's own `parent` context: the workflow execution that called it. */
   parent: { executionId: string; workflowId: string } | undefined;
+  /**
+   * The gate's own `root` context: the root execution of the chain it runs in,
+   * as the engine carries it. Absent on a chain that started before the engine
+   * did, which falls back to walking the persisted parents.
+   */
+  root?: { executionId: string; workflowId: string };
   spaceId: string;
 }
 
@@ -82,23 +88,27 @@ const getCallerManagedBy = ({
   managed === true && isTestRun !== true && managedBy ? managedBy : undefined;
 
 /**
- * Derives, from the persisted executions above the gate, who called it: the
- * calling workflow and execution, the plugin that manages it (never for a test
- * run), and the root of its run. Best-effort and never throws, so it can never
- * be what fails a proposal's creation. Caller verification is best-effort until
- * the engine exposes a trusted execution identity.
+ * Derives who called the gate: the calling workflow and execution, the plugin
+ * that manages it (from the caller's persisted execution, and never for a test
+ * run), and the root of its run (the root the engine carries, else found by
+ * walking persisted parents).
+ * Best-effort and never throws, so it can never be what fails a proposal's
+ * creation. Caller verification is best-effort until the engine exposes a
+ * trusted execution identity.
  */
 export const resolveCallerProvenance = async (
   params: ResolveCallerProvenanceParams
 ): Promise<ProposalCallerProvenance> => {
-  const { parent } = params;
+  const { parent, root } = params;
   if (!parent?.executionId) {
     return {};
   }
 
+  const engineRunId = root?.executionId || undefined;
   const identity = {
     callerWorkflowExecutionId: parent.executionId,
     callerWorkflowId: parent.workflowId,
+    ...(engineRunId !== undefined ? { callerRunId: engineRunId } : {}),
   };
 
   const caller = await readExecution(params, parent.executionId);
@@ -106,7 +116,7 @@ export const resolveCallerProvenance = async (
     return identity;
   }
 
-  const callerRunId = await findRunRoot(params, caller, [caller.id]);
+  const callerRunId = engineRunId ?? (await findRunRoot(params, caller, [caller.id]));
   const callerManagedBy = getCallerManagedBy(caller);
 
   return {

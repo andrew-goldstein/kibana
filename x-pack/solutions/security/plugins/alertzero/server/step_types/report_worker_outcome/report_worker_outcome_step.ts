@@ -22,8 +22,8 @@ import { checkWorkflowManaged } from './check_workflow_managed';
 import { reportOutcome } from './report_outcome';
 import type { ReportWorkerOutcomeSkipReason } from './skip_reasons';
 import { WARN_SKIP_REASONS } from './skip_reasons';
-import type { VerifiedChainCache } from './verified_chain_cache';
 import { verifyWorkerChain } from './verify_worker_chain';
+import { verifyWorkerRoot } from './verify_worker_root';
 
 /** Budget for each Elasticsearch read the verification makes. */
 export const HOP_TIMEOUT_MS = 5000;
@@ -36,7 +36,6 @@ export type WorkflowExecutionReader = Pick<
 
 export interface ReportWorkerOutcomeStepDeps {
   analytics: AlertZeroTelemetryAnalytics;
-  cache: VerifiedChainCache;
   /** AlertZero's owner-bound managed workflows client, once start has resolved it. */
   getManagedWorkflowState: () => Promise<ManagedWorkflowStateApi | undefined>;
   getWorkflowsManagement: () => WorkflowExecutionReader | undefined;
@@ -70,7 +69,7 @@ const verifyAndReport = async (
     return skipped('aborted');
   }
 
-  const { execution, workflow } = contextManager.getContext();
+  const { execution, root, workflow } = contextManager.getContext();
   if (execution.isTestRun) {
     return skipped('test_run');
   }
@@ -90,18 +89,20 @@ const verifyAndReport = async (
     return skipped('lineage_unavailable');
   }
   const request = contextManager.getFakeRequest();
-  const chain = await verifyWorkerChain({
+  const lineage = {
     abortSignal,
-    cache: deps.cache,
-    executionId: execution.id,
-    getExecution: (executionId) =>
+    getExecution: (executionId: string) =>
       management.getWorkflowExecution(executionId, workflow.spaceId, {
         omitStepExecutions: true,
         request,
       }),
     hopTimeoutMs: HOP_TIMEOUT_MS,
     spaceId: workflow.spaceId,
-  });
+  };
+  // The engine names the run's root; only a chain that started before it did falls back to the walk.
+  const chain = root?.executionId
+    ? await verifyWorkerRoot({ ...lineage, root })
+    : await verifyWorkerChain({ ...lineage, executionId: execution.id });
   if (!chain.verified) {
     return skipped(chain.reason);
   }

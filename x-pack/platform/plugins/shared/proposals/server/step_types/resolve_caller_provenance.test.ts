@@ -269,6 +269,70 @@ describe('resolveCallerProvenance', () => {
     expect(callerRunId).toBeUndefined();
   });
 
+  describe('with the root the engine carries in the gate context', () => {
+    const ROOT = { executionId: 'exec-floor', workflowId: 'wf-floor' };
+
+    /** A caller below the root, whose own ancestors this lookup must never need. */
+    const childCaller = execution({ context: { parentWorkflowExecutionId: 'exec-runner' } });
+
+    it('records the engine root as the run of the caller', async () => {
+      const { callerRunId } = await resolveCallerProvenance(
+        params({ getExecution: executionsById(childCaller), root: ROOT })
+      );
+
+      expect(callerRunId).toBe('exec-floor');
+    });
+
+    it('reads only the caller, never its ancestors', async () => {
+      const getExecution = jest.fn(executionsById(childCaller));
+
+      await resolveCallerProvenance(params({ getExecution, root: ROOT }));
+
+      expect(getExecution.mock.calls).toEqual([['exec-caller']]);
+    });
+
+    it('keeps the manager of the caller beside the engine root', async () => {
+      const provenance = await resolveCallerProvenance(
+        params({ getExecution: executionsById(childCaller), root: ROOT })
+      );
+
+      expect(provenance).toEqual({
+        callerManagedBy: 'alertzero',
+        callerRunId: 'exec-floor',
+        callerWorkflowExecutionId: 'exec-caller',
+        callerWorkflowId: 'wf-caller',
+      });
+    });
+
+    it('records the engine root even when the caller cannot be read', async () => {
+      const provenance = await resolveCallerProvenance(
+        params({ getExecution: executionsById(), root: ROOT })
+      );
+
+      expect(provenance).toEqual({
+        callerRunId: 'exec-floor',
+        callerWorkflowExecutionId: 'exec-caller',
+        callerWorkflowId: 'wf-caller',
+      });
+    });
+
+    it('walks the ancestors instead when the root carries a blank execution id', async () => {
+      const getExecution = executionsById(childCaller, execution({ id: 'exec-runner' }));
+
+      const { callerRunId } = await resolveCallerProvenance(
+        params({ getExecution, root: { executionId: '', workflowId: '' } })
+      );
+
+      expect(callerRunId).toBe('exec-runner');
+    });
+
+    it('records nothing for a gate run directly, even with a root', async () => {
+      const provenance = await resolveCallerProvenance(params({ parent: undefined, root: ROOT }));
+
+      expect(provenance).toEqual({});
+    });
+  });
+
   describe('with a slow read', () => {
     beforeEach(() => {
       jest.useFakeTimers();

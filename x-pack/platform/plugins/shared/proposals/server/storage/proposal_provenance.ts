@@ -37,8 +37,10 @@ export interface ProposalProvenance {
   /** The plugin that manages the calling workflow; absent for one nobody manages, and for a test run. */
   callerManagedBy?: string;
   /**
-   * The root execution of the calling workflow's run, found by walking its
-   * persisted parents. Best-effort: absent when any ancestor is unreadable.
+   * The root execution of the calling workflow's run: the root the engine
+   * carries in the gate's context, else (for a chain that started before the
+   * engine did) found by walking its persisted parents, and absent when any
+   * ancestor is unreadable.
    */
   callerRunId?: string;
   /** The workflow execution that called the gate. */

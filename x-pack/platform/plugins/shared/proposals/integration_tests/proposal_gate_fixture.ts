@@ -8,7 +8,8 @@
 import { createAnalytics } from '@elastic/ebt/client';
 import { loggerMock } from '@kbn/logging-mocks';
 import { httpServerMock } from '@kbn/core-http-server-mocks';
-import type { ExecutionStatus } from '@kbn/workflows';
+import type { ExecutionStatus, RootWorkflowLineage } from '@kbn/workflows';
+import { hasParentWorkflowExecution, hasRootWorkflowLineage } from '@kbn/workflows';
 import { CREATE_PROPOSAL_WORKFLOW_ID, getManagedWorkflowDefinition } from '@kbn/workflows/managed';
 import { WorkflowRunFixture } from '@kbn/workflows-execution-engine/test_helpers';
 import type { ProposalDocument, ProposalsStorageClient } from '../server/storage/proposals_storage';
@@ -111,6 +112,28 @@ export type StoredProposal = ProposalDocument & { id: string };
 /** A persisted execution above the gate: its calling workflow, or one of that workflow's ancestors. */
 export type CallerExecutionFixture = CallerExecution & { workflowId: string };
 
+/**
+ * The root lineage a `workflow.execute` parent stamps onto its child, as the
+ * engine does: the caller itself when it is top level, else the caller's own
+ * stored root, else nothing (a caller whose chain started before the engine
+ * carried root lineage).
+ */
+const rootLineageBelow = ({
+  context,
+  id,
+  workflowId,
+}: CallerExecutionFixture): RootWorkflowLineage | Record<string, never> => {
+  if (!hasParentWorkflowExecution(context)) {
+    return { rootWorkflowExecutionId: id, rootWorkflowId: workflowId };
+  }
+  return hasRootWorkflowLineage(context)
+    ? {
+        rootWorkflowExecutionId: context.rootWorkflowExecutionId,
+        rootWorkflowId: context.rootWorkflowId,
+      }
+    : {};
+};
+
 export interface ProposalGateStartOptions {
   /**
    * Replaces the loop's `max-iterations` limit, so the budget can be spent
@@ -203,9 +226,9 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
   let privilegeCheckFails = false;
   let callerLineage: CallerExecutionFixture[] = [];
 
-  // The engine fixture always runs a top-level execution, so a caller is
-  // stamped onto the gate's persisted context the way a `workflow.execute`
-  // parent would have created it.
+  // The engine fixture always runs a top-level execution, so a caller and its
+  // root lineage are stamped onto the gate's persisted context the way a
+  // `workflow.execute` parent would have created it.
   const executions = engine.workflowExecutionRepositoryMock.workflowExecutions;
   const storeExecution = executions.set.bind(executions);
   executions.set = (id, execution) => {
@@ -219,6 +242,7 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
               ...execution.context,
               parentWorkflowExecutionId: caller.id,
               parentWorkflowId: caller.workflowId,
+              ...rootLineageBelow(caller),
             },
           }
         : execution

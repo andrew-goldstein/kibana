@@ -15,9 +15,9 @@ import { ReportWorkerOutcomeStepId } from '../../../common/step_types';
 import { ALERTZERO_TELEMETRY_EVENTS, registerAlertZeroTelemetryEvents } from '../../telemetry';
 import type { ReportWorkerOutcomeStepDeps } from './report_worker_outcome_step';
 import { getReportWorkerOutcomeStepDefinition } from './report_worker_outcome_step';
-import { createVerifiedChainCache } from './verified_chain_cache';
-import type { WorkerChainExecution } from './verify_worker_chain';
+import type { WorkerChainExecution } from './worker_chain_execution';
 import {
+  ENGINE_ROOT,
   REVIEW_EXECUTION_ID,
   ROOT_EXECUTION_ID,
   RUNNER_EXECUTION_ID,
@@ -61,11 +61,17 @@ const INSTALLED_STATE = {
 interface ContextOptions {
   abortSignal?: AbortSignal;
   isTestRun?: boolean;
+  /** The engine-provided root lineage; `null` for a pre-upgrade chain the engine carries none for. */
+  root?: { executionId: string; workflowId: string } | null;
 }
 
 const createContext = (
   input: unknown,
-  { abortSignal = new AbortController().signal, isTestRun = false }: ContextOptions = {}
+  {
+    abortSignal = new AbortController().signal,
+    isTestRun = false,
+    root = ENGINE_ROOT,
+  }: ContextOptions = {}
 ) =>
   ({
     abortSignal,
@@ -74,6 +80,7 @@ const createContext = (
       callKibanaApi: jest.fn(),
       getContext: jest.fn().mockReturnValue({
         execution: { id: REVIEW_EXECUTION_ID, isTestRun },
+        root: root ?? undefined,
         workflow: { id: REVIEW_WORKFLOW_ID, spaceId: SPACE_ID },
       }),
       getFakeRequest: jest.fn().mockReturnValue(FAKE_REQUEST),
@@ -107,7 +114,6 @@ const createDeps = (overrides: Partial<ReportWorkerOutcomeStepDeps> = {}) => {
   const workflowsManagement = createWorkflowsManagement();
   const deps: ReportWorkerOutcomeStepDeps = {
     analytics,
-    cache: createVerifiedChainCache(),
     getManagedWorkflowState: async () => managedWorkflowState,
     getWorkflowsManagement: () => workflowsManagement as never,
     logger,
@@ -162,18 +168,14 @@ describe('alertzero.reportWorkerOutcome step', () => {
       expect(result).toEqual({ output: { reported: true } });
     });
 
-    it('reads every execution of the chain without step executions, as the workflow', async () => {
+    it('reads only the engine root, without step executions, as the workflow', async () => {
       const { deps, workflowsManagement } = createDeps();
 
       await run(deps, createContext(RUN_COMPLETED_INPUT));
 
-      expect(workflowsManagement.getWorkflowExecution.mock.calls).toEqual(
-        [REVIEW_EXECUTION_ID, RUNNER_EXECUTION_ID, ROOT_EXECUTION_ID].map((id) => [
-          id,
-          SPACE_ID,
-          { omitStepExecutions: true, request: FAKE_REQUEST },
-        ])
-      );
+      expect(workflowsManagement.getWorkflowExecution.mock.calls).toEqual([
+        [ROOT_EXECUTION_ID, SPACE_ID, { omitStepExecutions: true, request: FAKE_REQUEST }],
+      ]);
     });
 
     it('checks the global space when the workflow is not installed in the execution space', async () => {
@@ -255,16 +257,6 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('answers a second report from the same execution from the cache', async () => {
-      const { deps, workflowsManagement } = createDeps();
-      await run(deps, createContext(RUN_COMPLETED_INPUT));
-      workflowsManagement.getWorkflowExecution.mockClear();
-
-      await run(deps, createContext(RUN_COMPLETED_INPUT));
-
-      expect(workflowsManagement.getWorkflowExecution).not.toHaveBeenCalled();
-    });
-
     it('never writes to the workflow event log', async () => {
       const { deps } = createDeps();
       const context = createContext(RUN_COMPLETED_INPUT);
@@ -274,6 +266,142 @@ describe('alertzero.reportWorkerOutcome step', () => {
       expect(Object.values(context.logger).flatMap((fn) => (fn as jest.Mock).mock.calls)).toEqual(
         []
       );
+    });
+  });
+
+  describe('a pre-upgrade chain the engine carries no root for', () => {
+    const PRE_UPGRADE = { root: null };
+
+    it('reports the outcome with the envelope built from the walked root', async () => {
+      const { analytics, deps } = createDeps();
+
+      await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect(analytics.reportEvent).toHaveBeenCalledWith(
+        ALERTZERO_TELEMETRY_EVENTS.AdWorkerRunCompleted,
+        expect.objectContaining(EXPECTED_ENVELOPE)
+      );
+    });
+
+    it('walks every execution of the chain without step executions, as the workflow', async () => {
+      const { deps, workflowsManagement } = createDeps();
+
+      await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect(workflowsManagement.getWorkflowExecution.mock.calls).toEqual(
+        [REVIEW_EXECUTION_ID, RUNNER_EXECUTION_ID, ROOT_EXECUTION_ID].map((id) => [
+          id,
+          SPACE_ID,
+          { omitStepExecutions: true, request: FAKE_REQUEST },
+        ])
+      );
+    });
+
+    it('walks the chain when the engine root carries a blank execution id', async () => {
+      const { deps, workflowsManagement } = createDeps();
+
+      await run(
+        deps,
+        createContext(RUN_COMPLETED_INPUT, { root: { executionId: '', workflowId: '' } })
+      );
+
+      expect(workflowsManagement.getWorkflowExecution.mock.calls.map(([id]) => id)).toEqual([
+        REVIEW_EXECUTION_ID,
+        RUNNER_EXECUTION_ID,
+        ROOT_EXECUTION_ID,
+      ]);
+    });
+
+    it('skips a chain with a persisted test-run hop', async () => {
+      const chain = createAttackDiscoveryChain();
+      const workflowsManagement = createWorkflowsManagement({
+        ...chain,
+        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], isTestRun: true },
+      });
+      const { analytics, deps, logger } = createDeps({
+        getWorkflowsManagement: () => workflowsManagement as never,
+      });
+
+      await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect({
+        logged: loggedMessages(logger),
+        reportEvent: analytics.reportEvent.mock.calls.length,
+      }).toEqual({ logged: [expect.stringContaining('(test_run)')], reportEvent: 0 });
+    });
+
+    it('skips a chain with an unmanaged hop', async () => {
+      const chain = createAttackDiscoveryChain();
+      const workflowsManagement = createWorkflowsManagement({
+        ...chain,
+        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], managed: false, managedBy: null },
+      });
+      const { analytics, deps, logger } = createDeps({
+        getWorkflowsManagement: () => workflowsManagement as never,
+      });
+
+      const result = await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect({
+        logged: loggedMessages(logger),
+        reportEvent: analytics.reportEvent.mock.calls.length,
+        result,
+      }).toEqual({
+        logged: [expect.stringContaining('(not_managed)')],
+        reportEvent: 0,
+        result: { output: { reported: false } },
+      });
+    });
+
+    it('skips a chain with a parent in another space', async () => {
+      const chain = createAttackDiscoveryChain();
+      const workflowsManagement = createWorkflowsManagement({
+        ...chain,
+        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], spaceId: 'space-b' },
+      });
+      const { analytics, deps } = createDeps({
+        getWorkflowsManagement: () => workflowsManagement as never,
+      });
+
+      const result = await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect({ reportEvent: analytics.reportEvent.mock.calls.length, result }).toEqual({
+        reportEvent: 0,
+        result: { output: { reported: false } },
+      });
+    });
+
+    it('skips a chain whose root is not a catalog Worker', async () => {
+      const chain = createAttackDiscoveryChain();
+      const workflowsManagement = createWorkflowsManagement({
+        ...chain,
+        [ROOT_EXECUTION_ID]: { ...chain[ROOT_EXECUTION_ID], originManagedWorkflowId: 'custom' },
+      });
+      const { analytics, deps, logger } = createDeps({
+        getWorkflowsManagement: () => workflowsManagement as never,
+      });
+
+      await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect({
+        logged: loggedMessages(logger),
+        reportEvent: analytics.reportEvent.mock.calls.length,
+      }).toEqual({ logged: [expect.stringContaining('(not_catalog_root)')], reportEvent: 0 });
+    });
+
+    it('skips a chain with a missing ancestor, as lineage_unavailable', async () => {
+      const { [RUNNER_EXECUTION_ID]: _missing, ...chain } = createAttackDiscoveryChain();
+      const workflowsManagement = createWorkflowsManagement(chain);
+      const { analytics, deps, logger } = createDeps({
+        getWorkflowsManagement: () => workflowsManagement as never,
+      });
+
+      await run(deps, createContext(RUN_COMPLETED_INPUT, PRE_UPGRADE));
+
+      expect({
+        logged: loggedMessages(logger),
+        reportEvent: analytics.reportEvent.mock.calls.length,
+      }).toEqual({ logged: [expect.stringContaining('(lineage_unavailable)')], reportEvent: 0 });
     });
   });
 
@@ -296,11 +424,11 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a chain with a persisted test-run hop', async () => {
+    it('a root persisted as a test run', async () => {
       const chain = createAttackDiscoveryChain();
       const workflowsManagement = createWorkflowsManagement({
         ...chain,
-        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], isTestRun: true },
+        [ROOT_EXECUTION_ID]: { ...chain[ROOT_EXECUTION_ID], isTestRun: true },
       });
       const { analytics, deps, logger } = createDeps({
         getWorkflowsManagement: () => workflowsManagement as never,
@@ -334,11 +462,11 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a chain with an unmanaged hop', async () => {
+    it('a root AlertZero does not manage', async () => {
       const chain = createAttackDiscoveryChain();
       const workflowsManagement = createWorkflowsManagement({
         ...chain,
-        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], managed: false, managedBy: null },
+        [ROOT_EXECUTION_ID]: { ...chain[ROOT_EXECUTION_ID], managed: false, managedBy: null },
       });
       const { analytics, deps, logger } = createDeps({
         getWorkflowsManagement: () => workflowsManagement as never,
@@ -357,11 +485,11 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a chain with a parent in another space', async () => {
+    it('a root in another space', async () => {
       const chain = createAttackDiscoveryChain();
       const workflowsManagement = createWorkflowsManagement({
         ...chain,
-        [RUNNER_EXECUTION_ID]: { ...chain[RUNNER_EXECUTION_ID], spaceId: 'space-b' },
+        [ROOT_EXECUTION_ID]: { ...chain[ROOT_EXECUTION_ID], spaceId: 'space-b' },
       });
       const { analytics, deps } = createDeps({
         getWorkflowsManagement: () => workflowsManagement as never,
@@ -375,7 +503,7 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a chain whose root is not a catalog Worker', async () => {
+    it('a root that is not a catalog Worker', async () => {
       const chain = createAttackDiscoveryChain();
       const workflowsManagement = createWorkflowsManagement({
         ...chain,
@@ -398,8 +526,8 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a chain with a missing ancestor, as lineage_unavailable at debug level', async () => {
-      const { [RUNNER_EXECUTION_ID]: _missing, ...chain } = createAttackDiscoveryChain();
+    it('a root that cannot be read, as lineage_unavailable at debug level', async () => {
+      const { [ROOT_EXECUTION_ID]: _missing, ...chain } = createAttackDiscoveryChain();
       const workflowsManagement = createWorkflowsManagement(chain);
       const { analytics, deps, logger } = createDeps({
         getWorkflowsManagement: () => workflowsManagement as never,
@@ -521,7 +649,7 @@ describe('alertzero.reportWorkerOutcome step', () => {
       });
     });
 
-    it('a run aborted after the walk, immediately before reporting', async () => {
+    it('a run aborted during the root read, immediately before reporting', async () => {
       const controller = new AbortController();
       const chain = createAttackDiscoveryChain();
       const workflowsManagement = {

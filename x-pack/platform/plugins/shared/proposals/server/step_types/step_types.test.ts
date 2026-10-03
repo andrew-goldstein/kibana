@@ -492,6 +492,33 @@ describe('proposals.createProposal step', () => {
     );
   });
 
+  it('should record the root the engine carries as the run of the caller', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition, getWorkflowExecution } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue({
+        ...callerExecution,
+        context: { parentWorkflowExecutionId: 'exec-runner' },
+      })
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', comment: 'Tune' },
+        { ...CALLER_CONTEXT, root: { executionId: 'exec-floor', workflowId: 'wf-floor' } }
+      )
+    );
+
+    expect({
+      provenance: create.mock.calls[0][1].provenance,
+      reads: getWorkflowExecution.mock.calls.map(([executionId]) => executionId),
+    }).toEqual({
+      provenance: expect.objectContaining({ callerRunId: 'exec-floor' }),
+      reads: ['exec-caller'],
+    });
+  });
+
   it('should read the caller in the gate space under the execution credentials', async () => {
     const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
     const { definition, getWorkflowExecution } = createDefinition(

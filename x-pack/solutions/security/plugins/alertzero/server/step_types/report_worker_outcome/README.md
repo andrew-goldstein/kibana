@@ -27,14 +27,14 @@ In order, stopping at the first failure:
 2. The run is not aborted (checked again before every Elasticsearch read and immediately before reporting). Otherwise `aborted`.
 3. The step's own execution is not a test run. Otherwise `test_run`.
 4. AlertZero's owner-bound managed workflows client knows the reporting workflow, in the execution space or else the global space. Otherwise `not_managed`.
-5. The persisted ancestors, read through the Workflows management setup API with `omitStepExecutions`, starting at the reporting execution: at most 10 parent hops, 5s per read, every hop in the same space (compared explicitly), not a test run, and managed by `alertzero`. Parents are read from both context shapes (`parentWorkflowExecutionId`, and the `parent.executionId` a terminal save rewrites it to).
-6. The root (the hop with no parent) is a catalog Worker (`originManagedWorkflowId` in `SYSTEM_SECURITY_WORKER_IDS`). Otherwise `not_catalog_root`.
+5. The run's root execution, read once through the Workflows management setup API with `omitStepExecutions` (5s budget). The engine carries the chain's root in every execution's context (`root: { workflowId, executionId }`), so the step reads that execution directly and never the ones between it and the reporter. The persisted root must be the named workflow's execution, in the same space (compared explicitly), not a test run, managed by `alertzero`, and have no parent of its own.
+6. The root is a catalog Worker (`originManagedWorkflowId` in `SYSTEM_SECURITY_WORKER_IDS`). Otherwise `not_catalog_root`.
 
-A missing or unreadable ancestor, a timeout, a cycle, a chain that is too deep, or a hop in another space is `lineage_unavailable`. The envelope is then built from the verified root, as for every Worker run event.
+A missing or unreadable root, a timeout, a root in another space or of another workflow, or a root that has a parent is `lineage_unavailable`. The envelope is then built from the verified root, as for every Worker run event.
+
+**Fallback for pre-upgrade chains.** An execution whose chain started before the engine carried root lineage (for example a review parked across the upgrade) has no `root` in its context. For those, step 5 walks the persisted ancestors instead, starting at the reporting execution: at most 10 parent hops, 5s per read, every hop in the same space, not a test run, and managed by `alertzero`. Parents are read from both context shapes (`parentWorkflowExecutionId`, and the `parent.executionId` a terminal save rewrites it to). A missing or unreadable ancestor, a cycle or a chain that is too deep is `lineage_unavailable`.
 
 Caller verification is best-effort until the engine exposes a trusted execution identity.
-
-Verified chains are cached for 10 minutes (500 entries). Each execution of a chain maps to the chain's root and answers only in its own space, so the several reports of one review, and sibling reviews of one runner, skip the reads already made.
 
 ## Skip reasons
 

@@ -4,7 +4,7 @@ Event-Based Telemetry (EBT) events registered by the `alertzero` plugin. They go
 
 The events are registered in `setup()` inside the `xpack.alertzero.enabled` guard, so with the kill switch off no AlertZero event type exists. See the plugin [README](../../README.md).
 
-Run reliability (started, completed, failed, cancelled, timed out) is not duplicated here. It comes from the Workflows engine's own terminal execution events. Join them to these events through `run_id`, which is the root execution id. AlertZero events cover only what the engine cannot know: domain outcomes, settings, Investigations and daily snapshots.
+Run reliability (started, completed, failed, cancelled, timed out) is not duplicated here. It comes from the Workflows engine's own terminal execution events. Join them to these events through `run_id`, which is the root execution id the engine provides (the engine's `rootWorkflowExecutionId`, or `workflowExecutionId` on the root's own event). AlertZero events cover only what the engine cannot know: domain outcomes, settings, Investigations and daily snapshots.
 
 ## Privacy contract
 
@@ -35,6 +35,7 @@ The schema tests (`event_types.test.ts`) enforce the following:
 | `snapshot/` | `buildAutonomySnapshotPayload`, `buildFeatureFlagsSnapshotPayload`, `toSnapshotDay` and the `SNAPSHOT_FLAGS` allowlist, used by the snapshot task |
 | `../tasks/telemetry_snapshot/` | The daily `alertzero:telemetry_snapshot` Task Manager task that reads every space and reports the two snapshots |
 | `../../common/telemetry/constants.ts` | The Attack Discovery outcome vocabularies, which the report step's input schema shares |
+| `../lifecycle/` | `subscribeInvestigationLifecycle`, the Agent Builder `conversationLifecycle` listener that emits the Investigation events |
 
 ## The envelope
 
@@ -46,7 +47,7 @@ Every Worker run event (the `alertzero_ad_worker_*` events) carries these fields
 | `watch_tag` | keyword | yes | The catalog entry's `watchTag`, else `other` |
 | `autonomy_level` | keyword | no | The root's persisted `workflowDefinition.consts.worker_settings.autonomy` (`manual`, `assisted` or `supervised`). This is never the installed Worker's current settings: a review can park for 72h while the settings change. Absent when the root carries no recognised level |
 | `autonomy_mode` | keyword | no | Derived: `auto_accept` for `supervised` (the review gate auto-approves), `gated` for `manual` and `assisted`. Absent with `autonomy_level` |
-| `run_id` | keyword | yes | The root execution id. Every event of one Worker run shares it |
+| `run_id` | keyword | yes | The engine-provided root execution id of the run (the `root.executionId` the engine carries in every execution's context). Every event of one Worker run shares it |
 | `execution_id` | keyword | yes | The execution that reported the event: the root or a descendant (for example a review) |
 | `is_default_space` | boolean | yes | Whether the root's `spaceId` is the default space |
 | `trigger_type` | keyword | yes | The root's persisted `triggeredBy`: `manual`, `scheduled`, `alert` or `workflow_step` for the built-in sources; `event` for a registered trigger id with the engine's dispatch evidence; `other` for any other provenance string; `unknown` when it is missing |
@@ -57,7 +58,7 @@ Launch-gate metrics should select `trigger_type: scheduled` (or `event` for poll
 
 The `alertzero.reportWorkerOutcome` workflow step emits these events from the Attack Discovery Worker YAML. Report steps use `on-failure: continue`, so the counts are lower bounds.
 
-The step reports only for a managed AlertZero Worker run. It skips a test run, a workflow AlertZero does not manage, and any chain whose persisted ancestors are not all non-test AlertZero executions in the same space up to a catalog Worker root. Its input is a closed union of enums, bounded counts and flags, and its output is `{ reported }` alone. Caller verification is best-effort until the engine exposes a trusted execution identity. See the [step README](../step_types/report_worker_outcome/README.md).
+The step reports only for a managed AlertZero Worker run. It skips a test run, a workflow AlertZero does not manage, and any run whose engine-provided root is not a non-test AlertZero execution of a catalog Worker in the same space (a chain that started before the engine carried its root is verified by walking its persisted ancestors instead). Its input is a closed union of enums, bounded counts and flags, and its output is `{ reported }` alone. Caller verification is best-effort until the engine exposes a trusted execution identity. See the [step README](../step_types/report_worker_outcome/README.md).
 
 Semantics to keep in mind:
 - Review events can arrive before `run_completed`.
@@ -196,17 +197,37 @@ Attack Discovery Workflows are active in a space only when both of the last two 
 
 ## Investigation lifecycle events
 
-These event types are registered here, but nothing emits them yet. A follow-up change adds their emitter: an Agent Builder `conversationLifecycle` listener for `investigation`-template conversations, which does no execution lookups. Runs join through `alertzero_ad_worker_review_started.investigation_id`.
+AlertZero's Agent Builder `conversationLifecycle` listener (`../lifecycle/`) emits these events for `investigation`-template conversations. It subscribes in `setup()`, inside the kill-switch guard, to the template's closed `status`, `severity` and `close_reason` fields only, so free-text fields (`verdict`, `summary`, `description`) never reach it. Agent Builder delivers each event after its write succeeds, with no `KibanaRequest`, and binds the event's `source` and space itself.
 
-`created_by_class`, `closed_by_class` and `reopened_by_class` use one vocabulary:
-- `worker`: a managed AlertZero Worker, excluding test runs;
-- `custom_workflow`: any other workflow;
-- `agent`: an Agent Builder execution;
-- `user`: the HTTP or server API.
+The listener does no execution lookups. Runs join through `alertzero_ad_worker_review_started.investigation_id`.
+
+`created_by_class`, `closed_by_class` and `reopened_by_class` use one vocabulary, derived from the lifecycle `source`:
+- `worker`: a `workflow` source whose workflow AlertZero's owner-bound managed check finds installed (in the Investigation's space, else the global space), and which is not a test run;
+- `custom_workflow`: any other `workflow` source. That includes test runs, writes that carry no workflow id, and workflows the check cannot verify (it failed or took longer than 5s);
+- `agent`: an `execution` source (an Agent Builder agent run);
+- `user`: an `http_api` or `server_api` source.
+
+Caller verification is best-effort until the engine exposes a trusted execution identity.
+
+`worker_id` is the catalog id of the workflow that made the write. The Attack Discovery Worker writes its Investigations from its review workflow, which is not in the Worker catalog, so those events carry `other`. To get the Worker, join through `review_started.investigation_id`, whose envelope carries the root's `worker_id`.
+
+### Counting Investigations without double-counting
+
+`agentic_investigations` reports the closes and reopens that go through its own status service (the HTTP status route and the escalation cascade) as `agentic_investigations_investigation_closed` / `_reopened`. Those writes reach Agent Builder through its start contract, so they arrive here as `server_api`. AlertZero therefore skips `server_api` closes and reopens and reports everything else: Worker closes (the review's `ai.conversation.metadata.patch` steps), custom workflows, agent runs and direct Agent Builder HTTP writes.
+
+- **All closes or reopens:** add `agentic_investigations_investigation_closed` and `alertzero_investigation_closed` (and likewise for reopened). Each transition is reported by exactly one of them. Both carry `investigation_id` raw, so they can be cross-checked.
+- **Creations:** use `alertzero_investigation_created` alone. It fires for every source, including `server_api`. `agentic_investigations_investigation_opened` is a status write, not a creation.
+
+### Lower bounds
+
+The Investigation counts are lower bounds:
+- Up to 20 events are handled at a time. Beyond that (a burst of reviews), an event is dropped with a debug log.
+- Nothing is reported after the plugin stops, or if Kibana stops before delivery.
+- A listener failure is logged at warn and reports nothing. It never fails the write or the process.
 
 ### `alertzero_investigation_created`
 
-Emitted for every source.
+Emitted for every source, once Agent Builder has created the conversation. `severity` is the value the conversation was created with.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -218,7 +239,7 @@ Emitted for every source.
 
 ### `alertzero_investigation_closed`
 
-Not emitted for `server_api` sources, because `agentic_investigations` already reports its own closes.
+Emitted when a write sets `status` to `closed`. Not emitted for `server_api` sources, because `agentic_investigations` already reports its own closes (see above). `close_reason` and `severity` are present only when the closing write set them, because the lifecycle event carries only changed fields. The Worker review sets `close_reason` in the same write as the status.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -231,7 +252,7 @@ Not emitted for `server_api` sources, because `agentic_investigations` already r
 
 ### `alertzero_investigation_reopened`
 
-Not emitted for `server_api` sources, for the same reason.
+Emitted when a write sets `status` from `closed` back to `open`. Not emitted for `server_api` sources, for the same reason.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

@@ -5,7 +5,6 @@
  * 2.0.
  */
 
-import { createVerifiedChainCache } from './verified_chain_cache';
 import type { VerifyWorkerChainParams } from './verify_worker_chain';
 import { MAX_LINEAGE_HOPS, verifyWorkerChain } from './verify_worker_chain';
 import {
@@ -22,7 +21,6 @@ const createParams = (
   overrides: Partial<VerifyWorkerChainParams> = {}
 ): VerifyWorkerChainParams => ({
   abortSignal: new AbortController().signal,
-  cache: createVerifiedChainCache(),
   executionId: REVIEW_EXECUTION_ID,
   getExecution: createExecutionReader(createAttackDiscoveryChain()),
   hopTimeoutMs: 5000,
@@ -241,60 +239,6 @@ describe('verifyWorkerChain', () => {
     expect({ calls: getExecution.mock.calls.length, result }).toEqual({
       calls: 1,
       result: { reason: 'aborted', verified: false },
-    });
-  });
-
-  describe('verified chain cache', () => {
-    it('answers a repeat verification without reading', async () => {
-      const cache = createVerifiedChainCache();
-      await verifyWorkerChain(createParams({ cache }));
-      const getExecution = createExecutionReader(createAttackDiscoveryChain());
-
-      await verifyWorkerChain(createParams({ cache, getExecution }));
-
-      expect(getExecution).not.toHaveBeenCalled();
-    });
-
-    it('stops the walk at an ancestor another execution already verified', async () => {
-      const cache = createVerifiedChainCache();
-      await verifyWorkerChain(createParams({ cache }));
-      const chain = createAttackDiscoveryChain();
-      const getExecution = createExecutionReader({
-        ...chain,
-        'exec-sibling-review': createExecution({
-          context: { parentWorkflowExecutionId: RUNNER_EXECUTION_ID },
-          id: 'exec-sibling-review',
-        }),
-      });
-
-      await verifyWorkerChain(
-        createParams({ cache, executionId: 'exec-sibling-review', getExecution })
-      );
-
-      expect(getExecution.mock.calls.map(([id]) => id)).toEqual(['exec-sibling-review']);
-    });
-
-    it('does not cache a rejected chain', async () => {
-      const cache = createVerifiedChainCache();
-      await verifyWorkerChain(
-        createParams({ cache, getExecution: withChange(ROOT_EXECUTION_ID, { managed: false }) })
-      );
-      const getExecution = createExecutionReader(createAttackDiscoveryChain());
-
-      await verifyWorkerChain(createParams({ cache, getExecution }));
-
-      expect(getExecution).toHaveBeenCalledTimes(3);
-    });
-
-    it('does not answer from a chain verified in another space', async () => {
-      const cache = createVerifiedChainCache();
-      await verifyWorkerChain(createParams({ cache }));
-
-      const result = await verifyWorkerChain(
-        createParams({ cache, getExecution: jest.fn().mockResolvedValue(null), spaceId: 'space-b' })
-      );
-
-      expect(result).toEqual({ reason: 'lineage_unavailable', verified: false });
     });
   });
 });

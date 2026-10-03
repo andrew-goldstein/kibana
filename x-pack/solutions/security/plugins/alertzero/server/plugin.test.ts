@@ -17,7 +17,8 @@ import { registerOwner } from './managed_workflows/register_owner';
 import { registerRoutes } from './routes/register_routes';
 import { ensureAgentSafe, registerAgentType } from './agent';
 import { registerAlertZeroInferenceFeatures } from './inference_features';
-import { ALERTZERO_TELEMETRY_EVENT_TYPES } from './telemetry';
+import { ALERTZERO_TELEMETRY_EVENT_TYPES, ALERTZERO_TELEMETRY_EVENTS } from './telemetry';
+import { INVESTIGATION_LIFECYCLE_FILTER } from './lifecycle';
 import { ReportWorkerOutcomeStepId } from '../common/step_types';
 
 jest.mock('./managed_workflows/register_owner', () => ({
@@ -41,6 +42,13 @@ jest.mock('./agent', () => ({
 jest.mock('./routes/register_routes', () => ({
   registerRoutes: jest.fn(),
 }));
+
+const createAgentBuilderSetup = (overrides: Record<string, unknown> = {}) => ({
+  attachments: { registerType: jest.fn() },
+  conversationLifecycle: { onCreated: jest.fn(), onMetadataUpdated: jest.fn() },
+  tools: { register: jest.fn() },
+  ...overrides,
+});
 
 const createConfig = (overrides: Partial<AlertZeroConfig> = {}): AlertZeroConfig => ({
   enabled: false,
@@ -150,6 +158,27 @@ describe('AlertZeroPlugin feature-flag gating', () => {
       expect(workflowsExtensions.registerStepDefinition).not.toHaveBeenCalled();
     });
 
+    it('does not subscribe to the Agent Builder conversation lifecycle', () => {
+      const plugin = new AlertZeroPlugin(createContext(createConfig({ enabled: false })));
+      const agentBuilder = createAgentBuilderSetup();
+
+      plugin.setup(
+        coreMock.createSetup() as never,
+        {
+          agentBuilder,
+          features: { registerKibanaFeature: jest.fn() },
+          workflowsExtensions: {
+            registerManagedWorkflowOwner: jest.fn(),
+            registerStepDefinition: jest.fn(),
+          },
+          workflowsManagement: undefined,
+        } as never
+      );
+
+      expect(agentBuilder.conversationLifecycle.onCreated).not.toHaveBeenCalled();
+      expect(agentBuilder.conversationLifecycle.onMetadataUpdated).not.toHaveBeenCalled();
+    });
+
     it('does not install managed worker workflows on start', () => {
       const plugin = new AlertZeroPlugin(createContext(createConfig({ enabled: false })));
       const coreStart = coreMock.createStart();
@@ -180,10 +209,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
           features,
           workflowsExtensions,
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
         } as never
       );
 
@@ -223,10 +249,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
             registerStepDefinition: jest.fn(),
           },
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
         } as never
       );
 
@@ -248,15 +271,79 @@ describe('AlertZeroPlugin feature-flag gating', () => {
           features: { registerKibanaFeature: jest.fn() },
           workflowsExtensions,
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
         } as never
       );
 
       expect(workflowsExtensions.registerStepDefinition.mock.calls.map(([def]) => def.id)).toEqual([
         ReportWorkerOutcomeStepId,
+      ]);
+    });
+
+    it('subscribes to investigation lifecycle events during setup', () => {
+      const plugin = new AlertZeroPlugin(createContext(createConfig({ enabled: true })));
+      const agentBuilder = createAgentBuilderSetup();
+
+      plugin.setup(
+        coreMock.createSetup() as never,
+        {
+          agentBuilder,
+          features: { registerKibanaFeature: jest.fn() },
+          workflowsExtensions: {
+            registerManagedWorkflowOwner: jest.fn(),
+            registerStepDefinition: jest.fn(),
+          },
+          workflowsManagement: { management: {} },
+        } as never
+      );
+
+      expect(agentBuilder.conversationLifecycle.onCreated).toHaveBeenCalledWith(
+        INVESTIGATION_LIFECYCLE_FILTER,
+        expect.any(Function)
+      );
+      expect(agentBuilder.conversationLifecycle.onMetadataUpdated).toHaveBeenCalledWith(
+        INVESTIGATION_LIFECYCLE_FILTER,
+        expect.any(Function)
+      );
+    });
+
+    it('reports investigation lifecycle events until the plugin stops', async () => {
+      const plugin = new AlertZeroPlugin(createContext(createConfig({ enabled: true })));
+      const coreSetup = coreMock.createSetup();
+      const agentBuilder = createAgentBuilderSetup();
+      plugin.setup(
+        coreSetup as never,
+        {
+          agentBuilder,
+          features: { registerKibanaFeature: jest.fn() },
+          workflowsExtensions: {
+            registerManagedWorkflowOwner: jest.fn(),
+            registerStepDefinition: jest.fn(),
+          },
+          workflowsManagement: { management: {} },
+        } as never
+      );
+      const [[, onCreated]] = agentBuilder.conversationLifecycle.onCreated.mock.calls;
+      const deliver = async (conversationId: string) => {
+        onCreated({
+          changes: {},
+          conversationId,
+          source: { type: 'http_api' },
+          spaceId: DEFAULT_SPACE_ID,
+          templateId: 'investigation',
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+      };
+
+      await deliver('before-stop');
+      plugin.stop();
+      await deliver('after-stop');
+
+      expect(coreSetup.analytics.reportEvent.mock.calls).toEqual([
+        [
+          ALERTZERO_TELEMETRY_EVENTS.InvestigationCreated,
+          { created_by_class: 'user', investigation_id: 'before-stop', is_default_space: true },
+        ],
       ]);
     });
 
@@ -273,10 +360,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
             registerStepDefinition: jest.fn(),
           },
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
         } as never
       );
 
@@ -299,10 +383,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
             registerStepDefinition: jest.fn(),
           },
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
         } as never
       );
 
@@ -317,11 +398,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
         registerManagedWorkflowOwner: jest.fn(),
         registerStepDefinition: jest.fn(),
       };
-      const agentBuilder = {
-        agents: { registerType: jest.fn() },
-        tools: { register: jest.fn() },
-        attachments: { registerType: jest.fn() },
-      };
+      const agentBuilder = createAgentBuilderSetup({ agents: { registerType: jest.fn() } });
 
       plugin.setup(
         coreSetup as never,
@@ -350,10 +427,7 @@ describe('AlertZeroPlugin feature-flag gating', () => {
             registerStepDefinition: jest.fn(),
           },
           workflowsManagement: { management: {} },
-          agentBuilder: {
-            tools: { register: jest.fn() },
-            attachments: { registerType: jest.fn() },
-          },
+          agentBuilder: createAgentBuilderSetup(),
           searchInferenceEndpoints,
         } as never
       );

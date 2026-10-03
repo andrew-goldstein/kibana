@@ -69,6 +69,7 @@ export const getCreateProposalStepDefinition = ({
               request,
             }),
           parent: workflowContext.parent,
+          root: workflowContext.root,
           spaceId,
         });
 

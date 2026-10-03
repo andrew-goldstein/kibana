@@ -52,6 +52,8 @@ import {
   registerTelemetrySnapshotTask,
   scheduleTelemetrySnapshotTask,
 } from './tasks/telemetry_snapshot';
+import type { InvestigationLifecycleSubscription } from './lifecycle';
+import { subscribeInvestigationLifecycle } from './lifecycle';
 
 export class AlertZeroPlugin
   implements
@@ -77,6 +79,8 @@ export class AlertZeroPlugin
   private proposals?: AlertZeroStartDependencies['proposals'];
   private agentBuilderConversations?: AlertZeroStartDependencies['agentBuilder']['conversations'];
   private huntServices?: HuntServices;
+  /** Subscribed during `setup`; `stop` turns its listeners into no-ops. */
+  private investigationLifecycle?: InvestigationLifecycleSubscription;
 
   constructor(context: PluginInitializerContext<AlertZeroConfig>) {
     this.logger = context.logger.get();
@@ -133,6 +137,16 @@ export class AlertZeroPlugin
       getWorkflowsManagement: () => this.workflowsManagementApi,
       logger: this.logger.get('telemetry'),
       workflowsExtensions,
+    });
+    // Inside the guard like the event registration, so the kill switch leaves nothing subscribed.
+    this.investigationLifecycle = subscribeInvestigationLifecycle({
+      conversationLifecycle: agentBuilder.conversationLifecycle,
+      getManagedWorkflowState: async () => this.managedWorkflows,
+      logger: this.logger.get('telemetry'),
+      reporter: createAlertZeroTelemetryReporter({
+        analytics: coreSetup.analytics,
+        logger: this.logger.get('telemetry'),
+      }),
     });
     registerAgentType(agentBuilder);
     registerAttachments(agentBuilder);
@@ -301,5 +315,7 @@ export class AlertZeroPlugin
     return this.spaces?.spacesService.getSpaceId(request) ?? 'default';
   }
 
-  stop() {}
+  stop() {
+    this.investigationLifecycle?.stop();
+  }
 }

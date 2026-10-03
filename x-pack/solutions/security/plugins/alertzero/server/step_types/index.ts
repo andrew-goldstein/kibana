@@ -8,16 +8,13 @@
 import type { WorkflowsExtensionsServerPluginSetup } from '@kbn/workflows-extensions/server';
 import type { ReportWorkerOutcomeStepDeps } from './report_worker_outcome/report_worker_outcome_step';
 import { getReportWorkerOutcomeStepDefinition } from './report_worker_outcome/report_worker_outcome_step';
-import { createVerifiedChainCache } from './report_worker_outcome/verified_chain_cache';
 
 /** Registers AlertZero's workflow steps during plugin setup. */
 export const registerAlertZeroStepDefinitions = ({
   workflowsExtensions,
   ...deps
-}: Omit<ReportWorkerOutcomeStepDeps, 'cache'> & {
+}: ReportWorkerOutcomeStepDeps & {
   workflowsExtensions: WorkflowsExtensionsServerPluginSetup;
 }): void => {
-  workflowsExtensions.registerStepDefinition(
-    getReportWorkerOutcomeStepDefinition({ ...deps, cache: createVerifiedChainCache() })
-  );
+  workflowsExtensions.registerStepDefinition(getReportWorkerOutcomeStepDefinition(deps));
 };

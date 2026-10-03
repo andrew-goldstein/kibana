@@ -77,7 +77,7 @@ Every event except `proposals_snapshot` carries these fields.
 |---|---|---|---|
 | `consumer` | keyword | yes | The plugin that manages the calling workflow (its persisted `managedBy`, for example `alertzero`), or `custom` for an unmanaged workflow, a test run or no calling workflow |
 | `managed_caller` | boolean | yes | Whether the calling workflow is a managed workflow that is not a test run |
-| `caller_run_id` | keyword | no | The calling run's root execution id, derived server-side on a best-effort basis. It joins proposals to the caller's own events, for example AlertZero's `run_id` |
+| `caller_run_id` | keyword | no | The calling run's root execution id, as the engine provides it (for a chain that started before the engine carried one, derived server-side on a best-effort basis). It joins proposals to the caller's own events, for example AlertZero's `run_id` |
 | `is_default_space` | boolean | yes | Whether the proposal is in the default space |
 
 The caller is the workflow that invoked the `system-create-proposal` gate, read from its persisted execution rather than from any workflow input. A test run copies the managed identity of the workflow it tests, so a test-run caller reads as `custom` rather than as its manager's own use of proposals.
@@ -228,6 +228,6 @@ The `proposals:telemetry_snapshot` Task Manager task reports `proposals_snapshot
 - An unprivileged decision through the HTTP API is refused before the handler runs, so it sends no `resume_rejected`.
 - A refused resume can be reported twice when Kibana restarts within moments of it and the gate step re-runs.
 - A refusal that is not typed (a missing proposal, a lost annotation race, or the resume API failing) sends no `resume_rejected`.
-- `caller_run_id` is best-effort; it is absent when the calling chain cannot be read.
+- `caller_run_id` is the engine-provided root execution id. Only for a chain that started before the engine carried one is it derived by walking the persisted parents, and then it is absent when the calling chain cannot be read.
 - `action_id` is absent on proposals created before it was stored, and on those whose action workflow could not be read at creation.
 - A retry of a record written before chain roots were stored inherits no root, so it reports its own id as `root_proposal_id`.
