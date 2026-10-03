@@ -17,6 +17,15 @@ import type {
   InvestigationClosePreviewResponse,
   ClosePreviewProposal,
 } from '../../../common/investigations/status';
+import type {
+  AgenticInvestigationsTelemetryReporter,
+  InvestigationClosedByClass,
+} from '../../telemetry';
+import {
+  buildInvestigationStatusEvents,
+  isDefaultSpace,
+  reportTelemetryEvents,
+} from '../../telemetry';
 import { MissingDismissReasonError } from './errors';
 import { CloseTargetsChangedError } from './close_targets_changed_error';
 import { ProposalDismissFailedError } from './proposal_dismiss_failed_error';
@@ -110,6 +119,14 @@ export interface InvestigationStatusServiceDeps {
   getProposals: () => ProposalsPluginStart | undefined;
   getSpaceId: (request: KibanaRequest) => string;
   logger: Logger;
+  /** Reports lifecycle events after each status write; omit to report nothing. */
+  telemetry?: AgenticInvestigationsTelemetryReporter;
+}
+
+/** Internal-only `setStatus` options, never accepted from the HTTP body. */
+export interface SetInvestigationStatusOptions {
+  /** How the investigation is being closed, for telemetry. Defaults to `direct`. */
+  closedBy?: InvestigationClosedByClass;
 }
 
 export class InvestigationStatusService {
@@ -117,17 +134,20 @@ export class InvestigationStatusService {
   private readonly getProposals: InvestigationStatusServiceDeps['getProposals'];
   private readonly getSpaceId: InvestigationStatusServiceDeps['getSpaceId'];
   private readonly logger: Logger;
+  private readonly telemetry: InvestigationStatusServiceDeps['telemetry'];
 
   constructor({
     getConversationClient,
     getProposals,
     getSpaceId,
     logger,
+    telemetry,
   }: InvestigationStatusServiceDeps) {
     this.getConversationClient = getConversationClient;
     this.getProposals = getProposals;
     this.getSpaceId = getSpaceId;
     this.logger = logger;
+    this.telemetry = telemetry;
   }
 
   /**
@@ -211,7 +231,8 @@ export class InvestigationStatusService {
   async setStatus(
     request: KibanaRequest,
     conversationId: string,
-    body: SetInvestigationStatusRequest
+    body: SetInvestigationStatusRequest,
+    options: SetInvestigationStatusOptions = {}
   ): Promise<SetInvestigationStatusResponse> {
     const client = await this.getConversationClient(request);
     const conversation = await client.get(conversationId);
@@ -221,9 +242,12 @@ export class InvestigationStatusService {
 
     const dismissedProposalIds: string[] = [];
     const failedProposalIds: string[] = [];
+    const pending =
+      body.status === 'closed'
+        ? await this.listPendingProposalsForRequest(conversationId, request)
+        : [];
 
     if (body.status === 'closed') {
-      const pending = await this.listPendingProposalsForRequest(conversationId, request);
       const spaceId = this.getSpaceId(request);
 
       // Reject the close when proposals appeared after the dialog was shown, before
@@ -301,11 +325,31 @@ export class InvestigationStatusService {
       }
     }
 
-    const { conversation: updated } = await client.patchMetadata(
+    const { conversation: updated, changedFields } = await client.patchMetadata(
       conversationId,
       { status: body.status },
       { access: 'converse' }
     );
+
+    reportTelemetryEvents({
+      buildEvents: () =>
+        buildInvestigationStatusEvents({
+          changedFields,
+          closedBy: options.closedBy ?? 'direct',
+          createdAt: conversation.created_at,
+          dismissReason: body.dismiss_reason,
+          dismissedProposalCount: dismissedProposalIds.length,
+          investigationId: conversationId,
+          isDefaultSpace: isDefaultSpace(this.getSpaceId(request)),
+          metadata: updated.metadata,
+          nextStatus: body.status,
+          now: Date.now(),
+          pendingProposalCount: pending.length,
+          previousStatus: conversation.metadata?.status,
+        }),
+      logger: this.logger,
+      telemetry: this.telemetry,
+    });
 
     return {
       conversation_id: updated.id,

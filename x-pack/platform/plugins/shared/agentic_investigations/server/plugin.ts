@@ -31,6 +31,10 @@ import { InvestigationStatusService } from './investigations/services/investigat
 import { registerInvestigationRoutes } from './investigations/routes/register_routes';
 import { createInvestigationsPrivilegesReader } from './investigations/services/check_investigations_privileges';
 import { createUserResolver } from './services/resolve_user';
+import {
+  createAgenticInvestigationsTelemetryReporter,
+  registerAgenticInvestigationsTelemetryEvents,
+} from './telemetry';
 import type { ResolveUser } from './services/resolve_user';
 import type {
   AgenticInvestigationsPluginSetup,
@@ -68,6 +72,7 @@ export class AgenticInvestigationsPlugin
     { features, workflowsExtensions, agentBuilder }: AgenticInvestigationsSetupDependencies
   ): AgenticInvestigationsPluginSetup {
     registerFeatures({ features, escalationsEnabled: this.escalationsEnabled });
+    registerAgenticInvestigationsTelemetryEvents(coreSetup.analytics);
 
     registerImpactAttachment(agentBuilder, {
       getImpactService: () => this.requireImpactService(),
@@ -152,12 +157,18 @@ export class AgenticInvestigationsPlugin
       }),
     });
 
+    const telemetry = createAgenticInvestigationsTelemetryReporter({
+      analytics: coreStart.analytics,
+      logger: this.logger,
+    });
+
     this.investigationStatusService = new InvestigationStatusService({
       getConversationClient: (request) =>
         plugins.agentBuilder.conversations.getScopedClient({ request }),
       getProposals: () => plugins.proposals,
       getSpaceId: (request) => this.getSpaceId(request),
       logger: this.logger,
+      telemetry,
     });
 
     if (this.escalationsEnabled) {
@@ -169,6 +180,8 @@ export class AgenticInvestigationsPlugin
           plugins.agentBuilder.attachments.getScopedClient({ request }),
         conversationTemplates: plugins.agentBuilder.conversationTemplates,
         getInvestigationStatusService: () => this.requireInvestigationStatusService(),
+        getSpaceId: (request) => this.getSpaceId(request),
+        telemetry,
       });
     }
 

@@ -48,6 +48,7 @@ dependsOn:
   - '@kbn/ui-callout'
   - '@kbn/shared-ux-error-boundary'
   - '@kbn/proposals-ui'
+  - '@kbn/core-spaces-common'
 tags:
   - plugin
   - prod
