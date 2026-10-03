@@ -590,6 +590,50 @@ describe('buildWorkflowContext', () => {
     });
   });
 
+  describe('root lineage', () => {
+    const childExecution: EsWorkflowExecution = {
+      ...baseExecution,
+      context: {
+        parentWorkflowExecutionId: 'parent-exec-1',
+        parentWorkflowId: 'parent-workflow-id',
+        parentDepth: 1,
+        rootWorkflowExecutionId: 'root-exec-1',
+        rootWorkflowId: 'root-workflow-id',
+      },
+    };
+
+    it('should not add a root object for a top-level execution', () => {
+      const context = buildWorkflowRenderContext(baseExecution, undefined, dependencies);
+
+      expect(context).not.toHaveProperty('root');
+    });
+
+    it('should not add a root object for a child execution with stored root lineage', () => {
+      const context = buildWorkflowRenderContext(childExecution, undefined, dependencies);
+
+      expect(context).not.toHaveProperty('root');
+    });
+
+    it.each(['root-exec-1', 'root-workflow-id'])(
+      'should keep the stored root id %s out of the Liquid render context',
+      (rootId) => {
+        const context = buildWorkflowRenderContext(childExecution, undefined, dependencies);
+
+        expect(JSON.stringify(context)).not.toContain(rootId);
+      }
+    );
+
+    it('should still expose the parent for a child execution with stored root lineage', () => {
+      const context = buildWorkflowRenderContext(childExecution, undefined, dependencies);
+
+      expect(context.parent).toEqual({
+        workflowId: 'parent-workflow-id',
+        executionId: 'parent-exec-1',
+        depth: 2,
+      });
+    });
+  });
+
   describe('metadata context', () => {
     it('should include metadata from execution document when present', () => {
       const execution: EsWorkflowExecution = {

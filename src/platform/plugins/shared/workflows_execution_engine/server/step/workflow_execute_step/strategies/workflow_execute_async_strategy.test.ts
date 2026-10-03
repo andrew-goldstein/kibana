@@ -191,6 +191,59 @@ describe('WorkflowExecuteAsyncStrategy', () => {
     );
   });
 
+  describe('root lineage in the child context', () => {
+    const getChildContext = (): Record<string, unknown> =>
+      mockEngine.executeWorkflow.mock.calls[0][1] as Record<string, unknown>;
+
+    it('uses a top-level parent as the root of its direct child', async () => {
+      (mockStepRuntime.workflowExecution as any).context = {};
+
+      await strategy.execute(createMockWorkflow(), {}, 'default', mockRequest, 0);
+
+      expect(getChildContext()).toEqual(
+        expect.objectContaining({
+          rootWorkflowExecutionId: 'parent-exec-1',
+          rootWorkflowId: 'parent-workflow-id',
+        })
+      );
+    });
+
+    it('gives a grandchild the top-level execution and workflow as its root', async () => {
+      (mockStepRuntime.workflowExecution as any).context = {
+        parentWorkflowExecutionId: 'top-exec-1',
+        parentWorkflowId: 'top-workflow-id',
+        rootWorkflowExecutionId: 'top-exec-1',
+        rootWorkflowId: 'top-workflow-id',
+      };
+
+      await strategy.execute(createMockWorkflow(), {}, 'default', mockRequest, 1);
+
+      expect(getChildContext()).toEqual(
+        expect.objectContaining({
+          parentWorkflowExecutionId: 'parent-exec-1',
+          parentWorkflowId: 'parent-workflow-id',
+          rootWorkflowExecutionId: 'top-exec-1',
+          rootWorkflowId: 'top-workflow-id',
+        })
+      );
+    });
+
+    it('omits the root keys when the parent is a child without a stored root', async () => {
+      (mockStepRuntime.workflowExecution as any).context = {
+        parentWorkflowExecutionId: 'unknown-exec',
+        parentWorkflowId: 'unknown-workflow-id',
+      };
+
+      await strategy.execute(createMockWorkflow(), {}, 'default', mockRequest, 1);
+
+      expect(getChildContext()).not.toHaveProperty('rootWorkflowExecutionId');
+      expect(getChildContext()).not.toHaveProperty('rootWorkflowId');
+      expect(getChildContext()).toEqual(
+        expect.objectContaining({ parentWorkflowInvocation: 'async' })
+      );
+    });
+  });
+
   it('should log info about the started execution', async () => {
     await strategy.execute(createMockWorkflow(), {}, 'default', mockRequest, 0);
 

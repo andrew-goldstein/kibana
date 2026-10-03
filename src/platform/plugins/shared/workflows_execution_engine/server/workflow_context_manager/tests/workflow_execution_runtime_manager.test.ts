@@ -1201,5 +1201,64 @@ describe('WorkflowExecutionRuntimeManager', () => {
         );
       }
     );
+
+    it.each([
+      [ExecutionStatus.COMPLETED, WorkflowExecutionTelemetryEventTypes.WorkflowExecutionCompleted],
+      [ExecutionStatus.FAILED, WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed],
+      [ExecutionStatus.CANCELLED, WorkflowExecutionTelemetryEventTypes.WorkflowExecutionCancelled],
+    ])(
+      'should report execution lineage ids for a %s child execution after the context is rebuilt',
+      async (status, eventType) => {
+        const analytics = analyticsServiceMock.createAnalyticsServiceStart();
+        const childWorkflowExecution = {
+          ...workflowExecution,
+          context: {
+            parentDepth: 1,
+            parentWorkflowExecutionId: 'parent-execution-id',
+            parentWorkflowId: 'parent-workflow-id',
+            parentWorkflowInvocation: 'sync',
+            rootWorkflowExecutionId: 'root-execution-id',
+            rootWorkflowId: 'root-workflow-id',
+          },
+          status,
+          triggeredBy: 'workflow-step',
+          workflowDefinition: { steps: [] } as Partial<WorkflowYaml> as WorkflowYaml,
+        } as EsWorkflowExecution;
+        (workflowExecutionState.getWorkflowExecution as jest.Mock).mockReturnValue(
+          childWorkflowExecution
+        );
+        // The rebuilt context has the render shape, without the raw parent* / root* keys.
+        buildWorkflowContextMock.mockReturnValue({
+          execution: {} as WorkflowExecutionContext,
+          parent: {
+            depth: 2,
+            executionId: 'parent-execution-id',
+            workflowId: 'parent-workflow-id',
+          },
+        } as WorkflowContext);
+        underTest = new WorkflowExecutionRuntimeManager({
+          coreStart: fakeCoreStart as CoreStart,
+          dependencies: fakeContextDependencies,
+          stepIoService,
+          telemetryClient: new WorkflowExecutionTelemetryClient(analytics, loggerMock.create()),
+          workflowExecution: childWorkflowExecution,
+          workflowExecutionCursor,
+          workflowExecutionGraph,
+          workflowExecutionState,
+          workflowLogger,
+        });
+        workflowExecutionCursor.setCurrentNodeId(undefined);
+
+        await underTest.saveState();
+
+        expect(analytics.reportEvent).toHaveBeenCalledWith(
+          eventType,
+          expect.objectContaining({
+            parentWorkflowExecutionId: 'parent-execution-id',
+            rootWorkflowExecutionId: 'root-execution-id',
+          })
+        );
+      }
+    );
   });
 });
