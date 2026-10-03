@@ -124,11 +124,11 @@ steps:
     type: workflow.fail
     if: "${{ steps.outcome.output.installed != true or steps.outcome.output.enabled != true }}"
     with:
+      # A fixed message: the engine ships it as telemetry `errorMessage`. The rule, its version
+      # and the install summary and errors are in the inputs and the install_rule step output.
       message: >-
-        Prebuilt rule {{ inputs.actionInput.rule_id }} version {{ inputs.actionInput.version }}
-        was not {% if steps.outcome.output.installed != true %}installed{% else %}enabled{% endif %}.
-        Install summary: {{ steps.install_rule.output.summary | json }}
-        {{ steps.install_rule.output.errors | json }}
+        The prebuilt rule was not both installed and enabled. The install step's
+        output has the summary and errors.
 
   # `workflow.execute` declares its output as unknown, so the parent falls back
   # to a heuristic read of the last step unless the child emits explicitly.

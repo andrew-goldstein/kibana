@@ -215,10 +215,11 @@ steps:
     type: workflow.fail
     if: "${{ steps.resolve_rule_outcome.output.failed == true }}"
     with:
+      # A fixed message: the engine ships it as telemetry `errorMessage`. The rule id and the
+      # lookup error are in the coverage_check and resolve_rule step outputs.
       message: >-
-        Could not look up rule {{ steps.coverage_check.output.structured_output.rule_id }}
-        for the coverage check; the next sweep retries it.
-        {{ steps.resolve_rule.error.message }}
+        Could not look up the rule for the coverage check; the next sweep retries
+        it. The lookup step's output has the error.
 
   # Step 5 of 10: open the investigation, the human-facing record of this review. It is
   # deliberately separate from coverage_check's own conversation: the agent transcript
