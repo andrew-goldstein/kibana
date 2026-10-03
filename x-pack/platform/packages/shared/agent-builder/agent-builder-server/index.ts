@@ -153,6 +153,20 @@ export type {
   TextConversationEventRepresentation,
 } from './conversation_events';
 export type {
+  ConversationLifecycleChanges,
+  ConversationLifecycleCreatedEvent,
+  ConversationLifecycleCreatedListener,
+  ConversationLifecycleExecutionSource,
+  ConversationLifecycleFieldChange,
+  ConversationLifecycleFilter,
+  ConversationLifecycleHttpApiSource,
+  ConversationLifecycleMetadataUpdatedEvent,
+  ConversationLifecycleMetadataUpdatedListener,
+  ConversationLifecycleServerApiSource,
+  ConversationLifecycleSource,
+  ConversationLifecycleWorkflowSource,
+} from './conversation_lifecycle';
+export type {
   AgentBuilderPluginSetup,
   AgentBuilderPluginStart,
   TopSnippetsConfig,
@@ -161,6 +175,7 @@ export type {
   AttachmentsSetup,
   RenderersSetup,
   ConversationEventsSetup,
+  ConversationLifecycleSetup,
   SkillsSetup,
   SkillsStart,
   AgentsSetup,

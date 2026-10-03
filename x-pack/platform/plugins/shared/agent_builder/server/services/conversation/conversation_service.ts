@@ -12,6 +12,7 @@ import type {
   ElasticsearchServiceStart,
 } from '@kbn/core/server';
 import type { CurrentUser } from '@kbn/agent-builder-common';
+import type { ConversationLifecycleSource } from '@kbn/agent-builder-server';
 import type { SpacesPluginStart } from '@kbn/spaces-plugin/server';
 import { getUserFromRequest } from '../utils';
 import { getCurrentSpaceId } from '../../utils/spaces';
@@ -21,11 +22,24 @@ import { createClient } from './client';
 import type { ConversationEventBus } from '../../workflows/triggers/conversation_event_bus';
 import { createScopedConversationEventEmitter } from '../../workflows/triggers/conversation_event_bus';
 import type { ConversationEventsServiceStart } from '../conversation_events';
+import {
+  createScopedConversationLifecycleNotifier,
+  type ConversationLifecycleServiceStart,
+} from '../conversation_lifecycle';
 
 export interface ConversationService {
-  getScopedClient(options: { request: KibanaRequest }): Promise<ConversationClient>;
+  /**
+   * Returns a client acting as the request's user. `source` is bound to the client and reported
+   * on the lifecycle events of its writes.
+   */
+  getScopedClient(options: {
+    request: KibanaRequest;
+    source: ConversationLifecycleSource;
+  }): Promise<ConversationClient>;
+  /** Same as {@link ConversationService.getScopedClient}, acting as the given user. */
   getScopedClientAsUser(options: {
     request: KibanaRequest;
+    source: ConversationLifecycleSource;
     user: CurrentUser;
   }): Promise<ConversationClient>;
 }
@@ -38,6 +52,7 @@ interface ConversationServiceDeps {
   agents: AgentsServiceStart;
   eventBus?: ConversationEventBus;
   conversationEvents: ConversationEventsServiceStart;
+  conversationLifecycle: ConversationLifecycleServiceStart;
 }
 
 export class ConversationServiceImpl implements ConversationService {
@@ -48,6 +63,7 @@ export class ConversationServiceImpl implements ConversationService {
   private readonly agents: AgentsServiceStart;
   private readonly eventBus?: ConversationEventBus;
   private readonly conversationEvents: ConversationEventsServiceStart;
+  private readonly conversationLifecycle: ConversationLifecycleServiceStart;
 
   constructor({
     logger,
@@ -57,6 +73,7 @@ export class ConversationServiceImpl implements ConversationService {
     agents,
     eventBus,
     conversationEvents,
+    conversationLifecycle,
   }: ConversationServiceDeps) {
     this.logger = logger;
     this.security = security;
@@ -65,33 +82,44 @@ export class ConversationServiceImpl implements ConversationService {
     this.agents = agents;
     this.eventBus = eventBus;
     this.conversationEvents = conversationEvents;
+    this.conversationLifecycle = conversationLifecycle;
   }
 
-  async getScopedClient({ request }: { request: KibanaRequest }): Promise<ConversationClient> {
+  async getScopedClient({
+    request,
+    source,
+  }: {
+    request: KibanaRequest;
+    source: ConversationLifecycleSource;
+  }): Promise<ConversationClient> {
     const user = await getUserFromRequest({
       request,
       security: this.security,
       esClient: this.getScopedEsClient(request).asCurrentUser,
     });
 
-    return this.createScopedClient({ request, user });
+    return this.createScopedClient({ request, source, user });
   }
 
   async getScopedClientAsUser({
     request,
+    source,
     user,
   }: {
     request: KibanaRequest;
+    source: ConversationLifecycleSource;
     user: CurrentUser;
   }): Promise<ConversationClient> {
-    return this.createScopedClient({ request, user });
+    return this.createScopedClient({ request, source, user });
   }
 
   private async createScopedClient({
     request,
+    source,
     user,
   }: {
     request: KibanaRequest;
+    source: ConversationLifecycleSource;
     user: CurrentUser;
   }): Promise<ConversationClient> {
     const esClient = this.getScopedEsClient(request).asInternalUser;
@@ -107,6 +135,10 @@ export class ConversationServiceImpl implements ConversationService {
       agentRegistry,
       conversationEvents: this.conversationEvents,
       eventEmitter: eventBus ? createScopedConversationEventEmitter(eventBus, request) : undefined,
+      lifecycleNotifier: createScopedConversationLifecycleNotifier(this.conversationLifecycle, {
+        source,
+        spaceId: space,
+      }),
     });
   }
 

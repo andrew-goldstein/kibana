@@ -21,7 +21,7 @@ import {
   SUPPORTED_IMAGE_MIME_TYPES,
   MAX_IMAGE_BYTES,
 } from '@kbn/agent-builder-common/attachments';
-import { createConversationPublicClient } from './services/conversation/conversation_public_client';
+import { createConversationsStart } from './services/conversation/create_conversations_start';
 import { createAttachmentPublicClient } from './services/attachments';
 import type { AgentBuilderConfig } from './config';
 import { registerTracingExporter } from './tracing/register_tracing';
@@ -190,12 +190,12 @@ export class AgentBuilderPlugin
     setupDeps.workflowsExtensions.registerStepDefinition(rerankStepDefinition);
 
     registerConversationWorkflowSteps(setupDeps.workflowsExtensions, {
-      getConversationClient: async (request) => {
+      getConversationClient: async (request, source) => {
         const services = this.serviceManager.internalStart;
         if (!services) {
           throw new Error('Conversation service not available — plugin has not started');
         }
-        return services.conversations.getScopedClient({ request });
+        return services.conversations.getScopedClient({ request, source });
       },
       getAgentRegistry: async (request) => {
         const services = this.serviceManager.internalStart;
@@ -314,6 +314,10 @@ export class AgentBuilderPlugin
       },
       conversationEvents: {
         register: serviceSetups.conversationEvents.register.bind(serviceSetups.conversationEvents),
+      },
+      conversationLifecycle: {
+        onCreated: serviceSetups.conversationLifecycle.onCreated,
+        onMetadataUpdated: serviceSetups.conversationLifecycle.onMetadataUpdated,
       },
       hooks: {
         register: serviceSetups.hooks.register.bind(serviceSetups.hooks),
@@ -444,13 +448,7 @@ export class AgentBuilderPlugin
       runtime: {
         createModelProvider: modelProviderFactory,
       },
-      conversations: {
-        getScopedClient: async ({ request }) => {
-          const client = await conversations.getScopedClient({ request });
-          const agentRegistry = await agents.getRegistry({ request });
-          return createConversationPublicClient({ client, agentRegistry });
-        },
-      },
+      conversations: createConversationsStart({ agents, conversations }),
       attachments: {
         getScopedClient: async ({ request }) =>
           createAttachmentPublicClient({

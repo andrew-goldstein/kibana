@@ -493,6 +493,7 @@ describe('handleAgentExecution', () => {
         .conversationService.getScopedClientAsUser
     ).toHaveBeenCalledWith({
       request: { headers: {} },
+      source: { type: 'execution' },
       user: { id: 'profile-alice', username: 'alice', isAdmin: false },
     });
   });

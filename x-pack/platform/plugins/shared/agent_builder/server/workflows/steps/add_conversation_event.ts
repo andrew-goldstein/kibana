@@ -12,6 +12,7 @@ import {
   type AddConversationEventInputSchema,
 } from '../../../common/workflows/steps/add_conversation_event';
 import type { ConversationStepDeps } from '../registry';
+import { getWorkflowConversationSource } from './get_workflow_conversation_source';
 
 export const addConversationEventStepDefinition = ({
   getConversationClient,
@@ -21,7 +22,7 @@ export const addConversationEventStepDefinition = ({
     handler: async (context: StepHandlerContext<AddConversationEventInputSchema>) => {
       try {
         const request = context.contextManager.getFakeRequest();
-        const client = await getConversationClient(request);
+        const client = await getConversationClient(request, getWorkflowConversationSource(context));
         const input = context.input;
 
         const [event] = await client.addCustomEvents({

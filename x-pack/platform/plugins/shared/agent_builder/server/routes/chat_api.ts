@@ -92,7 +92,10 @@ export function registerChatApiRoutes({
         const events = await firstValueFrom(chatEvents$.pipe(toArray()));
         const conversationId = findConversationEvent(events).data.conversation_id;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
 
         return response.ok<ChatConverseResponse>({ body: conversation });

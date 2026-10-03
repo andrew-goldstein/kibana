@@ -206,6 +206,7 @@ const handleConversationExecution = async ({
 
   const conversationClient = await deps.conversationService.getScopedClientAsUser({
     request,
+    source: { type: 'execution' },
     user: { ...owner, isAdmin: false },
   });
 

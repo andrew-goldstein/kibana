@@ -12,6 +12,7 @@ import {
   type GetConversationMetadataStepInput,
 } from '../../../common/workflows/steps/get_conversation_metadata';
 import type { ConversationStepDeps } from '../registry';
+import { getWorkflowConversationSource } from './get_workflow_conversation_source';
 
 export const getConversationMetadataStepDefinition = ({
   getConversationClient,
@@ -21,7 +22,7 @@ export const getConversationMetadataStepDefinition = ({
     handler: async (context: StepHandlerContext) => {
       try {
         const request = context.contextManager.getFakeRequest();
-        const client = await getConversationClient(request);
+        const client = await getConversationClient(request, getWorkflowConversationSource(context));
         const input = context.input as GetConversationMetadataStepInput;
 
         const conversation = await client.get(input.conversation_id);

@@ -59,7 +59,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId } = request.params;
       const { title } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const updatedConversation = await client.update(
         { id: conversationId, title },
         { access: 'rename', retryOnConflict: true }
@@ -95,7 +98,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId } = request.params;
       const { template_id: templateId } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const updatedConversation = await client.applyTemplate(conversationId, templateId);
 
       return response.ok<ApplyTemplateResponse>({
@@ -140,7 +146,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId } = request.params;
       const { metadata } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const { conversation: updatedConversation } = await client.patchMetadata(
         conversationId,
         metadata
@@ -176,7 +185,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId } = request.params;
       const { read } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const updatedConversation = await client.markRead(conversationId, read);
 
       return response.ok<MarkReadConversationResponse>({
@@ -225,7 +237,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId, round_id: roundId } = request.params;
       const { vote, chips, comment } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       await client.updateRoundFeedback(conversationId, roundId, {
         vote,
         chips: chips as FeedbackChipId[] | undefined,
@@ -257,7 +272,10 @@ export function registerInternalConversationRoutes({
       const { conversation_id: conversationId } = request.params;
       const { pinned } = request.body;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const updatedConversation = await client.setPinned(conversationId, pinned);
 
       return response.ok<MarkPinnedConversationResponse>({
@@ -311,7 +329,10 @@ export function registerInternalConversationRoutes({
       const { conversations: conversationsService } = getInternalServices();
       const { query, agent_id: agentId, page, per_page: perPage } = request.query;
 
-      const client = await conversationsService.getScopedClient({ request });
+      const client = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
       const { results, total } = await client.search({ query, agentId, page, perPage });
 
       return response.ok<SearchConversationsResponse>({
