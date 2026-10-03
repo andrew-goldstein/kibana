@@ -42,6 +42,10 @@ import { InvestigationStatusService } from './investigations/services/investigat
 import { registerInvestigationRoutes } from './investigations/routes/register_routes';
 import { createInvestigationsPrivilegesReader } from './investigations/services/check_investigations_privileges';
 import { createUserResolver } from './services/resolve_user';
+import {
+  createAgenticInvestigationsTelemetryReporter,
+  registerAgenticInvestigationsTelemetryEvents,
+} from './telemetry';
 import type { ResolveUser } from './services/resolve_user';
 import type {
   AgenticInvestigationsPluginSetup,
@@ -81,6 +85,7 @@ export class AgenticInvestigationsPlugin
     { features, workflowsExtensions, agentBuilder }: AgenticInvestigationsSetupDependencies
   ): AgenticInvestigationsPluginSetup {
     registerFeatures({ features, escalationsEnabled: this.escalationsEnabled });
+    registerAgenticInvestigationsTelemetryEvents(coreSetup.analytics);
 
     // Attachment types, steps and tools register during setup but only run once Kibana has
     // started, so the authorization service is resolved per call rather than
@@ -206,12 +211,18 @@ export class AgenticInvestigationsPlugin
       documents: hypothesesAttachment.createService({ esClient, logger: this.logger }),
     });
 
+    const telemetry = createAgenticInvestigationsTelemetryReporter({
+      analytics: coreStart.analytics,
+      logger: this.logger,
+    });
+
     this.investigationStatusService = new InvestigationStatusService({
       getConversationClient: (request) =>
         plugins.agentBuilder.conversations.getScopedClient({ request }),
       getProposals: () => plugins.proposals,
       getSpaceId: (request) => this.getSpaceId(request),
       logger: this.logger,
+      telemetry,
     });
 
     const startPrivileges = createImpactPrivilegesChecker({
@@ -234,6 +245,8 @@ export class AgenticInvestigationsPlugin
           plugins.agentBuilder.attachments.getScopedClient({ request }),
         conversationTemplates: plugins.agentBuilder.conversationTemplates,
         getInvestigationStatusService: () => this.requireInvestigationStatusService(),
+        getSpaceId: (request) => this.getSpaceId(request),
+        telemetry,
       });
     }
 

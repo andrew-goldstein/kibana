@@ -28,6 +28,7 @@ import type {
 } from '../../../../common';
 import { useCanManageInvestigations } from '../../../investigations/hooks/use_can_manage_investigations';
 import { useCanManageEscalations } from '../../../escalations/hooks/use_escalation_privileges';
+import { useReportFlyoutInteraction } from '../../../telemetry/use_report_flyout_interaction';
 import { statusSignal } from './status_signal';
 import { getCloseErrorCode, isKnownCloseError, isPartialCloseError } from './close_error_codes';
 import { CloseInvestigationModal } from '../close_confirmation/close_investigation_modal';
@@ -214,6 +215,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
   const queryClient = useQueryClient();
   const manageEscalations = useCanManageEscalations();
   const manageInvestigations = useCanManageInvestigations();
+  const reportFlyoutInteraction = useReportFlyoutInteraction();
 
   // Closing an escalation requires both manage-escalations and manage-investigations.
   const canToggle =
@@ -236,6 +238,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
       invalidateAll();
       statusSignal.bump();
       void refetchConversation?.();
+      reportFlyoutInteraction('status_edit', templateId);
 
       const isClosing = status !== 'closed';
       const successMsg = isClosing
@@ -252,7 +255,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
         services.notifications?.toasts.addWarning(i18n.PARTIAL_PROPOSAL_DISMISS_WARNING);
       }
     },
-    [invalidateAll, refetchConversation, services, status, templateId]
+    [invalidateAll, refetchConversation, reportFlyoutInteraction, services, status, templateId]
   );
 
   const handleError = useCallback(() => {

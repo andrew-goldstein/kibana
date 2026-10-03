@@ -33,9 +33,15 @@ import * as i18n from '../close_confirmation/translations';
  * spinner while the first fetch is in-flight. On a 409 (proposals changed), the modal stays
  * open and shows a callout prompting the user to review and confirm again.
  */
-export const ConnectedCloseInvestigationModal: React.FC<CloseInvestigationModalRenderProps> = ({
+export type ConnectedCloseInvestigationModalProps = CloseInvestigationModalRenderProps & {
+  /** Called once the close has landed, before `onClose`. */
+  onClosed?: () => void;
+};
+
+export const ConnectedCloseInvestigationModal: React.FC<ConnectedCloseInvestigationModalProps> = ({
   investigation,
   onClose,
+  onClosed,
 }) => {
   const { services } = useKibana<CoreStart>();
   const queryClient = useQueryClient();
@@ -73,6 +79,7 @@ export const ConnectedCloseInvestigationModal: React.FC<CloseInvestigationModalR
           onSuccess: (result) => {
             invalidateAll();
             statusSignal.bump();
+            onClosed?.();
             services.notifications?.toasts.addSuccess(i18n.CLOSE_INVESTIGATION_SUCCESS);
             if (result.failed_proposal_ids.length > 0) {
               services.notifications?.toasts.addWarning(i18n.PARTIAL_PROPOSAL_DISMISS_WARNING);
@@ -102,7 +109,7 @@ export const ConnectedCloseInvestigationModal: React.FC<CloseInvestigationModalR
         }
       );
     },
-    [conversationId, invalidateAll, onClose, preview, services, setStatus]
+    [conversationId, invalidateAll, onClose, onClosed, preview, services, setStatus]
   );
 
   return (

@@ -18,6 +18,7 @@ import { ProposedActionsBoundary } from '../../shared/proposed_actions/proposed_
 import { getSharedInvestigationsQueryClient } from '../../../shared_query_client';
 import { copyLink } from '../../shared/copy_link';
 import type { TemplateDefinition } from '../../registry/types';
+import { reportFlyoutInteraction } from '../../../telemetry/flyout_interaction_event';
 
 const INVESTIGATION_TEMPLATE_NAME = i18n.translate(
   'xpack.agenticInvestigations.conversationTemplate.investigation.name',
@@ -105,7 +106,15 @@ export const investigationTemplate: TemplateDefinition = {
           React.createElement(
             PrivilegeGate,
             { privilege: 'manageInvestigations' },
-            React.createElement(ConnectedCloseInvestigationModal, props)
+            React.createElement(ConnectedCloseInvestigationModal, {
+              ...props,
+              // Only this flyout path reports: the queue page renders the same modal outside it.
+              onClosed: () =>
+                reportFlyoutInteraction(core.analytics, {
+                  interaction: 'status_edit',
+                  template_id: templateId,
+                }),
+            })
           );
         return GatedCloseInvestigationModal;
       });
@@ -128,6 +137,11 @@ export const investigationTemplate: TemplateDefinition = {
       renderCloseInvestigationModal,
       // The flyout's Copy link button confirms success itself; only a failure needs a toast.
       onCopyLink: (url) => copyLink(core.notifications.toasts, url),
+      onOpenChat: () =>
+        reportFlyoutInteraction(core.analytics, {
+          interaction: 'open_chat',
+          template_id: templateId,
+        }),
       // Without escalations the footer has no "Open escalation" button.
       renderEscalationModal: escalationsEnabled
         ? (props) =>

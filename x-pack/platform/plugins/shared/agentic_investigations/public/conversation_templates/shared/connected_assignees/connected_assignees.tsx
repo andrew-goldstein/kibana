@@ -13,6 +13,7 @@ import { CONNECTED_ASSIGNEES_LABELS } from './translations';
 import { useAssigneePickers } from './use_assignee_pickers';
 import { useCanManageInvestigations } from '../../../investigations/hooks/use_can_manage_investigations';
 import { useCanManageEscalations } from '../../../escalations/hooks/use_escalation_privileges';
+import { useReportFlyoutInteraction } from '../../../telemetry/use_report_flyout_interaction';
 
 /**
  * Connected assignee picker for the investigation and escalation flyout headers.
@@ -40,13 +41,17 @@ const ConnectedAssigneesInner = ({
 
   const assignInvestigation = useAssignInvestigation();
   const assignEscalation = useAssignEscalation();
+  const reportFlyoutInteraction = useReportFlyoutInteraction();
 
   const assign = useCallback(
-    (targetId: string, assignees: string[]) =>
-      templateId === 'escalation'
+    async (targetId: string, assignees: string[]) => {
+      const result = await (templateId === 'escalation'
         ? assignEscalation.mutateAsync({ escalationId: targetId, assignees })
-        : assignInvestigation.mutateAsync({ investigationId: targetId, assignees }),
-    [templateId, assignEscalation, assignInvestigation]
+        : assignInvestigation.mutateAsync({ investigationId: targetId, assignees }));
+      reportFlyoutInteraction('assignee_edit', templateId);
+      return result;
+    },
+    [templateId, assignEscalation, assignInvestigation, reportFlyoutInteraction]
   );
 
   // useAssigneePickers holds refresh in a ref, so an unstable reference here is fine.

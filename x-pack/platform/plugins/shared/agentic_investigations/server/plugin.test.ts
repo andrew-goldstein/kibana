@@ -30,6 +30,7 @@ import {
 } from './investigations/constants';
 import { registerEscalationRoutes } from './escalations/routes/register_routes';
 import { registerInvestigationRoutes } from './investigations/routes/register_routes';
+import { AGENTIC_INVESTIGATIONS_TELEMETRY_EVENTS } from './telemetry';
 import { AgenticInvestigationsPlugin } from './plugin';
 
 jest.mock('./impact/routes/register_routes', () => ({
@@ -246,6 +247,17 @@ describe('AgenticInvestigationsPlugin', () => {
       expect(
         JSON.stringify(registeredFeature(features, AGENTIC_INVESTIGATIONS_PLUGIN_ID))
       ).not.toMatch(/proposals/i);
+    });
+
+    it('registers every agentic_investigations telemetry event type', () => {
+      const { coreSetup } = setupPlugin();
+
+      const registered = coreSetup.analytics.registerEventType.mock.calls.map(
+        ([opts]) => opts.eventType
+      );
+      expect(registered.sort()).toEqual(
+        Object.values(AGENTIC_INVESTIGATIONS_TELEMETRY_EVENTS).sort()
+      );
     });
 
     it('registers the HTTP routes for every entity', () => {
