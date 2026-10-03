@@ -28,6 +28,10 @@ import { AssignmentsService } from './assignments/assignments_service';
 import { InvestigationStatusService } from './investigations/services/investigation_status_service';
 import { registerInvestigationRoutes } from './investigations/routes/register_routes';
 import { createUserResolver } from './services/resolve_user';
+import {
+  createAgenticInvestigationsTelemetryReporter,
+  registerAgenticInvestigationsTelemetryEvents,
+} from './telemetry';
 import type { ResolveUser } from './services/resolve_user';
 import type {
   AgenticInvestigationsPluginSetup,
@@ -63,6 +67,7 @@ export class AgenticInvestigationsPlugin
     { features, workflowsExtensions, agentBuilder }: AgenticInvestigationsSetupDependencies
   ): AgenticInvestigationsPluginSetup {
     registerFeatures({ features });
+    registerAgenticInvestigationsTelemetryEvents(coreSetup.analytics);
 
     registerImpactAttachment(agentBuilder, {
       getImpactService: () => this.requireImpactService(),
@@ -136,12 +141,18 @@ export class AgenticInvestigationsPlugin
       }),
     });
 
+    const telemetry = createAgenticInvestigationsTelemetryReporter({
+      analytics: coreStart.analytics,
+      logger: this.logger,
+    });
+
     this.investigationStatusService = new InvestigationStatusService({
       getConversationClient: (request) =>
         plugins.agentBuilder.conversations.getScopedClient({ request }),
       getProposals: () => plugins.proposals,
       getSpaceId: (request) => this.getSpaceId(request),
       logger: this.logger,
+      telemetry,
     });
 
     this.escalationsService = new EscalationsService({
@@ -150,6 +161,8 @@ export class AgenticInvestigationsPlugin
         plugins.agentBuilder.conversations.getScopedClient({ request }),
       conversationTemplates: plugins.agentBuilder.conversationTemplates,
       getInvestigationStatusService: () => this.requireInvestigationStatusService(),
+      getSpaceId: (request) => this.getSpaceId(request),
+      telemetry,
     });
 
     this.assignmentsService = new AssignmentsService({

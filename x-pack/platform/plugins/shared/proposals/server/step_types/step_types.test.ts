@@ -7,7 +7,10 @@
 
 import type { StepHandlerContext } from '@kbn/workflows-extensions/server';
 import { z } from '@kbn/zod/v4';
-import { createProposalStepInputSchema } from '@kbn/proposals-common';
+import {
+  createProposalStepInputSchema,
+  settleIncompleteProposalStepInputSchema,
+} from '@kbn/proposals-common';
 import { updateProposalStepInputSchema } from '@kbn/proposals-common';
 import type { ProposalsService } from '../services/proposals_service';
 import type { ProposalPrivilegesChecker } from '../services/check_proposal_privileges';
@@ -39,7 +42,10 @@ const allowAll = (): jest.Mocked<ProposalPrivilegesChecker> => ({
   canManage: jest.fn().mockResolvedValue(true),
 });
 
-const createContext = (input: Record<string, unknown>): StepHandlerContext<never, never> =>
+const createContext = (
+  input: Record<string, unknown>,
+  workflowContext: Record<string, unknown> = {}
+): StepHandlerContext<never, never> =>
   ({
     input,
     rawInput: input,
@@ -48,6 +54,7 @@ const createContext = (input: Record<string, unknown>): StepHandlerContext<never
       getContext: jest.fn().mockReturnValue({
         execution: { id: EXECUTION_ID, executedBy: 'worker-user' },
         workflow: { spaceId: SPACE_ID },
+        ...workflowContext,
       }),
       getScopedEsClient: jest.fn(),
       getFakeRequest: jest.fn().mockReturnValue(FAKE_REQUEST),
@@ -84,6 +91,26 @@ describe('proposals.createProposal input schema', () => {
     });
 
     expect(parsed).toEqual({ conversationId: 'conv-1', comment: 'Tune the noisy rule' });
+  });
+
+  it.each(['', null])('should treat %p as absent for autoApprove', (blank) => {
+    const parsed = createProposalStepInputSchema.parse({
+      conversationId: 'conv-1',
+      comment: 'Tune the noisy rule',
+      autoApprove: blank,
+    });
+
+    expect(parsed).toEqual({ conversationId: 'conv-1', comment: 'Tune the noisy rule' });
+  });
+
+  it('should pass autoApprove through as a boolean', () => {
+    const parsed = createProposalStepInputSchema.parse({
+      conversationId: 'conv-1',
+      comment: 'Tune the noisy rule',
+      autoApprove: true,
+    });
+
+    expect(parsed.autoApprove).toBe(true);
   });
 
   it('should still reject a value the optional input does not allow', () => {
@@ -145,6 +172,7 @@ describe('proposals.updateProposal input schema', () => {
       dismissReason: blank,
       rationale: blank,
       executionError: blank,
+      decisionSource: blank,
     });
 
     // Every field is optional, so a call that only annotates is valid.
@@ -182,6 +210,51 @@ describe('proposals.updateProposal input schema', () => {
         .success
     ).toBe(false);
   });
+
+  it.each(['human', 'autonomy'])('should accept %s as a decision source', (decisionSource) => {
+    expect(
+      updateProposalStepInputSchema.parse({ proposalId: 'proposal-1', decisionSource })
+        .decisionSource
+    ).toBe(decisionSource);
+  });
+
+  it('should refuse a decision source outside the vocabulary', () => {
+    expect(
+      updateProposalStepInputSchema.safeParse({ proposalId: 'proposal-1', decisionSource: 'agent' })
+        .success
+    ).toBe(false);
+  });
+});
+
+describe('proposals.settleIncompleteProposal input schema', () => {
+  it.each(['', null])('should treat %p as absent for settledBy', (blank) => {
+    // A gate parked under an earlier definition never passes it.
+    const parsed = settleIncompleteProposalStepInputSchema.parse({
+      proposalId: 'proposal-1',
+      settledBy: blank,
+    });
+
+    expect(parsed).toEqual({ proposalId: 'proposal-1' });
+  });
+
+  it.each(['deadline', 'iteration_limit', 'workflow_failure'])(
+    'should accept %s as the settle path',
+    (settledBy) => {
+      expect(
+        settleIncompleteProposalStepInputSchema.parse({ proposalId: 'proposal-1', settledBy })
+          .settledBy
+      ).toBe(settledBy);
+    }
+  );
+
+  it('should refuse a settle path outside the vocabulary', () => {
+    expect(
+      settleIncompleteProposalStepInputSchema.safeParse({
+        proposalId: 'proposal-1',
+        settledBy: 'human',
+      }).success
+    ).toBe(false);
+  });
 });
 
 describe('proposals.createProposal step', () => {
@@ -189,14 +262,31 @@ describe('proposals.createProposal step', () => {
     jest.clearAllMocks();
   });
 
-  const createDefinition = (create: jest.Mock, privileges = allowAll()) => ({
+  const createDefinition = (
+    create: jest.Mock,
+    privileges = allowAll(),
+    getWorkflowExecution = jest.fn().mockResolvedValue(null)
+  ) => ({
     definition: getCreateProposalStepDefinition({
       getProposalsService: () => ({ create } as unknown as ProposalsService),
+      getWorkflowsApi: () => ({ getWorkflowExecution }),
       resolveUser,
       privileges,
     }),
+    getWorkflowExecution,
     privileges,
   });
+
+  /** The persisted calling execution the step reads, a top-level managed Worker. */
+  const callerExecution = {
+    context: {},
+    id: 'exec-caller',
+    managed: true,
+    managedBy: 'alertzero',
+    spaceId: SPACE_ID,
+  };
+
+  const CALLER_CONTEXT = { parent: { executionId: 'exec-caller', workflowId: 'wf-caller' } };
 
   it('should take the workflow execution id from the step context rather than the caller', async () => {
     const create = jest.fn().mockResolvedValue({
@@ -220,7 +310,12 @@ describe('proposals.createProposal step', () => {
 
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ workflowExecutionId: EXECUTION_ID }),
-      { spaceId: SPACE_ID, user: resolvedUser, request: FAKE_REQUEST }
+      {
+        provenance: { autoApproveRequested: undefined },
+        spaceId: SPACE_ID,
+        user: resolvedUser,
+        request: FAKE_REQUEST,
+      }
     );
     // Identity comes from the execution's credentials, not from `executedBy`.
     expect(resolveUser).toHaveBeenCalledWith(FAKE_REQUEST);
@@ -368,6 +463,108 @@ describe('proposals.createProposal step', () => {
     );
   });
 
+  it('should record the calling workflow as storage-only provenance', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue(callerExecution)
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', comment: 'Tune', autoApprove: true },
+        CALLER_CONTEXT
+      )
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        provenance: {
+          autoApproveRequested: true,
+          callerManagedBy: 'alertzero',
+          callerRunId: 'exec-caller',
+          callerWorkflowExecutionId: 'exec-caller',
+          callerWorkflowId: 'wf-caller',
+        },
+      })
+    );
+  });
+
+  it('should read the caller in the gate space under the execution credentials', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition, getWorkflowExecution } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue(callerExecution)
+    );
+
+    await definition.handler(
+      createContext({ conversationId: 'conv-1', comment: 'Tune' }, CALLER_CONTEXT)
+    );
+
+    expect(getWorkflowExecution).toHaveBeenCalledWith('exec-caller', SPACE_ID, {
+      omitStepExecutions: true,
+      request: FAKE_REQUEST,
+    });
+  });
+
+  it('should still create the proposal when the caller cannot be read', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockRejectedValue(new Error('index unavailable'))
+    );
+
+    await definition.handler(
+      createContext({ conversationId: 'conv-1', comment: 'Tune' }, CALLER_CONTEXT)
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        provenance: {
+          autoApproveRequested: undefined,
+          callerWorkflowExecutionId: 'exec-caller',
+          callerWorkflowId: 'wf-caller',
+        },
+      })
+    );
+  });
+
+  it('should still create the proposal when the workflows API is unavailable', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const definition = getCreateProposalStepDefinition({
+      getProposalsService: () => ({ create } as unknown as ProposalsService),
+      getWorkflowsApi: () => {
+        throw new Error('not set up');
+      },
+      resolveUser,
+      privileges: allowAll(),
+    });
+
+    await definition.handler(
+      createContext({ conversationId: 'conv-1', comment: 'Tune' }, CALLER_CONTEXT)
+    );
+
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('should not look up the caller before the manage check passes', async () => {
+    const privileges = allowAll();
+    privileges.assertCanManage.mockRejectedValue(new ProposalForbiddenError('nope'));
+    const { definition, getWorkflowExecution } = createDefinition(jest.fn(), privileges);
+
+    await expect(
+      definition.handler(
+        createContext({ conversationId: 'conv-1', comment: 'Tune' }, CALLER_CONTEXT)
+      )
+    ).rejects.toMatchObject({ type: 'PermissionError' });
+    expect(getWorkflowExecution).not.toHaveBeenCalled();
+  });
+
   it('should assert manage before writing anything', async () => {
     const create = jest.fn();
     const privileges = allowAll();
@@ -493,6 +690,24 @@ describe('proposals.updateProposal step', () => {
     expect(result.output?.decision).toBe('dismissed');
   });
 
+  it('should pass the decision source through with the decision', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'no_action' });
+
+    await updateDefinition(update).handler(
+      createContext({
+        proposalId: 'proposal-1',
+        decision: 'dismissed',
+        decisionSource: 'human',
+        status: 'no_action',
+      })
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'dismissed', decisionSource: 'human' }),
+      SPACE_ID
+    );
+  });
+
   it('should pass the failure detail through', async () => {
     const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'failed' });
 
@@ -529,10 +744,18 @@ describe('proposals.checkDecidePrivileges step', () => {
     jest.clearAllMocks();
   });
 
+  const reportResumeRejected = jest.fn().mockResolvedValue(undefined);
+
+  const checkDefinition = (
+    privileges: ProposalPrivilegesChecker,
+    getProposalsService: () => ProposalsService = () =>
+      ({ reportResumeRejected } as unknown as ProposalsService)
+  ) => getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges });
+
   it('should report a refusal without failing the step', async () => {
     const privileges = allowAll();
     privileges.canManage.mockResolvedValue(false);
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // Failing here would spend the gate and strand the proposal, leaving no
     // way for a privileged approver to retry.
@@ -543,7 +766,7 @@ describe('proposals.checkDecidePrivileges step', () => {
   });
 
   it('should report an allowance', async () => {
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges: allowAll() });
+    const definition = checkDefinition(allowAll());
 
     const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
 
@@ -553,18 +776,19 @@ describe('proposals.checkDecidePrivileges step', () => {
   it('should fail the step when the privilege check itself errors', async () => {
     const privileges = allowAll();
     privileges.canManage.mockRejectedValue(new Error('privilege service unavailable'));
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // A service fault must stay distinguishable from a refusal, or the loop
     // would re-park forever on an outage.
     await expect(
       definition.handler(createContext({ proposalId: 'proposal-1' }))
     ).rejects.toMatchObject({ type: 'ApiError' });
+    expect(reportResumeRejected).not.toHaveBeenCalled();
   });
 
   it('should refuse an external resume without consulting the privilege service', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // An external resume carries no request, so the execution wakes under the
     // workflow runner's key — which always holds `manage_proposals`, having
@@ -580,7 +804,7 @@ describe('proposals.checkDecidePrivileges step', () => {
 
   it('should still check a named responder normally', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     const result = await definition.handler(
       createContext({ proposalId: 'proposal-1', respondedBy: 'analyst' })
@@ -588,6 +812,63 @@ describe('proposals.checkDecidePrivileges step', () => {
 
     expect(result.output).toEqual({ canDecide: true });
     expect(privileges.canManage).toHaveBeenCalledWith(FAKE_REQUEST);
+  });
+
+  describe('telemetry', () => {
+    it('should report an unprivileged resumer as a rejected resume', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+
+      await checkDefinition(privileges).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'unprivileged',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report an external resume as a rejected resume', async () => {
+      await checkDefinition(allowAll()).handler(
+        createContext({ proposalId: 'proposal-1', respondedBy: 'external_resume:step-exec-1' })
+      );
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'external_principal',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report nothing for an allowance', async () => {
+      await checkDefinition(allowAll()).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).not.toHaveBeenCalled();
+    });
+
+    it('should still refuse when the service cannot report', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      const definition = checkDefinition(privileges, () => {
+        throw new Error('proposals service not started');
+      });
+
+      const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
+
+    it('should still refuse when reporting rejects', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      reportResumeRejected.mockRejectedValueOnce(new Error('unexpected'));
+
+      const result = await checkDefinition(privileges).handler(
+        createContext({ proposalId: 'proposal-1' })
+      );
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
   });
 });
 
@@ -801,6 +1082,23 @@ describe('proposals.settleIncompleteProposal step', () => {
 
     expect(service.update).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed' }),
+      SPACE_ID
+    );
+  });
+
+  it('should pass the settle path through', async () => {
+    const service = {
+      getLatestRevision: jest.fn().mockResolvedValue({ proposalId: 'proposal-1', revision: 1 }),
+      get: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'pending' }),
+      update: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'expired' }),
+    };
+
+    await settleDefinition(service).handler(
+      createContext({ proposalId: 'proposal-1', settledBy: 'iteration_limit', status: 'expired' })
+    );
+
+    expect(service.update).toHaveBeenCalledWith(
+      expect.objectContaining({ settledBy: 'iteration_limit' }),
       SPACE_ID
     );
   });

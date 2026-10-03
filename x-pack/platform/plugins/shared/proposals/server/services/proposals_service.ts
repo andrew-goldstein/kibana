@@ -32,7 +32,9 @@ import type {
   ProposalChartsSummaryQuery,
   ProposalChartsSummaryResponse,
   ProposalDecision,
+  ProposalDecisionSource,
   ProposalFilters,
+  ProposalSettledBy,
   ProposalStatus,
   ProposalUser,
   ProposalWithMetadata,
@@ -47,7 +49,23 @@ import {
 } from './esql';
 import type { ChartsWindow } from './esql';
 import type { ProposalDocument, ProposalsStorageClient } from '../storage/proposals_storage';
+import type { ProposalCreateProvenance } from '../storage/proposal_provenance';
 import { toSortRanks } from '../storage/sort_ranks';
+import type {
+  ProposalResumeRejectedReason,
+  ProposalsTelemetryEvent,
+  ProposalsTelemetryReporter,
+} from '../telemetry';
+import {
+  buildCreatedPayload,
+  buildResumeRejectedPayload,
+  buildRetriedPayload,
+  buildRevisedPayload,
+  buildUpdateEvents,
+  PROPOSALS_TELEMETRY_EVENTS,
+  toResumeRejectedReason,
+  toTelemetryActionId,
+} from '../telemetry';
 import {
   ProposalConflictError,
   ProposalExpiredError,
@@ -61,6 +79,20 @@ type WorkflowsManagementApi = WorkflowsServerPluginSetup['management'];
 interface ActionWorkflowDefinition {
   consts?: { actionMetadata?: unknown };
   triggers?: Array<{ type?: string; inputs?: { properties?: Record<string, unknown> } }>;
+}
+
+/** The parts of an action workflow this service reads: its definition, and whether it is managed. */
+interface ActionWorkflow {
+  definition?: ActionWorkflowDefinition | null;
+  managed?: boolean;
+  originManagedWorkflowId?: string | null;
+}
+
+/** What the creation path learns from its one read of the action workflow. */
+interface ResolvedAction {
+  /** The storage-only `actionId`: its managed definition id, or `custom`. */
+  actionId: string;
+  metadata: ActionMetadata | undefined;
 }
 
 /**
@@ -88,6 +120,10 @@ export interface UpdateProposalParams {
   dismissReason?: DismissReason;
   rationale?: string;
   executionError?: string;
+  /** Who made the decision. Stored only by the write that records the decision. */
+  decisionSource?: ProposalDecisionSource;
+  /** The settle path. Stored only by the write that moves the proposal to a terminal status. */
+  settledBy?: ProposalSettledBy;
 }
 
 export interface ProposalsServiceDeps {
@@ -95,6 +131,8 @@ export interface ProposalsServiceDeps {
   logger: Logger;
   getWorkflowsApi: () => WorkflowsManagementApi;
   getAttachmentsClient: (request: KibanaRequest) => Promise<AttachmentPublicClient>;
+  /** Reports the proposals EBT events. Optional, so a service without it simply reports nothing. */
+  telemetry?: ProposalsTelemetryReporter;
 }
 
 /**
@@ -118,7 +156,18 @@ export class ProposalsService {
    */
   async create(
     params: CreateProposalRequest,
-    { spaceId, user, request }: { spaceId: string; user?: ProposalUser; request: KibanaRequest }
+    {
+      provenance,
+      spaceId,
+      user,
+      request,
+    }: {
+      /** Storage-only, derived by the caller rather than taken from input it was given. */
+      provenance?: ProposalCreateProvenance;
+      spaceId: string;
+      user?: ProposalUser;
+      request: KibanaRequest;
+    }
   ): Promise<ProposalWithMetadata> {
     const id = uuidv4();
     // Workflow callers reach us through Liquid templates, which render an
@@ -127,13 +176,15 @@ export class ProposalsService {
     // proposal look action-bearing when it is not.
     const actionWorkflowId = blankToUndefined(params.actionWorkflowId);
 
-    // A single fetch of the action definition serves three purposes: the queue
+    // A single fetch of the action definition serves four purposes: the queue
     // grouping, the impact (intrinsic to the action rather than to the situation
-    // that produced it), and rejecting an `actionInput` the action could not
-    // accept — before an analyst is asked to approve something that cannot run.
-    const metadata = actionWorkflowId
+    // that produced it), rejecting an `actionInput` the action could not
+    // accept — before an analyst is asked to approve something that cannot run —
+    // and the action id telemetry may name the action by.
+    const action = actionWorkflowId
       ? await this.resolveAndValidateAction(actionWorkflowId, params.actionInput, spaceId, request)
       : undefined;
+    const metadata = action?.metadata;
 
     // Caller first in both: it knows the situation the proposal came out of,
     // which the action's own metadata cannot. A category can end up absent —
@@ -172,9 +223,21 @@ export class ProposalsService {
       // `clone()` retries deliberately do not touch it: a retry is not a revision.
       rootProposalId: id,
       revision: 1,
+      // The mirror image: a revision is not a retry, so only `clone()` moves it.
+      attempt: 1,
+      // Absent when the action could not be read: unknown, rather than a guess.
+      ...(action ? { actionId: action.actionId } : {}),
+      ...provenance,
     };
 
     await this.deps.storage.index({ id, document, op_type: 'create' });
+
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalCreated,
+        payload: buildCreatedPayload({ id, ...document }),
+      },
+    ]);
 
     // The action's name, since a proposal has no title of its own yet; the
     // workflow id is the last resort so an unnamed action still reads as
@@ -229,7 +292,7 @@ export class ProposalsService {
 
   async get(id: string, spaceId: string, request: KibanaRequest): Promise<ProposalWithMetadata> {
     const { proposal } = await this.load(id, spaceId);
-    return this.withMetadata(stripRanks(proposal), spaceId, request);
+    return this.withMetadata(stripStorageFields(proposal), spaceId, request);
   }
 
   /**
@@ -407,28 +470,103 @@ export class ProposalsService {
   ): Promise<Proposal> {
     const { proposal, seqNo, primaryTerm } = await this.load(id, spaceId);
 
-    // Every refusal comes first, so a rejected release leaves the record
-    // exactly as it found it. Ordering matters more than it looks: an
-    // annotation written ahead of a conflict would leave a dismiss reason on a
-    // proposal that was never dismissed, and a later approval would land on top
-    // of it.
-    this.assertDecidable(proposal);
+    try {
+      // Every refusal comes first, so a rejected release leaves the record
+      // exactly as it found it. Ordering matters more than it looks: an
+      // annotation written ahead of a conflict would leave a dismiss reason on
+      // a proposal that was never dismissed, and a later approval would land on
+      // top of it.
+      this.assertDecidable(proposal);
 
-    if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
-      throw new ProposalConflictError(
-        `Proposal [${id}] was modified since it was rendered; re-read it before approving`
+      if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
+        throw new ProposalConflictError(
+          `Proposal [${id}] was modified since it was rendered; re-read it before approving`,
+          { reason: 'input_changed' }
+        );
+      }
+
+      const annotated = await this.annotate(
+        proposal,
+        { dismissReason, rationale },
+        { seqNo, primaryTerm }
+      );
+
+      await this.resumeGate(annotated, { spaceId, request, approved });
+
+      return stripStorageFields(annotated);
+    } catch (error) {
+      // Only a typed refusal is reported: a lost annotation race or a failing
+      // resume API is not a decision attempt that was turned away.
+      const reason = toResumeRejectedReason(error);
+      if (reason !== undefined) {
+        this.reportResumeRejectedFor(proposal, reason);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Reports a decision attempt the gate workflow refused behind the gate, where
+   * the service never sees the refusal itself. Never throws, including when the
+   * proposal cannot be read.
+   */
+  async reportResumeRejected({
+    id,
+    reason,
+    spaceId,
+  }: {
+    id: string;
+    reason: ProposalResumeRejectedReason;
+    spaceId: string;
+  }): Promise<void> {
+    if (!this.deps.telemetry) {
+      return;
+    }
+    try {
+      const { proposal } = await this.load(id, spaceId);
+      this.reportResumeRejectedFor(proposal, reason);
+    } catch (error) {
+      this.deps.logger.debug(
+        () =>
+          `Did not report a rejected resume of proposal [${id}]: ${
+            error instanceof Error ? error.message : String(error)
+          }`
       );
     }
+  }
 
-    const annotated = await this.annotate(
-      proposal,
-      { dismissReason, rationale },
-      { seqNo, primaryTerm }
-    );
+  private reportResumeRejectedFor(
+    proposal: StoredProposalRecord,
+    reason: ProposalResumeRejectedReason
+  ): void {
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalResumeRejected,
+        payload: buildResumeRejectedPayload(proposal, reason),
+      },
+    ]);
+  }
 
-    await this.resumeGate(annotated, { spaceId, request, approved });
-
-    return stripRanks(annotated);
+  /**
+   * Reports the events a write produced, after it resolved. Never throws:
+   * building a payload runs inside the guard too, so telemetry cannot fail the
+   * write it follows.
+   */
+  private report(buildEvents: () => ProposalsTelemetryEvent[]): void {
+    const { logger, telemetry } = this.deps;
+    if (!telemetry) {
+      return;
+    }
+    try {
+      buildEvents().forEach(({ eventType, payload }) => telemetry(eventType, payload));
+    } catch (error) {
+      logger.debug(
+        () =>
+          `Failed to build proposals telemetry: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+      );
+    }
   }
 
   /**
@@ -527,6 +665,11 @@ export class ProposalsService {
       proposal.decidedAt ??
       (params.decision !== undefined || isTerminal(status) ? new Date().toISOString() : undefined);
 
+    // Only the write that actually settles the proposal says which path did.
+    // The failure handler re-writes `failed` onto a record whose action already
+    // failed, and that must not reattribute an outcome the loop recorded.
+    const settles = isTerminal(status) && !isTerminal(proposal.status);
+
     const updated: StoredProposalRecord = {
       ...proposal,
       status,
@@ -535,6 +678,10 @@ export class ProposalsService {
       ...(params.decision !== undefined
         ? { decidedBy: params.decidedBy ?? proposal.decidedBy }
         : {}),
+      ...(params.decision !== undefined && params.decisionSource !== undefined
+        ? { decisionSource: params.decisionSource }
+        : {}),
+      ...(settles && params.settledBy !== undefined ? { settledBy: params.settledBy } : {}),
       ...(params.dismissReason !== undefined ? { dismissReason: params.dismissReason } : {}),
       ...(params.rationale !== undefined ? { rationale: params.rationale } : {}),
       ...(params.executionError !== undefined ? { executionError: params.executionError } : {}),
@@ -543,7 +690,11 @@ export class ProposalsService {
 
     await this.writeDocument(id, document, { seqNo, primaryTerm });
 
-    return stripRanks(updated);
+    // Diffed against the loaded record rather than the params, because a
+    // same-status rewrite is allowed and must report nothing.
+    this.report(() => buildUpdateEvents({ after: updated, before: proposal, now: Date.now() }));
+
+    return stripStorageFields(updated);
   }
 
   /**
@@ -558,6 +709,10 @@ export class ProposalsService {
    *
    * `workflowExecutionId` is the original's, because the gate execution is
    * still running and parked — approving the clone resumes that same execution.
+   * The caller provenance is inherited for the same reason: the retry continues
+   * the same run. So are `rootProposalId`, keeping the retry in its chain, and
+   * `actionId`, because the retry re-offers the same action. The outcome
+   * provenance is reset with the rest of the outcome.
    */
   async clone({ id, executionError }: CloneProposalParams, spaceId: string): Promise<string> {
     const { proposal, seqNo, primaryTerm } = await this.load(id, spaceId);
@@ -594,6 +749,10 @@ export class ProposalsService {
       dismissReason: undefined,
       rationale: undefined,
       executionError: undefined,
+      decisionSource: undefined,
+      settledBy: undefined,
+      // `?? 1` covers records created before this field existed.
+      attempt: (original.attempt ?? 1) + 1,
     };
 
     // The clone is created before the original is marked, deliberately. The
@@ -613,6 +772,13 @@ export class ProposalsService {
 
     await this.writeDocument(id, superseded, { seqNo, primaryTerm });
 
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRetried,
+        payload: buildRetriedPayload({ id: cloneId, ...document }),
+      },
+    ]);
+
     return cloneId;
   }
 
@@ -623,6 +789,8 @@ export class ProposalsService {
    * `createdAt`, `expiresAt` and `workflowExecutionId` are inherited rather than
    * restarted — the deadline and the gate execution belong to the chain, not to
    * any single revision — mirroring `clone()`'s inheritance of the same fields.
+   * `actionId` is inherited too, since a revision keeps the same action; the
+   * input check below re-reads the action but does not re-resolve it.
    */
   async revise(
     { id, comment, actionInput, impact, confidence }: ReviseProposalParams,
@@ -698,6 +866,8 @@ export class ProposalsService {
       dismissReason: undefined,
       rationale: undefined,
       executionError: undefined,
+      decisionSource: undefined,
+      settledBy: undefined,
       ...(comment !== undefined ? { comment } : {}),
       ...(mergedActionInput !== undefined ? { actionInput: mergedActionInput } : {}),
       impact: nextImpact,
@@ -737,6 +907,18 @@ export class ProposalsService {
       }
       throw error;
     }
+
+    // Only once both writes landed. The predecessor's move to `superseded` is
+    // part of the revision, not a status change of its own.
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRevised,
+        payload: buildRevisedPayload({
+          original: proposal,
+          revision: { id: revisionId, ...document },
+        }),
+      },
+    ]);
 
     return { proposalId: revisionId, revision };
   }
@@ -878,28 +1060,38 @@ export class ProposalsService {
     spaceId: string,
     request: KibanaRequest
   ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    return definition && this.readActionMetadata(actionWorkflowId, definition);
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    const definition = workflow?.definition;
+    return definition ? this.readActionMetadata(actionWorkflowId, definition) : undefined;
   }
 
   /**
-   * The creation path: one fetch, then both the metadata and the input check.
-   * An invalid input throws, because a proposal whose action can never run has
-   * no business sitting in a human's queue.
+   * The creation path: one fetch, then the metadata, the input check and the
+   * action id. An invalid input throws, because a proposal whose action can
+   * never run has no business sitting in a human's queue. `undefined` when the
+   * action could not be read at all.
    */
   private async resolveAndValidateAction(
     actionWorkflowId: string,
     actionInput: Record<string, unknown> | undefined,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    if (!definition) {
+  ): Promise<ResolvedAction | undefined> {
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    if (!workflow) {
       return undefined;
     }
 
+    // Resolved even without a definition: whether the workflow is managed is
+    // known from the workflow itself.
+    const actionId = toTelemetryActionId(workflow);
+    const { definition } = workflow;
+    if (!definition) {
+      return { actionId, metadata: undefined };
+    }
+
     this.assertActionInputValid(actionWorkflowId, definition, actionInput);
-    return this.readActionMetadata(actionWorkflowId, definition);
+    return { actionId, metadata: this.readActionMetadata(actionWorkflowId, definition) };
   }
 
   /**
@@ -932,16 +1124,24 @@ export class ProposalsService {
     }
   }
 
-  private async fetchActionDefinition(
+  private async fetchActionWorkflow(
     actionWorkflowId: string,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionWorkflowDefinition | undefined> {
+  ): Promise<ActionWorkflow | undefined> {
     try {
       const workflow = await this.deps
         .getWorkflowsApi()
         .getWorkflow(actionWorkflowId, spaceId, request);
-      return workflow?.definition as ActionWorkflowDefinition | undefined;
+      if (!workflow) {
+        return undefined;
+      }
+      const { definition, managed, originManagedWorkflowId } = workflow;
+      return {
+        definition: definition as ActionWorkflowDefinition | null | undefined,
+        managed,
+        originManagedWorkflowId,
+      };
     } catch (error) {
       this.deps.logger.warn(
         `Failed to read action workflow [${actionWorkflowId}]: ${
@@ -1018,12 +1218,14 @@ export class ProposalsService {
   private assertDecidable(proposal: StoredProposalRecord): void {
     if (proposal.decision !== undefined) {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`
+        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`,
+        { reason: 'already_decided' }
       );
     }
     if (proposal.status !== 'pending') {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has settled as ${proposal.status}`
+        `Proposal [${proposal.id}] has settled as ${proposal.status}`,
+        { reason: 'settled' }
       );
     }
     // Kept alongside the status check for the lag between a deadline passing
@@ -1073,7 +1275,8 @@ export class ProposalsService {
       // written behind the gate: returning would answer the caller with a 200
       // for a record that nothing will ever decide.
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`
+        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`,
+        { reason: 'no_execution' }
       );
     }
 
@@ -1083,12 +1286,14 @@ export class ProposalsService {
     });
     if (!execution) {
       throw new ProposalConflictError(
-        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`
+        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`,
+        { reason: 'no_execution' }
       );
     }
     if (execution.status !== ExecutionStatus.WAITING_FOR_INPUT || execution.finishedAt) {
       throw new ProposalConflictError(
-        `Execution [${proposal.workflowExecutionId}] is not waiting for input (status: ${execution.status})`
+        `Execution [${proposal.workflowExecutionId}] is not waiting for input (status: ${execution.status})`,
+        { reason: 'not_waiting' }
       );
     }
 
@@ -1226,14 +1431,27 @@ const toFilterClauses = (
 };
 
 /**
- * Drops the storage-only sort ranks, so they never reach the API contract.
- * Destructuring is the point: adding a rank field forces this to be updated.
+ * Drops the storage-only sort ranks and provenance, so they never reach the
+ * API contract. Destructuring is the point: adding a storage-only field means
+ * adding it here, and the service tests list every provenance field.
  */
-const stripRanks = ({ impactRank, confidenceRank, ...proposal }: StoredProposalRecord): Proposal =>
-  proposal;
+const stripStorageFields = ({
+  impactRank,
+  confidenceRank,
+  actionId,
+  attempt,
+  autoApproveRequested,
+  callerManagedBy,
+  callerRunId,
+  callerWorkflowExecutionId,
+  callerWorkflowId,
+  decisionSource,
+  settledBy,
+  ...proposal
+}: StoredProposalRecord): Proposal => proposal;
 
 const toProposal = (id: string, document: ProposalDocument): Proposal =>
-  stripRanks({ id, ...document });
+  stripStorageFields({ id, ...document });
 
 /**
  * Ceiling on the legacy pointer walk in `getLatestRevision`. A chain longer

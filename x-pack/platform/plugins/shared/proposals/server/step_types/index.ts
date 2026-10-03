@@ -9,6 +9,7 @@ import type { WorkflowsExtensionsServerPluginSetup } from '@kbn/workflows-extens
 import type { ProposalsService } from '../services/proposals_service';
 import type { ResolveProposalUser } from '../services/resolve_proposal_user';
 import type { ProposalPrivilegesChecker } from '../services/check_proposal_privileges';
+import type { CreateProposalWorkflowsApi } from './create_proposal_step';
 import { getCheckDecidePrivilegesStepDefinition } from './check_decide_privileges_step';
 import { getCloneProposalStepDefinition } from './clone_proposal_step';
 import { getCreateProposalStepDefinition } from './create_proposal_step';
@@ -20,16 +21,23 @@ import { getUpdateProposalStepDefinition } from './update_proposal_step';
 export const registerStepDefinitions = ({
   workflowsExtensions,
   getProposalsService,
+  getWorkflowsApi,
   resolveUser,
   privileges,
 }: {
   workflowsExtensions: WorkflowsExtensionsServerPluginSetup;
   getProposalsService: () => ProposalsService;
+  getWorkflowsApi: () => CreateProposalWorkflowsApi;
   resolveUser: ResolveProposalUser;
   privileges: ProposalPrivilegesChecker;
 }) => {
   workflowsExtensions.registerStepDefinition(
-    getCreateProposalStepDefinition({ getProposalsService, resolveUser, privileges })
+    getCreateProposalStepDefinition({
+      getProposalsService,
+      getWorkflowsApi,
+      resolveUser,
+      privileges,
+    })
   );
   workflowsExtensions.registerStepDefinition(
     getUpdateProposalStepDefinition({ getProposalsService, resolveUser, privileges })
@@ -38,7 +46,7 @@ export const registerStepDefinitions = ({
     getSettleIncompleteProposalStepDefinition({ getProposalsService })
   );
   workflowsExtensions.registerStepDefinition(
-    getCheckDecidePrivilegesStepDefinition({ privileges })
+    getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges })
   );
   workflowsExtensions.registerStepDefinition(
     getGetProposalStepDefinition({ getProposalsService, privileges })

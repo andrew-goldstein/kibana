@@ -53,6 +53,7 @@ export const getSettleIncompleteProposalStepDefinition = ({
             id: latest.proposalId,
             status,
             executionError: input.executionError,
+            settledBy: input.settledBy,
           },
           spaceId
         );

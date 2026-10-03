@@ -40,6 +40,7 @@ import { registerAlertZeroAttachmentTypesUI } from './agent_builder/attachment_t
 import { EscalationModalBoundary } from './pages/conversations/escalation_modal_boundary';
 import { ProposedActionsBoundary } from './pages/conversations/proposed_actions_boundary';
 import { getSharedAppQueryClient } from './shared_app_query_client';
+import { registerAlertZeroPublicStepDefinitions } from './step_types';
 import type {
   AlertZeroClientConfig,
   AlertZeroPublicSetup,
@@ -94,11 +95,13 @@ export class AlertZeroPublicPlugin
 
   public setup(
     coreSetup: CoreSetup<AlertZeroStartDependencies, AlertZeroPublicStart>,
-    _setupDeps: AlertZeroSetupDependencies
+    { workflowsExtensions }: AlertZeroSetupDependencies
   ): AlertZeroPublicSetup {
     if (!this.config.enabled) {
       return { enabled: false };
     }
+
+    registerAlertZeroPublicStepDefinitions(workflowsExtensions);
 
     coreSetup.application.register({
       id: ALERTZERO_APP_ID,

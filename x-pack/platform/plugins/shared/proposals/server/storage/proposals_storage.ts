@@ -10,6 +10,7 @@ import type { IndexStorageSettings, IStorageClient } from '@kbn/storage-adapter'
 import { StorageIndexAdapter, types } from '@kbn/storage-adapter';
 import { PROPOSALS_INDEX_NAME } from '@kbn/proposals-common';
 import type { Proposal } from '@kbn/proposals-common';
+import type { ProposalProvenance } from './proposal_provenance';
 import type { ProposalSortRanks } from './sort_ranks';
 
 const storageSettings = {
@@ -72,6 +73,18 @@ const storageSettings = {
           profileUid: types.keyword({}),
         },
       }),
+
+      // Storage-only provenance, for reporting. Stripped before a proposal
+      // leaves the service, like the sort ranks. See `proposal_provenance.ts`.
+      actionId: types.keyword({}),
+      attempt: types.long({}),
+      autoApproveRequested: types.boolean({}),
+      callerManagedBy: types.keyword({}),
+      callerRunId: types.keyword({}),
+      callerWorkflowExecutionId: types.keyword({}),
+      callerWorkflowId: types.keyword({}),
+      decisionSource: types.keyword({}),
+      settledBy: types.keyword({}),
     },
   },
 } satisfies IndexStorageSettings;
@@ -80,10 +93,10 @@ export type ProposalsStorageSettings = typeof storageSettings;
 
 /**
  * Stored shape: the id lives in `_id`, everything else in `_source`. The sort
- * ranks are a storage concern and are stripped before a proposal leaves the
- * service, so they never reach the API contract.
+ * ranks and the provenance are a storage concern and are stripped before a
+ * proposal leaves the service, so they never reach the API contract.
  */
-export type ProposalDocument = Omit<Proposal, 'id'> & ProposalSortRanks;
+export type ProposalDocument = Omit<Proposal, 'id'> & ProposalSortRanks & ProposalProvenance;
 
 export type ProposalsStorageClient = IStorageClient<ProposalsStorageSettings, ProposalDocument>;
 

@@ -15,6 +15,7 @@ import {
   type PluginInitializerContext,
 } from '@kbn/core/server';
 import { DEFAULT_SPACE_ID } from '@kbn/core-spaces-common';
+import type { PluginScopedManagedWorkflowsApi } from '@kbn/workflows/server/types';
 import type { WorkflowsServerPluginSetup } from '@kbn/workflows-management-plugin/server';
 import {
   ALERTZERO_API_PRIVILEGE_READ,
@@ -44,6 +45,13 @@ import { listActionsTool } from './agent_builder_tools/list_actions_tool';
 import { reviseProposalTool } from './agent_builder_tools/revise_proposal_tool';
 import { agentType, ensureAgent, ensureAgentSafe, registerAgentType } from './agent';
 import { registerAttachments } from './agent_builder/attachments/register_attachments';
+import { createAlertZeroTelemetryReporter, registerAlertZeroTelemetryEvents } from './telemetry';
+import { registerAlertZeroStepDefinitions } from './step_types';
+import {
+  createTelemetrySnapshotDependencies,
+  registerTelemetrySnapshotTask,
+  scheduleTelemetrySnapshotTask,
+} from './tasks/telemetry_snapshot';
 
 export class AlertZeroPlugin
   implements
@@ -58,6 +66,8 @@ export class AlertZeroPlugin
   private readonly config: AlertZeroConfig;
   private spaces?: AlertZeroStartDependencies['spaces'];
   private workflowsManagementApi?: WorkflowsServerPluginSetup['management'];
+  /** Resolved during `start`; the report step awaits it for its owner-bound managed check. */
+  private managedWorkflows?: Promise<PluginScopedManagedWorkflowsApi | undefined>;
 
   /** Created during `start`; routes resolve them lazily after managed-workflow initialization. */
   private watchesService?: WatchesService;
@@ -80,6 +90,7 @@ export class AlertZeroPlugin
       proposals: _proposalsSetup,
       features,
       searchInferenceEndpoints,
+      taskManager,
       workflowsExtensions,
       workflowsManagement,
     }: AlertZeroSetupDependencies
@@ -94,10 +105,35 @@ export class AlertZeroPlugin
     // Registered inside the config guard so the deployment kill switch removes the setting
     // entirely; `withAlertZeroEnabled` then never reads an unregistered key.
     registerUiSettings(coreSetup.uiSettings);
+    // Inside the guard too: with the kill switch off, no AlertZero event type exists to report.
+    registerAlertZeroTelemetryEvents(coreSetup.analytics);
+    // Inside the guard too, so the kill switch leaves no snapshot task type to claim.
+    if (taskManager) {
+      registerTelemetrySnapshotTask({
+        getDependencies: async () => {
+          const [core, { spaces, telemetry }] = await coreSetup.getStartServices();
+          return createTelemetrySnapshotDependencies({
+            core,
+            getManagedWorkflows: async () => this.managedWorkflows,
+            spaces,
+            telemetry,
+          });
+        },
+        logger: this.logger.get('telemetry'),
+        taskManager,
+      });
+    }
 
     this.workflowsManagementApi = workflowsManagement.management;
 
     registerOwner({ workflowsExtensions });
+    registerAlertZeroStepDefinitions({
+      analytics: coreSetup.analytics,
+      getManagedWorkflowState: async () => this.managedWorkflows,
+      getWorkflowsManagement: () => this.workflowsManagementApi,
+      logger: this.logger.get('telemetry'),
+      workflowsExtensions,
+    });
     registerAgentType(agentBuilder);
     registerAttachments(agentBuilder);
     registerAlertZeroInferenceFeatures(searchInferenceEndpoints, this.logger.get('inference'));
@@ -149,7 +185,7 @@ export class AlertZeroPlugin
     return { isEnabled: true };
   }
 
-  start(_core: CoreStart, plugins: AlertZeroStartDependencies): AlertZeroPluginStart {
+  start(core: CoreStart, plugins: AlertZeroStartDependencies): AlertZeroPluginStart {
     this.spaces = plugins.spaces;
     this.proposals = plugins.proposals;
     this.agentBuilderConversations = plugins.agentBuilder?.conversations;
@@ -181,6 +217,13 @@ export class AlertZeroPlugin
       );
       return undefined;
     });
+    this.managedWorkflows = managedWorkflows;
+    if (plugins.taskManager) {
+      scheduleTelemetrySnapshotTask({
+        logger: this.logger.get('telemetry'),
+        taskManager: plugins.taskManager,
+      });
+    }
 
     this.conversationProposalsService = new ConversationProposalsService(
       plugins.proposals.getProposalsService(),
@@ -204,6 +247,10 @@ export class AlertZeroPlugin
         : undefined,
       agentBuilder: plugins.agentBuilder,
       agentTypes: [agentType],
+      telemetryReporter: createAlertZeroTelemetryReporter({
+        analytics: core.analytics,
+        logger: this.logger.get('telemetry'),
+      }),
     });
 
     this.huntServices = {

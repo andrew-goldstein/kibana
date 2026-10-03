@@ -1,0 +1,80 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
+ */
+
+export {
+  ACTION_OUTCOMES,
+  CUSTOM_ACTION_ID,
+  CUSTOM_CONSUMER,
+  DECISION_SOURCES,
+  DURATION_BUCKETS,
+  EXPIRES_IN_BUCKETS,
+  EXPIRY_REASONS,
+  FAILURE_SOURCES,
+  KNOWN_CATEGORIES,
+  NO_DEADLINE_BUCKET,
+  OTHER_CATEGORY,
+  PROPOSALS_TELEMETRY_EVENTS,
+  PROPOSALS_TELEMETRY_PREFIX,
+  RESUME_REJECTED_REASONS,
+  SETTLED_REASONS,
+  SETTLED_STATUSES,
+  TELEMETRY_CATEGORIES,
+} from './constants';
+export type {
+  ProposalActionOutcome,
+  ProposalDecisionSource,
+  ProposalDurationBucket,
+  ProposalExpiresInBucket,
+  ProposalExpiryReason,
+  ProposalFailureSource,
+  ProposalResumeRejectedReason,
+  ProposalSettledReason,
+  ProposalTelemetryCategory,
+  ProposalsTelemetryEventType,
+} from './constants';
+export { PROPOSALS_TELEMETRY_EVENT_TYPES } from './event_types';
+export type {
+  ProposalSettledStatus,
+  ProposalsActionExecutedPayload,
+  ProposalsCallerFields,
+  ProposalsProposalCreatedPayload,
+  ProposalsProposalDecidedPayload,
+  ProposalsProposalIdFields,
+  ProposalsProposalResumeRejectedPayload,
+  ProposalsProposalRetriedPayload,
+  ProposalsProposalRevisedPayload,
+  ProposalsProposalStatusChangedPayload,
+  ProposalsSnapshotAgeBucketCount,
+  ProposalsSnapshotPayload,
+  ProposalsSnapshotSettledCount,
+  ProposalsTelemetryEventPayloads,
+} from './event_types';
+export { registerProposalsTelemetryEvents } from './register_telemetry_events';
+export { createProposalsTelemetryReporter, safeReportEvent } from './safe_report_event';
+export type {
+  ProposalsTelemetryAnalytics,
+  ProposalsTelemetryReporter,
+  SafeReportEventParams,
+} from './safe_report_event';
+export {
+  bucketDuration,
+  DURATION_BUCKET_UPPER_BOUNDS_MS,
+  LONGEST_DURATION_BUCKET,
+} from './bucket_duration';
+export { buildCreatedPayload } from './build_created_payload';
+export { buildResumeRejectedPayload } from './build_resume_rejected_payload';
+export { buildRetriedPayload } from './build_retried_payload';
+export { buildRevisedPayload } from './build_revised_payload';
+export { buildUpdateEvents } from './build_update_events';
+export { bucketExpiresIn } from './bucket_expires_in';
+export { resolveProposalConsumer } from './resolve_proposal_consumer';
+export { toResumeRejectedReason } from './to_resume_rejected_reason';
+export { toSettledReason } from './to_settled_reason';
+export { toSnapshotDay } from './to_snapshot_day';
+export { toTelemetryActionId } from './to_telemetry_action_id';
+export { toTelemetryCategory } from './to_telemetry_category';
+export type { ProposalTelemetryRecord, ProposalsTelemetryEvent } from './types';

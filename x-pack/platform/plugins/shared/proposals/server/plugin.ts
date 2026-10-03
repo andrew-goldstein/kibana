@@ -26,6 +26,12 @@ import type { ResolveProposalUser } from './services/resolve_proposal_user';
 import { registerProposalAttachment } from './attachments';
 import { registerStepDefinitions } from './step_types';
 import { createProposalsStorageClient } from './storage/proposals_storage';
+import { createProposalsTelemetryReporter, registerProposalsTelemetryEvents } from './telemetry';
+import {
+  createTelemetrySnapshotDependencies,
+  registerTelemetrySnapshotTask,
+  scheduleTelemetrySnapshotTask,
+} from './tasks/telemetry_snapshot';
 import type {
   ProposalsPluginSetup,
   ProposalsPluginStart,
@@ -57,12 +63,35 @@ export class ProposalsPlugin
 
   setup(
     coreSetup: CoreSetup<ProposalsStartDependencies>,
-    { features, workflowsExtensions, workflowsManagement, agentBuilder }: ProposalsSetupDependencies
+    {
+      agentBuilder,
+      features,
+      taskManager,
+      workflowsExtensions,
+      workflowsManagement,
+    }: ProposalsSetupDependencies
   ): ProposalsPluginSetup {
     // The workflows management API is only exposed on the setup contract.
     this.workflowsManagementApi = workflowsManagement.management;
 
     registerFeatures({ features });
+
+    // Setup-only, and registering a type twice throws. Emitters report through
+    // `createProposalsTelemetryReporter`, which never throws.
+    registerProposalsTelemetryEvents(coreSetup.analytics);
+
+    // Core loads this plugin only when `xpack.proposals.enabled` is set, so the daily snapshot task
+    // type exists only then. Its dependencies are resolved per run, once start services exist.
+    if (taskManager) {
+      registerTelemetrySnapshotTask({
+        getDependencies: async () => {
+          const [core, { telemetry }] = await coreSetup.getStartServices();
+          return createTelemetrySnapshotDependencies({ core, telemetry });
+        },
+        logger: this.logger.get('telemetry'),
+        taskManager,
+      });
+    }
 
     // The service only exists from start() onwards, but `format()` is never
     // called before then, so it is resolved lazily rather than captured here.
@@ -82,6 +111,7 @@ export class ProposalsPlugin
     registerStepDefinitions({
       workflowsExtensions,
       getProposalsService: () => this.requireProposalsService(),
+      getWorkflowsApi: () => this.requireWorkflowsApi(),
       resolveUser: (request) => this.requireUserResolver()(request),
       // Steps register during setup but only run once Kibana has started, so
       // the authorization service is resolved per call rather than captured
@@ -121,7 +151,20 @@ export class ProposalsPlugin
       getWorkflowsApi: () => this.requireWorkflowsApi(),
       getAttachmentsClient: (request) =>
         plugins.agentBuilder.attachments.getScopedClient({ request }),
+      // Core analytics applies the telemetry opt-in itself, so the reporter
+      // needs no check of its own.
+      telemetry: createProposalsTelemetryReporter({
+        analytics: coreStart.analytics,
+        logger: this.logger,
+      }),
     });
+
+    if (plugins.taskManager) {
+      scheduleTelemetrySnapshotTask({
+        logger: this.logger.get('telemetry'),
+        taskManager: plugins.taskManager,
+      });
+    }
 
     void initializeManagedWorkflows({
       workflowsExtensions: plugins.workflowsExtensions,

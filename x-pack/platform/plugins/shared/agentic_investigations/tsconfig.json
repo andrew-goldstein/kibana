@@ -34,7 +34,8 @@
     "@kbn/kibana-react-plugin",
     "@kbn/user-profile-components",
     "@kbn/proposals-plugin",
-    "@kbn/proposals-common"
+    "@kbn/proposals-common",
+    "@kbn/core-spaces-common"
   ],
   "exclude": ["target/**/*"]
 }

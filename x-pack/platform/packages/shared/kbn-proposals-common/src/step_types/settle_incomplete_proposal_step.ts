@@ -24,6 +24,14 @@ export const settleIncompleteProposalStatusSchema = proposalStatusSchema.extract
   'expired',
 ]);
 
+/**
+ * The path that settled a proposal without a completed decision loop: its
+ * deadline, the loop's attempt budget, or the workflow-level failure handler.
+ */
+export const proposalSettledBySchema = z.enum(['deadline', 'iteration_limit', 'workflow_failure']);
+
+export type ProposalSettledBy = z.infer<typeof proposalSettledBySchema>;
+
 export const settleIncompleteProposalStepInputSchema = z.object({
   proposalId: z.string().describe('Any proposal in the chain — the live head is resolved first.'),
   status: optionalStepInput(settleIncompleteProposalStatusSchema).describe(
@@ -31,6 +39,9 @@ export const settleIncompleteProposalStepInputSchema = z.object({
   ),
   executionError: optionalStepInput(z.string()).describe(
     'Why the proposal is being settled without a completed decision loop.'
+  ),
+  settledBy: optionalStepInput(proposalSettledBySchema).describe(
+    'Which path is settling the proposal. Recorded only when this write settles it.'
   ),
 });
 

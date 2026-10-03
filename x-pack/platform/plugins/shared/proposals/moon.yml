@@ -44,6 +44,9 @@ dependsOn:
   - '@kbn/proposals-common'
   - '@kbn/proposals-ui'
   - '@kbn/user-profile-components'
+  - '@kbn/telemetry-plugin'
+  - '@kbn/core-spaces-common'
+  - '@kbn/task-manager-plugin'
 tags:
   - plugin
   - prod

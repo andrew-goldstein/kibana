@@ -19,6 +19,11 @@ import type {
 } from '@kbn/search-inference-endpoints/server';
 import type { InferenceServerStart } from '@kbn/inference-plugin/server';
 import type { SpacesPluginStart } from '@kbn/spaces-plugin/server';
+import type {
+  TaskManagerSetupContract,
+  TaskManagerStartContract,
+} from '@kbn/task-manager-plugin/server';
+import type { TelemetryPluginStart } from '@kbn/telemetry-plugin/server';
 import type { WorkflowsExtensionsServerPluginSetup } from '@kbn/workflows-extensions/server';
 import type { WorkflowsExtensionsServerPluginStart } from '@kbn/workflows-extensions/server';
 import type { WorkflowsServerPluginSetup } from '@kbn/workflows-management-plugin/server';
@@ -42,6 +47,8 @@ export interface AlertZeroSetupDependencies {
   agenticInvestigations: AgenticInvestigationsPluginSetup;
   proposals: ProposalsPluginSetup;
   searchInferenceEndpoints?: SearchInferenceEndpointsPluginSetup;
+  /** Optional, matching the plugin manifest: without it the daily telemetry snapshot is skipped. */
+  taskManager?: TaskManagerSetupContract;
 }
 
 export interface AlertZeroStartDependencies {
@@ -64,6 +71,13 @@ export interface AlertZeroStartDependencies {
    * connector an operator picked for a tier.
    */
   searchInferenceEndpoints?: SearchInferenceEndpointsPluginStart;
+  /** Optional, matching the plugin manifest: without it the daily telemetry snapshot is skipped. */
+  taskManager?: TaskManagerStartContract;
+  /**
+   * Optional, matching the plugin manifest. The snapshot task reads its opt-in state before any
+   * Elasticsearch work; a missing telemetry plugin counts as opted out.
+   */
+  telemetry?: TelemetryPluginStart;
 }
 
 export type AlertZeroRouter = IRouter;

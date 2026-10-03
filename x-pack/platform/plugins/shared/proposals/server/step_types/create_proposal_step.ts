@@ -6,7 +6,9 @@
  */
 
 import { createServerStepDefinition } from '@kbn/workflows-extensions/server';
+import type { WorkflowsServerPluginSetup } from '@kbn/workflows-management-plugin/server';
 import { createProposalStepCommonDefinition } from '@kbn/proposals-common';
+import { resolveCallerProvenance } from './resolve_caller_provenance';
 import { resolveExpiresAt } from './resolve_expires_at';
 import type { ProposalsService } from '../services/proposals_service';
 import type { ResolveProposalUser } from '../services/resolve_proposal_user';
@@ -14,17 +16,26 @@ import type { ProposalPrivilegesChecker } from '../services/check_proposal_privi
 import { parseStepInput } from './parse_step_input';
 import { toStepError } from './to_step_error';
 
+/** The one workflows management call the step makes: reading its caller's persisted execution. */
+export type CreateProposalWorkflowsApi = Pick<
+  WorkflowsServerPluginSetup['management'],
+  'getWorkflowExecution'
+>;
+
 /**
  * Calls the proposals service in-process. The workflow execution id comes from
  * the step context rather than the caller, so approving the proposal always
- * resumes the execution that actually created it.
+ * resumes the execution that actually created it. The caller provenance is
+ * derived the same way, never taken from the step input.
  */
 export const getCreateProposalStepDefinition = ({
   getProposalsService,
+  getWorkflowsApi,
   resolveUser,
   privileges,
 }: {
   getProposalsService: () => ProposalsService;
+  getWorkflowsApi: () => CreateProposalWorkflowsApi;
   resolveUser: ResolveProposalUser;
   privileges: ProposalPrivilegesChecker;
 }) =>
@@ -47,6 +58,20 @@ export const getCreateProposalStepDefinition = ({
 
         const user = await resolveUser(request);
 
+        // After the manage check, so an unprivileged caller triggers no reads.
+        const callerProvenance = await resolveCallerProvenance({
+          abortSignal: context.abortSignal,
+          // Resolved inside the read, so a workflows API that is not there
+          // degrades to an unknown caller like any other failed read.
+          getExecution: (executionId) =>
+            getWorkflowsApi().getWorkflowExecution(executionId, spaceId, {
+              omitStepExecutions: true,
+              request,
+            }),
+          parent: workflowContext.parent,
+          spaceId,
+        });
+
         const proposal = await getProposalsService().create(
           {
             conversationId: input.conversationId,
@@ -61,6 +86,7 @@ export const getCreateProposalStepDefinition = ({
             workflowExecutionId,
           },
           {
+            provenance: { ...callerProvenance, autoApproveRequested: input.autoApprove },
             spaceId,
             request,
             // `execution.executedBy` is only ever a username, so it is the last

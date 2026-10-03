@@ -57,6 +57,8 @@
     "@kbn/security-mitre-attack-common",
     "@kbn/inference-plugin",
     "@kbn/management-settings-ids",
-    "@kbn/ui-callout"
+    "@kbn/ui-callout",
+    "@kbn/task-manager-plugin",
+    "@kbn/telemetry-plugin"
   ]
 }

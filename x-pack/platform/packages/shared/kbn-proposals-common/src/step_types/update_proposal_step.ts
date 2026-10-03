@@ -14,6 +14,11 @@ import { optionalStepInput } from './optional_step_input';
 
 export const UpdateProposalStepId = 'proposals.updateProposal' as const;
 
+/** Who made a decision: a person answering the gate, or the caller's autonomy policy. */
+export const proposalDecisionSourceSchema = z.enum(['human', 'autonomy']);
+
+export type ProposalDecisionSource = z.infer<typeof proposalDecisionSourceSchema>;
+
 export const updateProposalStepInputSchema = z.object({
   proposalId: z.string().describe('Proposal to update.'),
   // Both vocabularies are extracted from the stored schemas so they cannot
@@ -33,6 +38,9 @@ export const updateProposalStepInputSchema = z.object({
   ),
   rationale: optionalStepInput(z.string()).describe('Free-text explanation of the decision.'),
   executionError: optionalStepInput(z.string()).describe('Failure detail, when the action failed.'),
+  decisionSource: optionalStepInput(proposalDecisionSourceSchema).describe(
+    'Who made the decision being recorded. Stored with the decision only.'
+  ),
 });
 
 export const updateProposalStepOutputSchema = z.object({

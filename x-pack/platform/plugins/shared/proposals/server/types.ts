@@ -8,6 +8,11 @@
 import type { IRouter, KibanaRequest, Logger } from '@kbn/core/server';
 import type { SpacesPluginStart } from '@kbn/spaces-plugin/server';
 import type { SecurityPluginStart } from '@kbn/security-plugin-types-server';
+import type { TelemetryPluginStart } from '@kbn/telemetry-plugin/server';
+import type {
+  TaskManagerSetupContract,
+  TaskManagerStartContract,
+} from '@kbn/task-manager-plugin/server';
 import type { FeaturesPluginSetup } from '@kbn/features-plugin/server';
 import type {
   WorkflowsExtensionsServerPluginSetup,
@@ -29,6 +34,8 @@ export interface RouteDependencies {
 
 export interface ProposalsSetupDependencies {
   features: FeaturesPluginSetup;
+  /** Registers the daily telemetry snapshot task. Optional: without it no snapshot is taken. */
+  taskManager?: TaskManagerSetupContract;
   workflowsExtensions: WorkflowsExtensionsServerPluginSetup;
   workflowsManagement: WorkflowsServerPluginSetup;
   agentBuilder: AgentBuilderPluginSetup;
@@ -42,6 +49,13 @@ export interface ProposalsStartDependencies {
    */
   security?: SecurityPluginStart;
   spaces?: SpacesPluginStart;
+  /**
+   * Read for the telemetry opt-in before the daily snapshot does any work.
+   * Optional: without it the snapshot treats the cluster as opted out.
+   */
+  telemetry?: TelemetryPluginStart;
+  /** Schedules the daily telemetry snapshot task registered in setup. */
+  taskManager?: TaskManagerStartContract;
   workflowsExtensions: WorkflowsExtensionsServerPluginStart;
   /** Writes the conversation attachment that surfaces a new proposal in the chat. */
   agentBuilder: AgentBuilderPluginStart;

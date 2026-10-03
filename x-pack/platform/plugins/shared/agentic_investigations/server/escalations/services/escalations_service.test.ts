@@ -120,6 +120,7 @@ const makeService = (clientOverrides: Record<string, jest.Mock> = {}) => {
     getConversationClient,
     conversationTemplates,
     getInvestigationStatusService: () => investigationStatusService as never,
+    getSpaceId: () => 'default',
   });
 
   return {
@@ -893,6 +894,25 @@ describe('EscalationsService.setStatus — partial close leaves escalation open'
 
     // The escalation itself must remain open.
     expect(client.patchMetadata).not.toHaveBeenCalled();
+  });
+
+  it('marks each cascade close as escalation_cascade for telemetry', async () => {
+    const { service, client, investigationStatusService } = makeService();
+    client.get.mockResolvedValue({
+      ...MOCK_ESCALATION,
+      template_id: ESCALATION_TEMPLATE_ID,
+      metadata: { linked_investigations: ['inv-1'] },
+    });
+    client.bulkGet.mockResolvedValue(new Map([['inv-1', OPEN_INV]]));
+
+    await service.setStatus(request, 'escalation-1', { status: 'closed', dismiss_reason: 'wrong' });
+
+    expect(investigationStatusService.setStatus).toHaveBeenCalledWith(
+      request,
+      'inv-1',
+      expect.objectContaining({ status: 'closed', dismiss_reason: 'wrong' }),
+      { closedBy: 'escalation_cascade' }
+    );
   });
 });
 

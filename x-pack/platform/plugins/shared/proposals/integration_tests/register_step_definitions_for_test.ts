@@ -8,6 +8,7 @@
 import type { WorkflowRunFixture } from '@kbn/workflows-execution-engine/test_helpers';
 import type { ProposalsService } from '../server/services/proposals_service';
 import type { ProposalPrivilegesChecker } from '../server/services/check_proposal_privileges';
+import type { CreateProposalWorkflowsApi } from '../server/step_types/create_proposal_step';
 import { getCheckDecidePrivilegesStepDefinition } from '../server/step_types/check_decide_privileges_step';
 import { getCloneProposalStepDefinition } from '../server/step_types/clone_proposal_step';
 import { getCreateProposalStepDefinition } from '../server/step_types/create_proposal_step';
@@ -27,10 +28,12 @@ import { getUpdateProposalStepDefinition } from '../server/step_types/update_pro
 export const registerStepDefinitionsForTest = ({
   engine,
   getProposalsService,
+  getWorkflowsApi,
   privileges,
 }: {
   engine: WorkflowRunFixture;
   getProposalsService: () => ProposalsService;
+  getWorkflowsApi: () => CreateProposalWorkflowsApi;
   privileges: ProposalPrivilegesChecker;
 }) => {
   // The execution runs under a fake request with no principal, so the step's
@@ -40,10 +43,15 @@ export const registerStepDefinitionsForTest = ({
   const resolveUser = async () => undefined;
 
   const definitions = [
-    getCreateProposalStepDefinition({ getProposalsService, resolveUser, privileges }),
+    getCreateProposalStepDefinition({
+      getProposalsService,
+      getWorkflowsApi,
+      resolveUser,
+      privileges,
+    }),
     getUpdateProposalStepDefinition({ getProposalsService, resolveUser, privileges }),
     getSettleIncompleteProposalStepDefinition({ getProposalsService }),
-    getCheckDecidePrivilegesStepDefinition({ privileges }),
+    getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges }),
     getGetProposalStepDefinition({ getProposalsService, privileges }),
     getCloneProposalStepDefinition({ getProposalsService, privileges }),
     getGetLatestRevisionStepDefinition({ getProposalsService, privileges }),
