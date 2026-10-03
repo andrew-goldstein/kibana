@@ -227,6 +227,26 @@ steps:
     with:
       conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
 
+  # Product telemetry. Every report step in this workflow reports only for a
+  # managed AlertZero Worker run, never fails the workflow, and sits at the top
+  # level: `on-failure: continue` and the short timeout keep a slow or failed
+  # report from holding up or failing the review, and a step with either cannot
+  # sit inside a `parallel` branch. Nothing here reads a report's output.
+  #
+  # Reported once the Investigation is known to exist, with its id, so Investigation
+  # events join to this Worker run. The create continues past the 409 a re-review
+  # raises, and `verify_investigation` has already ended the run on any other
+  # failure, so an error on the create here means the Investigation already existed.
+  - name: report_review_started
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_review_started
+      investigation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+      is_rereview: "${{ steps.open_investigation.error != blank }}"
+
   # Always-on journal. `trigger_mode: never` (elastic/kibana#290223) persists a
   # user_message without waking the Investigation agent. A user round or
   # `ai.agent` against this conversation still would. A failed note must not
@@ -472,6 +492,20 @@ steps:
     # recorded is not a reason to abandon the review that produced it.
     on-failure:
       continue: true
+
+  # Reported for every verdict, so no `if`: `refresh_verdict` above is conditional.
+  # A failed analysis child leaves an error and no payload, which `resolve_analysis`
+  # has already mapped to the `failed` verdict. A timeout cannot be told apart from
+  # any other failure here.
+  - name: report_analysis_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_analysis_completed
+      verdict: "{{ steps.resolve_analysis.output.verdict }}"
+      analysis_error: "${{ steps.run_fp_tp_analysis.error != blank }}"
 
   - name: journal_analysis_finished
     type: workflow.execute
@@ -768,6 +802,36 @@ steps:
           and steps.escalation_gate.output.status == 'succeeded' }}
       declined: "${{ steps.escalation_gate.output.decision == 'dismissed' }}"
       expired: "${{ steps.escalation_gate.output.status == 'expired' }}"
+
+  # Guarded like the other escalation steps: `record_decision` is an unconditional
+  # `data.set`, so without the `if` every non-escalated review would report a
+  # handoff that never happened. Only a COMPLETED gate reaches here. A gate that
+  # failed or was cancelled has already ended the review at `escalation_gate`, and
+  # its outcome is on the proposal instead.
+  #
+  # The outcome reads the arms above in the order the journal note does. The
+  # fourth case is the one `record_decision` leaves without an arm: approved, but
+  # the handoff action did not succeed.
+  - name: report_handoff_resolved
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.resolve_escalation.output.escalate == true }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_handoff_resolved
+      outcome: |-
+        {%- if steps.record_decision.output.approved == true -%}
+        approved
+        {%- elsif steps.record_decision.output.declined == true -%}
+        dismissed
+        {%- elsif steps.record_decision.output.expired == true -%}
+        expired
+        {%- elsif steps.escalation_gate.output.decision == 'approved' -%}
+        approved_action_failed
+        {%- endif -%}
+      verdict: "{{ steps.resolve_analysis.output.verdict }}"
+      auto_approve_requested: "${{ steps.resolve_escalation.output.auto_approve }}"
 
   - name: journal_decision_recorded
     type: workflow.execute

@@ -31,27 +31,32 @@ export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID =
 export const ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID =
   'system-security-attack-discovery-fp-tp-analysis';
 
+/**
+ * The version carries the `report_run_completed` step, which reports the run's
+ * counts and `run_outcome` through `alertzero.reportWorkerOutcome`. The bump makes
+ * the upgrade visible in `managedVersion`; the content hash alone would also apply it.
+ */
 export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 4,
+  version: 5,
   yaml: ATTACK_DISCOVERY_RUNNER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
 /**
- * The version carries the switch from the `run_fp_tp_analysis` console stub to the
- * FP/TP analysis workflow below. Without the bump an existing install keeps calling
- * the stub and takes its verdict from a `stub_verdict` input this version no longer
- * declares.
+ * The version carries the review's three `alertzero.reportWorkerOutcome` steps:
+ * `report_review_started`, `report_analysis_completed` and the escalation-only
+ * `report_handoff_resolved`. The bump makes the upgrade visible in
+ * `managedVersion`; the content hash alone would also apply it.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 5,
+  version: 6,
   yaml: ATTACK_DISCOVERY_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 

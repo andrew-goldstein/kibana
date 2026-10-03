@@ -270,6 +270,56 @@ steps:
                 autonomy: "${{ inputs.autonomy }}"
                 parent_run_id: "{{ execution.id }}"
 
+  # Product telemetry for the run, reported once every batch has dispatched and
+  # before `emit_result`, which ends the run. The step reports only for a managed
+  # AlertZero Worker run and never fails the workflow; `on-failure: continue` and
+  # the short timeout make sure a slow or failed report cannot hold up or fail the
+  # run either, so the reported counts are lower bounds. Top level on purpose: a
+  # step with `timeout` or `on-failure` cannot sit inside a `parallel` branch.
+  #
+  # `run_outcome` is derived here because comparison operators cannot follow a
+  # filter chain, so each count is assigned to a local first. The order matters:
+  # - no batch at all means no alert was retrieved (`empty_no_alerts`);
+  # - every batch failing is `failed_all_batches`, which still completes the run
+  #   because the generation child runs `mode: settled`;
+  # - any other failed batch makes the run `degraded_partial`, attacks or not;
+  # - with every batch delivered, persisted attacks are `produced`, generated but
+  #   none persisted means every attack already existed (`empty_all_duplicates`),
+  #   and nothing generated is `empty_no_attacks`.
+  #
+  # There is no `skipped_space_disabled`: a space with AlertZero off never
+  # launches this run.
+  - name: report_run_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_run_completed
+      alerts_analyzed: "${{ steps.run_generation.output.alerts_analyzed | default: 0 }}"
+      batches_total: "${{ steps.run_generation.output.batches_total | default: 0 }}"
+      batches_failed: "${{ steps.run_generation.output.batches_failed | default: 0 }}"
+      attacks_generated: "${{ steps.run_generation.output.discoveries_generated | default: 0 }}"
+      attacks_persisted: "${{ steps.resolve_fanout.output.attack_count | default: 0 }}"
+      run_outcome: |-
+        {%- assign batches_total = steps.run_generation.output.batches_total | default: 0 -%}
+        {%- assign batches_failed = steps.run_generation.output.batches_failed | default: 0 -%}
+        {%- assign generated = steps.run_generation.output.discoveries_generated | default: 0 -%}
+        {%- assign persisted = steps.resolve_fanout.output.attack_count | default: 0 -%}
+        {%- if batches_total == 0 -%}
+        empty_no_alerts
+        {%- elsif batches_failed >= batches_total -%}
+        failed_all_batches
+        {%- elsif batches_failed > 0 -%}
+        degraded_partial
+        {%- elsif persisted > 0 -%}
+        produced
+        {%- elsif generated > 0 -%}
+        empty_all_duplicates
+        {%- else -%}
+        empty_no_attacks
+        {%- endif -%}
+
   # Every batch has dispatched. This is not a fan-in: the reviews are still running
   # on their own executions, and this run reports only what it did itself.
   - name: emit_result

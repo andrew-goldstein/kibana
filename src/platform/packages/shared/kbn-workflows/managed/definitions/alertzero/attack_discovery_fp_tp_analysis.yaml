@@ -146,13 +146,16 @@ steps:
 
   # An empty search SUCCEEDS, so the step above cannot catch an id that names no
   # document.
+  #
+  # No `workflow.fail` message in this workflow interpolates an id or the space: the
+  # engine ships a failed run's error message in its terminal telemetry event. The
+  # ids stay readable in this execution's inputs.
   - name: require_attack_discovery
     type: workflow.fail
     if: "${{ steps.load_attack_discovery.output.hits.total.value == 0 }}"
     with:
       message: >-
-        No persisted Attack Discovery found for id
-        "{{ inputs.attack_discovery_id }}" in space {{ workflow.spaceId }}.
+        No persisted Attack Discovery found for the requested id in this space.
         Required source unavailable; no classification was produced.
 
   # A metadata READ and nothing else: posting to this conversation, or running
@@ -195,7 +198,7 @@ steps:
     with:
       message: >-
         Only {{ steps.count_alerts.output.found }} of {{ steps.count_alerts.output.cited }}
-        cited alerts were found for Attack Discovery "{{ inputs.attack_discovery_id }}".
+        cited alerts were found for the Attack Discovery.
         Required source unavailable; no classification was produced.
 
   # Optional. An empty or failed query does not fail the run. The verdict rules
@@ -481,8 +484,7 @@ steps:
     if: "${{ steps.check_payload.output.payload_valid == false }}"
     with:
       message: >-
-        FP/TP analysis produced no usable payload for Attack Discovery
-        "{{ inputs.attack_discovery_id }}": verdict
+        FP/TP analysis produced no usable payload for the Attack Discovery: verdict
         "{{ steps.analyze.output.structured_output.verdict }}" is not one of
         {{ consts.supported_verdicts | join: ", " }}, or the summary was empty.
         No classification was produced.

@@ -14,6 +14,7 @@ import {
   ALERTZERO_ACTION_HANDOFF_TO_FORENSICS_WORKFLOW_ID,
   ALERTZERO_ACTION_WORKFLOW_IDS,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW,
+  ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
@@ -1913,6 +1914,493 @@ describe('Attack Discovery worker chain', () => {
 
     it('every steps.run_generation.output.<field> reference is a field the child emits', () => {
       expect(referenced.filter((field) => !emitted.includes(field))).toEqual([]);
+    });
+  });
+
+  // The Attack Discovery Worker reports its domain outcomes through the AlertZero
+  // plugin's `alertzero.reportWorkerOutcome` step. The step's input schema is the real
+  // contract, and the plugin's own test validates every `with` block below against it.
+  // This package cannot import solution code, so the step id and each event's
+  // allowed keys are duplicated here rather than imported; if the step schema changes,
+  // the plugin's contract test fails first and these follow.
+  describe('Worker outcome telemetry', () => {
+    const REPORT_STEP_TYPE = 'alertzero.reportWorkerOutcome';
+
+    const REPORT_EVENT_KEYS: Record<string, readonly string[]> = {
+      ad_worker_analysis_completed: ['analysis_error', 'event', 'verdict'],
+      ad_worker_handoff_resolved: ['auto_approve_requested', 'event', 'outcome', 'verdict'],
+      ad_worker_review_started: ['event', 'investigation_id', 'is_rereview'],
+      ad_worker_run_completed: [
+        'alerts_analyzed',
+        'attacks_generated',
+        'attacks_persisted',
+        'batches_failed',
+        'batches_total',
+        'event',
+        'run_outcome',
+      ],
+    };
+
+    const fpTpAnalysis = parse(
+      ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW.yaml
+    ) as YamlWorkflow;
+    const batchedGeneration = parse(
+      ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW.yaml
+    ) as YamlWorkflow;
+
+    // Configured like the engine's templating engine: with `strictVariables` off, a
+    // missing value renders as `''` rather than throwing.
+    const runtimeLiquid = createWorkflowLiquidEngine({
+      strictFilters: true,
+      strictVariables: false,
+    });
+
+    // Renders one `with` value the way the engine does: a whole-value `${{ }}` keeps
+    // its type, and anything else renders as a string template.
+    const renderValue = (value: unknown, context: Record<string, unknown>): unknown => {
+      if (typeof value === 'string' && value.startsWith('${{') && value.endsWith('}}')) {
+        return runtimeLiquid.evalValueSync(value.slice(3, -2).trim(), context);
+      }
+      return typeof value === 'string' ? runtimeLiquid.parseAndRenderSync(value, context) : value;
+    };
+
+    const reportSteps = (steps: YamlStep[]) =>
+      steps.filter((step) => step.type === REPORT_STEP_TYPE);
+
+    const topLevelNames = (workflow: YamlWorkflow) => workflow.steps.map((step) => step.name);
+
+    const allReportSteps = [...reportSteps(workerSteps), ...reportSteps(reviewSteps)];
+
+    const renderField = (
+      steps: YamlStep[],
+      stepName: string,
+      field: string,
+      context: Record<string, unknown>
+    ): unknown => renderValue(stepIn(steps, stepName)?.with?.[field], context);
+
+    it('reports run_completed from the runner', () => {
+      expect(reportSteps(workerSteps).map((step) => step.with?.event)).toEqual([
+        'ad_worker_run_completed',
+      ]);
+    });
+
+    it('reports review_started, analysis_completed and handoff_resolved from the review', () => {
+      expect(reportSteps(reviewSteps).map((step) => step.with?.event)).toEqual([
+        'ad_worker_review_started',
+        'ad_worker_analysis_completed',
+        'ad_worker_handoff_resolved',
+      ]);
+    });
+
+    it.each([
+      ['Watch Floor worker', floorSteps],
+      ['batched generation', flatten(batchedGeneration.steps)],
+      ['FP/TP analysis', flatten(fpTpAnalysis.steps)],
+      ['journal note', journalNoteSteps],
+      ['forensics handoff', forensicsSteps],
+    ])('adds no report step to the %s', (_name, steps) => {
+      expect(reportSteps(steps)).toEqual([]);
+    });
+
+    it.each(allReportSteps.map((step) => [step.name, step] as const))(
+      '%s sends only the keys its event allows',
+      (_name, step) => {
+        const allowed = REPORT_EVENT_KEYS[String(step.with?.event)] ?? [];
+
+        expect(Object.keys(step.with ?? {}).filter((key) => !allowed.includes(key))).toEqual([]);
+      }
+    );
+
+    // A report is telemetry. It must never fail, delay or cancel the Worker run.
+    it.each(allReportSteps.map((step) => [step.name, step] as const))(
+      '%s continues on failure',
+      (_name, step) => {
+        expect(step['on-failure']?.continue).toBe(true);
+      }
+    );
+
+    it.each(allReportSteps.map((step) => [step.name, step] as const))(
+      '%s is bounded by a 30s timeout',
+      (_name, step) => {
+        expect(step.timeout).toBe('30s');
+      }
+    );
+
+    // A step with `timeout` or `on-failure` cannot sit inside a `parallel` branch
+    // (graph build rejects it), and nothing here may run inside a gate. Top-level
+    // placement rules out both, and also any `switch` arm or `foreach` body.
+    it.each(allReportSteps.map((step) => [step.name] as const))(
+      '%s is a top-level step',
+      (name) => {
+        expect([...topLevelNames(worker), ...topLevelNames(review)]).toContain(name);
+      }
+    );
+
+    it('leaves the escalation gate failure behavior unchanged', () => {
+      expect(stepIn(reviewSteps, 'escalation_gate')?.['on-failure']).toBeUndefined();
+    });
+
+    describe('run_completed', () => {
+      const names = topLevelNames(worker);
+      const report = stepIn(workerSteps, 'report_run_completed');
+
+      it('is the runner report step', () => {
+        expect(report?.type).toBe(REPORT_STEP_TYPE);
+      });
+
+      it('reports after every review batch has dispatched', () => {
+        expect(names.indexOf('report_run_completed')).toBeGreaterThan(
+          names.indexOf('run_review_batches')
+        );
+      });
+
+      // `workflow.output` ends the run, so a report after it would never execute.
+      it('reports immediately before the run output', () => {
+        expect(names.indexOf('emit_result') - names.indexOf('report_run_completed')).toBe(1);
+      });
+
+      it('keeps the existing runner steps in their order', () => {
+        expect(names.filter((name) => name !== 'report_run_completed')).toEqual([
+          'run_generation',
+          'resolve_fanout',
+          'log_empty_run',
+          'run_review_batches',
+          'emit_result',
+        ]);
+      });
+
+      it.each([
+        ['alerts_analyzed', 'steps.run_generation.output.alerts_analyzed'],
+        ['batches_total', 'steps.run_generation.output.batches_total'],
+        ['batches_failed', 'steps.run_generation.output.batches_failed'],
+        ['attacks_generated', 'steps.run_generation.output.discoveries_generated'],
+        ['attacks_persisted', 'steps.resolve_fanout.output.attack_count'],
+      ])('sources %s from %s', (field, source) => {
+        expect(report?.with?.[field]).toBe(`\${{ ${source} | default: 0 }}`);
+      });
+
+      it.each(['alerts_analyzed', 'batches_total', 'batches_failed', 'attacks_generated'])(
+        'reports %s as a number',
+        (field) => {
+          expect(
+            renderField(workerSteps, 'report_run_completed', field, {
+              steps: {
+                run_generation: {
+                  output: {
+                    alerts_analyzed: 250,
+                    batches_failed: 1,
+                    batches_total: 3,
+                    discoveries_generated: 7,
+                  },
+                },
+              },
+            })
+          ).toEqual(expect.any(Number));
+        }
+      );
+
+      it.each(['alerts_analyzed', 'batches_total', 'batches_failed', 'attacks_generated'])(
+        'reports %s as 0 when the generation output lacks it',
+        (field) => {
+          expect(
+            renderField(workerSteps, 'report_run_completed', field, {
+              steps: { run_generation: { output: {} } },
+            })
+          ).toBe(0);
+        }
+      );
+
+      describe('run_outcome', () => {
+        interface RunScenario {
+          batchesFailed: number;
+          batchesTotal: number;
+          generated: number;
+          persisted: number;
+        }
+
+        const renderRunOutcome = ({
+          batchesFailed,
+          batchesTotal,
+          generated,
+          persisted,
+        }: RunScenario): unknown =>
+          renderField(workerSteps, 'report_run_completed', 'run_outcome', {
+            steps: {
+              resolve_fanout: { output: { attack_count: persisted } },
+              run_generation: {
+                output: {
+                  batches_failed: batchesFailed,
+                  batches_total: batchesTotal,
+                  discoveries_generated: generated,
+                },
+              },
+            },
+          });
+
+        it.each([
+          [
+            'produced',
+            'attacks persisted with every batch delivered',
+            { batchesFailed: 0, batchesTotal: 3, generated: 5, persisted: 4 },
+          ],
+          [
+            'empty_no_alerts',
+            'no alert to batch',
+            { batchesFailed: 0, batchesTotal: 0, generated: 0, persisted: 0 },
+          ],
+          [
+            'empty_no_attacks',
+            'every batch delivered and the model found no attack',
+            { batchesFailed: 0, batchesTotal: 2, generated: 0, persisted: 0 },
+          ],
+          [
+            'empty_all_duplicates',
+            'every generated attack already persisted by an earlier run',
+            { batchesFailed: 0, batchesTotal: 2, generated: 3, persisted: 0 },
+          ],
+          [
+            'degraded_partial',
+            'attacks persisted while some batches failed',
+            { batchesFailed: 1, batchesTotal: 3, generated: 2, persisted: 2 },
+          ],
+          [
+            'degraded_partial',
+            'no attack while some batches failed',
+            { batchesFailed: 1, batchesTotal: 3, generated: 0, persisted: 0 },
+          ],
+          [
+            'failed_all_batches',
+            'every batch failed',
+            { batchesFailed: 3, batchesTotal: 3, generated: 0, persisted: 0 },
+          ],
+        ] as const)('renders %s for %s', (expected, _scenario, scenario) => {
+          expect(renderRunOutcome(scenario)).toBe(expected);
+        });
+
+        it('renders a closed value when the generation output is missing entirely', () => {
+          expect(
+            renderField(workerSteps, 'report_run_completed', 'run_outcome', {
+              steps: { resolve_fanout: { output: {} }, run_generation: { output: {} } },
+            })
+          ).toBe('empty_no_alerts');
+        });
+
+        // `skipped_space_disabled` was in the RFC's vocabulary, but nothing in the
+        // runner produces it: a disabled space never launches the run at all.
+        it('never renders skipped_space_disabled', () => {
+          expect(String(report?.with?.run_outcome)).not.toContain('skipped_space_disabled');
+        });
+      });
+    });
+
+    describe('review_started', () => {
+      const names = topLevelNames(review);
+      const report = stepIn(reviewSteps, 'report_review_started');
+
+      it('is a review report step', () => {
+        expect(report?.type).toBe(REPORT_STEP_TYPE);
+      });
+
+      // `verify_investigation` has no `on-failure`, so reaching the report means the
+      // Investigation exists and its id joins Investigation events to the run.
+      it('reports immediately after the Investigation is verified', () => {
+        expect(names.indexOf('report_review_started') - names.indexOf('verify_investigation')).toBe(
+          1
+        );
+      });
+
+      it('reports the derived Investigation id', () => {
+        expect(report?.with?.investigation_id).toBe(derivedInvestigationId);
+      });
+
+      // The create 409s on a re-review and continues, so its error is the signal.
+      it.each([
+        [true, 'the create conflicted with an existing Investigation', { error: { type: 'x' } }],
+        [false, 'the create opened the Investigation', { output: { conversation_id: 'x' } }],
+      ])('reports is_rereview %s when %s', (expected, _scenario, openInvestigation) => {
+        expect(
+          renderField(reviewSteps, 'report_review_started', 'is_rereview', {
+            steps: { open_investigation: openInvestigation },
+          })
+        ).toBe(expected);
+      });
+    });
+
+    describe('analysis_completed', () => {
+      const names = topLevelNames(review);
+      const report = stepIn(reviewSteps, 'report_analysis_completed');
+
+      it('is a review report step', () => {
+        expect(report?.type).toBe(REPORT_STEP_TYPE);
+      });
+
+      it('reports immediately after the verdict is recorded', () => {
+        expect(names.indexOf('report_analysis_completed') - names.indexOf('refresh_verdict')).toBe(
+          1
+        );
+      });
+
+      // `refresh_verdict` is conditional; the report must not inherit its guard.
+      it('reports for every verdict', () => {
+        expect(report?.if).toBeUndefined();
+      });
+
+      it('reports the resolved verdict', () => {
+        expect(report?.with?.verdict).toBe('{{ steps.resolve_analysis.output.verdict }}');
+      });
+
+      it.each([
+        [true, 'the analysis child failed', { error: { message: 'boom' } }],
+        [false, 'the analysis child completed', { output: { verdict: 'true_positive' } }],
+      ])('reports analysis_error %s when %s', (expected, _scenario, runAnalysis) => {
+        expect(
+          renderField(reviewSteps, 'report_analysis_completed', 'analysis_error', {
+            steps: { run_fp_tp_analysis: runAnalysis },
+          })
+        ).toBe(expected);
+      });
+    });
+
+    describe('handoff_resolved', () => {
+      const names = topLevelNames(review);
+      const report = stepIn(reviewSteps, 'report_handoff_resolved');
+
+      it('is a review report step', () => {
+        expect(report?.type).toBe(REPORT_STEP_TYPE);
+      });
+
+      it('reports immediately after the decision is recorded', () => {
+        expect(names.indexOf('report_handoff_resolved') - names.indexOf('record_decision')).toBe(1);
+      });
+
+      // `record_decision` is an unconditional `data.set`, so without this guard every
+      // non-escalated review would report a handoff that never happened.
+      it('reports only for an escalated review', () => {
+        expect(report?.if).toBe('${{ steps.resolve_escalation.output.escalate == true }}');
+      });
+
+      it('reports the verdict that escalated', () => {
+        expect(report?.with?.verdict).toBe('{{ steps.resolve_analysis.output.verdict }}');
+      });
+
+      it('reports whether the review asked the gate to auto-approve', () => {
+        expect(
+          renderField(reviewSteps, 'report_handoff_resolved', 'auto_approve_requested', {
+            steps: { resolve_escalation: { output: { auto_approve: true } } },
+          })
+        ).toBe(true);
+      });
+
+      it.each([
+        [
+          'approved',
+          'an approved handoff whose action succeeded',
+          { approved: true, declined: false, expired: false },
+          { decision: 'approved', status: 'succeeded' },
+        ],
+        [
+          'dismissed',
+          'a dismissed handoff',
+          { approved: false, declined: true, expired: false },
+          { decision: 'dismissed', status: 'no_action' },
+        ],
+        [
+          'expired',
+          'a proposal nobody decided',
+          { approved: false, declined: false, expired: true },
+          { status: 'expired' },
+        ],
+        [
+          'approved_action_failed',
+          'an approved handoff whose action failed',
+          { approved: false, declined: false, expired: false },
+          { decision: 'approved', status: 'failed' },
+        ],
+      ])('renders outcome %s for %s', (expected, _scenario, recordDecision, gate) => {
+        expect(
+          renderField(reviewSteps, 'report_handoff_resolved', 'outcome', {
+            steps: {
+              escalation_gate: { output: gate },
+              record_decision: { output: recordDecision },
+            },
+          })
+        ).toBe(expected);
+      });
+    });
+
+    describe('reports added without reordering the review', () => {
+      it('keeps the existing review steps in their order', () => {
+        const withoutReports = topLevelNames(review).filter(
+          (name) =>
+            ![
+              'report_review_started',
+              'report_analysis_completed',
+              'report_handoff_resolved',
+            ].includes(name)
+        );
+
+        expect(withoutReports).toEqual([
+          'resolve_investigation_id',
+          'open_investigation',
+          'verify_investigation',
+          'journal_review_started',
+          'attach_discovery',
+          'attach_alerts',
+          'verify_evidence',
+          'journal_evidence_attached',
+          'journal_analysis_started',
+          'run_fp_tp_analysis',
+          'resolve_analysis',
+          'attach_verdict',
+          'refresh_verdict',
+          'journal_analysis_finished',
+          'resolve_context',
+          'apply_verdict',
+          'resolve_escalation',
+          'escalation_gate',
+          'read_proposal_decision',
+          'record_decision',
+          'journal_decision_recorded',
+          'record_forensics_handoff',
+          'close_investigation_declined',
+          'close_attack_declined',
+          'journal_attack_status_declined',
+          'record_decision_lapsed',
+          'emit_result',
+        ]);
+      });
+    });
+
+    // The engine ships a failed run's error message in its terminal telemetry event,
+    // so a `workflow.fail` message must not interpolate ids or the space.
+    describe('failure messages', () => {
+      const ID_REFERENCE = /\b(inputs\.[a-z_]*_id|execution\.id|workflow\.(id|spaceId))\b/;
+
+      it.each([
+        ['runner', workerSteps],
+        ['review', reviewSteps],
+        ['batched generation', flatten(batchedGeneration.steps)],
+        ['FP/TP analysis', flatten(fpTpAnalysis.steps)],
+      ])('the %s interpolates no id into a workflow.fail message', (_name, steps) => {
+        expect(
+          steps
+            .filter((step) => step.type === 'workflow.fail')
+            .filter((step) => ID_REFERENCE.test(String(step.with?.message)))
+            .map((step) => step.name)
+        ).toEqual([]);
+      });
+    });
+
+    describe('managed versions', () => {
+      // Both are fixed `yaml` definitions, so the hash alone would upgrade them; the
+      // bump is the deliberate signal that the report steps shipped.
+      it('bumps the runner to version 5 for its report step', () => {
+        expect(ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW.version).toBe(5);
+      });
+
+      it('bumps the review to version 6 for its report steps', () => {
+        expect(ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW.version).toBe(6);
+      });
     });
   });
 });

@@ -78,6 +78,17 @@ Emitted by the runner once every review has been dispatched.
 | `attacks_generated` | long | yes | Attacks the model generated, before deduplication |
 | `attacks_persisted` | long | yes | Attacks persisted and dispatched for review |
 
+The runner derives `run_outcome` from its own counts, first match wins:
+
+1. `empty_no_alerts`: no generation batch, because no alert was retrieved.
+2. `failed_all_batches`: every batch failed.
+3. `degraded_partial`: some batches failed, whether or not attacks persisted.
+4. `produced`: at least one attack persisted.
+5. `empty_all_duplicates`: attacks were generated, but every one already existed.
+6. `empty_no_attacks`: nothing was generated.
+
+There is no `skipped_space_disabled` outcome: a space with AlertZero off never launches the runner.
+
 ### `alertzero_ad_worker_review_started`
 
 Emitted by a review once its Investigation exists.
@@ -105,7 +116,7 @@ Emitted by a review after a **completed** escalation gate. For a gate that faile
 | Field | Type | Required | Description |
 |---|---|---|---|
 | envelope | | | See above |
-| `outcome` | keyword | yes | `approved`, `dismissed`, `expired` or `approved_action_failed` |
+| `outcome` | keyword | yes | `approved` (approved, and the handoff action succeeded), `dismissed`, `expired` (nobody decided) or `approved_action_failed` (approved, but the handoff action did not succeed) |
 | `verdict` | keyword | no | The verdict that led to the escalation (`true_positive` or `inconclusive`) |
 | `auto_approve_requested` | boolean | no | Whether the review asked the gate to auto-approve |
 
