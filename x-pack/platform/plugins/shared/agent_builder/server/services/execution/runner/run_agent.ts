@@ -66,7 +66,10 @@ export const createAgentHandlerContext = async <TParams = Record<string, unknown
   const spaceId = getCurrentSpaceId({ request, spaces });
   const toolRegistry = await toolsService.getRegistry({ request });
   const agentRegistry = await manager.deps.agentsService.getRegistry({ request });
-  const conversationClient = await manager.deps.conversationService.getScopedClient({ request });
+  const conversationClient = await manager.deps.conversationService.getScopedClient({
+    request,
+    source: { type: 'execution' },
+  });
 
   const { filesystemService, bashService } = await createFilesystemServices({
     manager,

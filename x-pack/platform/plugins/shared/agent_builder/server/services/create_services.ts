@@ -26,6 +26,10 @@ import {
   type ConversationEventsService,
   createConversationEventsService,
 } from './conversation_events';
+import {
+  type ConversationLifecycleService,
+  createConversationLifecycleService,
+} from './conversation_lifecycle';
 import { HooksService } from './hooks';
 import { type SkillService, createSkillService } from './skills';
 import { AuditLogService } from '../audit';
@@ -47,6 +51,7 @@ interface ServiceInstances {
   attachments: AttachmentService;
   renderers: RendererService;
   conversationEvents: ConversationEventsService;
+  conversationLifecycle: ConversationLifecycleService;
   hooks: HooksService;
   skills: SkillService;
   plugins: PluginsService;
@@ -79,6 +84,9 @@ export class ServiceManager {
       attachments: createAttachmentService(),
       renderers: createRendererService(),
       conversationEvents: createConversationEventsService(),
+      conversationLifecycle: createConversationLifecycleService({
+        logger: logger.get('conversationLifecycle'),
+      }),
       hooks: new HooksService(),
       skills: createSkillService(),
       plugins: createPluginsService(),
@@ -104,6 +112,7 @@ export class ServiceManager {
       attachments: this.services.attachments.setup(),
       renderers: this.services.renderers.setup(),
       conversationEvents: this.services.conversationEvents.setup(),
+      conversationLifecycle: this.services.conversationLifecycle.setup(),
       hooks: this.services.hooks.setup({ logger: logger.get('hooks') }),
       skills: skillsSetup,
       plugins: this.services.plugins.setup({ skillsSetup }),
@@ -166,6 +175,8 @@ export class ServiceManager {
 
     const conversationEvents = this.services.conversationEvents.start();
 
+    const conversationLifecycle = this.services.conversationLifecycle.start();
+
     const tools = this.services.tools.start({
       getRunner,
       spaces,
@@ -214,6 +225,7 @@ export class ServiceManager {
       agents,
       eventBus: conversationEventBus,
       conversationEvents,
+      conversationLifecycle,
     });
 
     const runnerFactory = new RunnerFactoryImpl({

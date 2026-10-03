@@ -269,18 +269,22 @@ export class AnalyticsService {
     agentId,
     conversationId,
     executionId,
+    interactive,
     modelProvider,
     round,
     roundCount,
     conversationAttachments,
+    templateId,
   }: {
     agentId: string;
     conversationId?: string;
     executionId?: string;
+    interactive?: boolean;
     modelProvider: ModelProvider;
     round: ConversationRound;
     roundCount: number;
     conversationAttachments: VersionedAttachment[];
+    templateId?: string;
   }): void {
     try {
       const normalizedAgentId = normalizeAgentIdForTelemetry(agentId);
@@ -326,6 +330,7 @@ export class AnalyticsService {
           origin: round.origin?.type,
           input_tokens: round.model_usage.input_tokens,
           cached_input_tokens: round.model_usage.cached_input_tokens,
+          interactive,
           llm_calls: round.model_usage.llm_calls,
           message_length: round.input.message.length,
           model: round.model_usage.model,
@@ -336,6 +341,7 @@ export class AnalyticsService {
           response_length: round.response.message.length,
           round_number: roundCount,
           started_at: round.started_at,
+          template_id: templateId,
           time_to_first_token: round.time_to_first_token,
           time_to_last_token: round.time_to_last_token,
           tools_invoked: toolsInvoked,
@@ -354,17 +360,21 @@ export class AnalyticsService {
     conversationId,
     executionId,
     error,
+    interactive,
     modelProvider,
     roundId,
     roundOrigin,
+    templateId,
   }: {
     agentId: string;
     conversationId?: string;
     executionId?: string;
     error: unknown;
+    interactive?: boolean;
     modelProvider: ModelProvider;
     roundId?: string;
     roundOrigin?: TelemetryConversationOrigin;
+    templateId?: string;
   }): void {
     try {
       const normalizedAgentId = normalizeAgentIdForTelemetry(agentId);
@@ -379,6 +389,8 @@ export class AnalyticsService {
         model_provider: modelProvider,
         error_message: errorMessage,
         error_type: errorType,
+        template_id: templateId,
+        interactive,
       });
     } catch (err) {
       // Do not fail the request if telemetry fails

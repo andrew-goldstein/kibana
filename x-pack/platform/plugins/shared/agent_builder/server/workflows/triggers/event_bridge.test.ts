@@ -120,6 +120,27 @@ describe('registerConversationWorkflowEventBridge', () => {
     });
   });
 
+  it('forwards exactly the pinned metadata updated trigger payload keys', async () => {
+    eventBus.emitMetadataPatched(request, {
+      conversationId: 'child-conv',
+      templateId: 'investigation',
+      parentId: 'parent-conv',
+      changedFields: ['status'],
+    });
+
+    await flushMicrotasks();
+
+    expect(mockClient.emitEvent).toHaveBeenCalledTimes(1);
+    const [[triggerId, payload]] = (mockClient.emitEvent as jest.Mock).mock.calls;
+    expect(triggerId).toBe(ConversationMetadataUpdatedTriggerId);
+    expect(Object.keys(payload).sort()).toEqual([
+      'changedFields',
+      'conversationId',
+      'parentId',
+      'templateId',
+    ]);
+  });
+
   it('does nothing when workflowsExtensions is undefined', async () => {
     const isolatedBus = createConversationEventBus();
     registerConversationWorkflowEventBridge(isolatedBus, undefined, logger, isExperimentalEnabled);

@@ -62,7 +62,10 @@ export const createAttachmentPublicClient = ({
   source,
 }: Deps): AttachmentPublicClient => {
   const loadState = async (conversationId: string) => {
-    const conversationClient = await conversationsService.getScopedClient({ request });
+    const conversationClient = await conversationsService.getScopedClient({
+      request,
+      source: { type: source },
+    });
     const conversation = await conversationClient.get(conversationId);
     const stateManager = createAttachmentStateManager(conversation.attachments ?? [], {
       getTypeDefinition: attachmentsService.getTypeDefinition,

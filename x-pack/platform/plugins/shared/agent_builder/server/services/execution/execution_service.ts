@@ -311,7 +311,10 @@ class AgentExecutionServiceImpl implements AgentExecutionService {
       throw createBadRequestError('User message requests require input or attachments');
     }
 
-    const conversationClient = await this.deps.conversationService.getScopedClient({ request });
+    const conversationClient = await this.deps.conversationService.getScopedClient({
+      request,
+      source: { type: 'execution' },
+    });
     const { validatedParams, conversation, receivedAt } = await this.resolveConversationRequest({
       params,
       request,
@@ -659,7 +662,10 @@ class AgentExecutionServiceImpl implements AgentExecutionService {
   }): Promise<ConversationClient> {
     const { conversationService } = this.deps;
 
-    const requestClient = await conversationService.getScopedClient({ request });
+    const requestClient = await conversationService.getScopedClient({
+      request,
+      source: { type: 'execution' },
+    });
 
     if (!parentExecutionId) {
       return requestClient;
@@ -673,6 +679,7 @@ class AgentExecutionServiceImpl implements AgentExecutionService {
 
     return conversationService.getScopedClientAsUser({
       request,
+      source: { type: 'execution' },
       user: { ...requestClient.getUser(), ...parentOwner },
     });
   }

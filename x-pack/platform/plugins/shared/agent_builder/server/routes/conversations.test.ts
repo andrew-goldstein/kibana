@@ -529,6 +529,36 @@ describe('POST /conversations', () => {
     expect(result.payload).toBe(createdConversation);
   });
 
+  it('builds the conversation client with the http_api source', async () => {
+    const getScopedClient = jest.fn().mockResolvedValue({
+      create: jest.fn().mockResolvedValue(createdConversation),
+      exists: jest.fn().mockResolvedValue(false),
+      get: jest.fn(),
+    });
+    let createHandler: ((ctx: any, req: any, res: any) => Promise<any>) | undefined;
+    const router = makeRouter((h) => {
+      createHandler = h;
+    });
+
+    registerConversationRoutes({
+      router,
+      getInternalServices: jest.fn().mockReturnValue({
+        agents: {
+          getRegistry: jest.fn().mockResolvedValue({
+            get: jest.fn().mockResolvedValue({ id: 'elastic-default-agent' }),
+          }),
+        },
+        conversations: { getScopedClient },
+      }),
+      logger: loggingSystemMock.createLogger(),
+    } as never);
+
+    const request = { body: {} };
+    await createHandler!(defaultCtx, request, defaultResponse);
+
+    expect(getScopedClient).toHaveBeenCalledWith({ request, source: { type: 'http_api' } });
+  });
+
   it('creates a conversation with the provided title and access_control', async () => {
     const mockCreate = jest.fn().mockResolvedValue({ ...createdConversation, title: 'My chat' });
     const mockGet = jest.fn().mockResolvedValue({ ...createdConversation, title: 'My chat' });

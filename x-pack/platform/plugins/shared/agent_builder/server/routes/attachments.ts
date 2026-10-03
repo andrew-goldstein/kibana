@@ -213,7 +213,10 @@ export function registerAttachmentRoutes({
           getInternalServices();
         const { conversation_id: conversationId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
         const stateManager = createAttachmentStateManager(conversation.attachments ?? [], {
           getTypeDefinition: attachmentsService.getTypeDefinition,
@@ -583,7 +586,10 @@ export function registerAttachmentRoutes({
           getInternalServices();
         const { conversation_id: conversationId, attachment_id: attachmentId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
 
         const stateManager = createAttachmentStateManager(conversation.attachments ?? [], {
@@ -679,7 +685,10 @@ export function registerAttachmentRoutes({
         const { conversation_id: conversationId, attachment_id: attachmentId } = request.params;
         const { description } = request.body;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
 
         const stateManager = createAttachmentStateManager(conversation.attachments ?? [], {
@@ -773,7 +782,10 @@ export function registerAttachmentRoutes({
         const { conversation_id: conversationId, attachment_id: attachmentId } = request.params;
         const { origin } = request.body;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
 
         const stateManager = createAttachmentStateManager(conversation.attachments ?? [], {

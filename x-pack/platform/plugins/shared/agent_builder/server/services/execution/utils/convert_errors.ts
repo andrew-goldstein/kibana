@@ -57,18 +57,22 @@ export function convertErrors<T>({
   analyticsService,
   conversationId,
   executionId,
+  interactive,
   logger,
   modelProvider,
   roundOrigin,
+  templateId,
   trackingService,
 }: {
   agentId: string;
   analyticsService?: AnalyticsService;
   conversationId?: string;
   executionId?: string;
+  interactive?: boolean;
   logger: Logger;
   modelProvider: ModelProvider;
   roundOrigin?: ConversationOriginType;
+  templateId?: string;
   trackingService?: TrackingService;
 }): OperatorFunction<T, T> {
   return ($source) => {
@@ -89,8 +93,10 @@ export function convertErrors<T>({
           conversationId,
           executionId,
           error: err,
+          interactive,
           modelProvider,
           roundOrigin,
+          templateId,
         });
 
         return throwError(() => toClientError(err));

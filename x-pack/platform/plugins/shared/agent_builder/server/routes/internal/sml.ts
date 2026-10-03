@@ -53,7 +53,10 @@ export function registerInternalSmlRoutes({
         const savedObjectsClient = coreStart.savedObjects.getScopedClient(request);
 
         // Fail with 404 before resolving any SML item when the conversation does not exist.
-        const conversationClient = await conversationsService.getScopedClient({ request });
+        const conversationClient = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         await conversationClient.get(conversationId);
 
         const resolvedItems = await agentBuilderSml.resolveSmlAttachItems({

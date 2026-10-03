@@ -869,6 +869,23 @@ describe('AgentExecutionService', () => {
 
       expect(conversationService.getScopedClientAsUser).not.toHaveBeenCalled();
     });
+
+    it('binds the execution source to the conversation clients it builds', async () => {
+      mockExecutionClient.peek.mockResolvedValueOnce({
+        status: ExecutionStatus.running,
+        eventCount: 0,
+        owner: { id: 'profile-1', username: 'alice' },
+      });
+
+      await executeSubAgent();
+
+      expect(conversationService.getScopedClient).toHaveBeenCalledWith(
+        expect.objectContaining({ source: { type: 'execution' } })
+      );
+      expect(conversationService.getScopedClientAsUser).toHaveBeenCalledWith(
+        expect.objectContaining({ source: { type: 'execution' } })
+      );
+    });
   });
 
   describe('executeAgent with an idempotency key', () => {
@@ -1044,6 +1061,15 @@ describe('AgentExecutionService', () => {
       conversationClient.exists.mockResolvedValue(true);
       conversationClient.appendEvents.mockResolvedValue(conversation);
       conversationClient.create.mockResolvedValue(conversation);
+    });
+
+    it('builds the conversation client with the execution source', async () => {
+      await converse();
+
+      expect(conversationService.getScopedClient).toHaveBeenCalled();
+      conversationService.getScopedClient.mock.calls.forEach(([options]) => {
+        expect(options).toEqual(expect.objectContaining({ source: { type: 'execution' } }));
+      });
     });
 
     it('writes the opening user message on the round it reserved', async () => {

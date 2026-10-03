@@ -89,6 +89,7 @@ const APPLY_TEMPLATE_PATH = `${internalApiPath}/conversations/{conversation_id}/
 describe('registerInternalConversationRoutes - _apply_template', () => {
   let routeHandler: (ctx: any, req: any, res: any) => Promise<any>;
   let applyTemplate: jest.Mock;
+  let getScopedClient: jest.Mock;
 
   const createMockContext = ({ featureFlagEnabled = true } = {}) => ({
     core: Promise.resolve({
@@ -115,10 +116,9 @@ describe('registerInternalConversationRoutes - _apply_template', () => {
       .fn()
       .mockResolvedValue({ id: 'conv-1', template_id: 'phishing', template_version: 1 });
 
+    getScopedClient = jest.fn().mockResolvedValue({ applyTemplate });
     const getInternalServices = jest.fn().mockReturnValue({
-      conversations: {
-        getScopedClient: jest.fn().mockResolvedValue({ applyTemplate }),
-      },
+      conversations: { getScopedClient },
     });
 
     const routeHandlers: Record<string, (ctx: any, req: any, res: any) => Promise<any>> = {};
@@ -142,6 +142,14 @@ describe('registerInternalConversationRoutes - _apply_template', () => {
     } as unknown as RouteDependencies);
 
     routeHandler = routeHandlers[APPLY_TEMPLATE_PATH];
+  });
+
+  it('builds the conversation client with the http_api source', async () => {
+    const request = createRequest();
+
+    await routeHandler(createMockContext() as any, request, kibanaResponseFactory);
+
+    expect(getScopedClient).toHaveBeenCalledWith({ request, source: { type: 'http_api' } });
   });
 
   it('calls applyTemplate with the conversation id and template id from the request', async () => {
@@ -185,6 +193,7 @@ const PATCH_METADATA_PATH = `${internalApiPath}/conversations/{conversation_id}/
 describe('registerInternalConversationRoutes - PATCH /metadata', () => {
   let routeHandler: (ctx: any, req: any, res: any) => Promise<any>;
   let patchMetadata: jest.Mock;
+  let getScopedClient: jest.Mock;
 
   const createMockContext = ({ featureFlagEnabled = true } = {}) => ({
     core: Promise.resolve({
@@ -212,10 +221,9 @@ describe('registerInternalConversationRoutes - PATCH /metadata', () => {
       changedFields: [],
     });
 
+    getScopedClient = jest.fn().mockResolvedValue({ patchMetadata });
     const getInternalServices = jest.fn().mockReturnValue({
-      conversations: {
-        getScopedClient: jest.fn().mockResolvedValue({ patchMetadata }),
-      },
+      conversations: { getScopedClient },
     });
 
     const routeHandlers: Record<string, (ctx: any, req: any, res: any) => Promise<any>> = {};
@@ -239,6 +247,14 @@ describe('registerInternalConversationRoutes - PATCH /metadata', () => {
     } as unknown as RouteDependencies);
 
     routeHandler = routeHandlers[PATCH_METADATA_PATH];
+  });
+
+  it('builds the conversation client with the http_api source', async () => {
+    const request = createRequest();
+
+    await routeHandler(createMockContext() as any, request, kibanaResponseFactory);
+
+    expect(getScopedClient).toHaveBeenCalledWith({ request, source: { type: 'http_api' } });
   });
 
   it('calls patchMetadata with the conversation id and metadata from the request', async () => {

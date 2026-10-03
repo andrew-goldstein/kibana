@@ -205,6 +205,7 @@ const handleConversationExecution = async ({
 
   const conversationClient = await deps.conversationService.getScopedClientAsUser({
     request,
+    source: { type: 'execution' },
     user: { ...owner, isAdmin: false },
   });
 
@@ -415,6 +416,8 @@ const handleConversationExecution = async ({
                   round: event.data.round,
                   modelProvider: connectorProvider,
                   conversationAttachments: event.data.attachments ?? conversation.attachments ?? [],
+                  templateId: conversation.template_id,
+                  interactive: interactivity.enabled,
                 });
               }
             } catch (error) {
@@ -430,6 +433,8 @@ const handleConversationExecution = async ({
             conversationId: conversation.id,
             executionId: execution.executionId,
             roundOrigin: telemetryOrigin,
+            templateId: conversation.template_id,
+            interactive: interactivity.enabled,
           })
         );
       }

@@ -100,6 +100,12 @@ export type TelemetryConversationOrigin = `${ConversationOriginType}`;
 const CONVERSATION_ORIGIN_DESCRIPTION =
   'External system the conversation round came from (e.g. Slack). Unset when the round is not attributed to an external system, which includes rounds from the UI, from the API, and from sub-agent runs.';
 
+const CONVERSATION_TEMPLATE_ID_DESCRIPTION =
+  'ID of the conversation template applied to the conversation (e.g. "investigation"). Templates are registered in code, so the ID is sent as is. Unset when the conversation has no template.';
+
+const ROUND_INTERACTIVE_DESCRIPTION =
+  'Whether the round ran interactively, i.e. the agent could pause to prompt the user. False for non-interactive runs such as the workflow ai.agent step.';
+
 export interface ReportRoundCompleteParams {
   agent_id: string;
   attachments?: string[];
@@ -108,6 +114,7 @@ export interface ReportRoundCompleteParams {
   origin?: TelemetryConversationOrigin;
   input_tokens: number;
   cached_input_tokens?: number;
+  interactive?: boolean;
   llm_calls: number;
   message_length: number;
   model?: string;
@@ -118,6 +125,7 @@ export interface ReportRoundCompleteParams {
   round_number: number;
   round_status: string;
   started_at: string;
+  template_id?: string;
   time_to_first_token: number;
   time_to_last_token: number;
   tool_calls: number;
@@ -134,6 +142,8 @@ export interface ReportRoundErrorParams {
   origin?: TelemetryConversationOrigin;
   agent_id: string;
   round_id?: string;
+  template_id?: string;
+  interactive?: boolean;
 }
 
 export interface ReportAgentCreatedParams {
@@ -953,6 +963,13 @@ const ROUND_COMPLETE_EVENT: AgentBuilderTelemetryEvent = {
         optional: true,
       },
     },
+    interactive: {
+      type: 'boolean',
+      _meta: {
+        description: ROUND_INTERACTIVE_DESCRIPTION,
+        optional: true,
+      },
+    },
     llm_calls: {
       type: 'integer',
       _meta: {
@@ -1021,6 +1038,13 @@ const ROUND_COMPLETE_EVENT: AgentBuilderTelemetryEvent = {
       _meta: {
         description: 'When the round started',
         optional: false,
+      },
+    },
+    template_id: {
+      type: 'keyword',
+      _meta: {
+        description: CONVERSATION_TEMPLATE_ID_DESCRIPTION,
+        optional: true,
       },
     },
     time_to_first_token: {
@@ -1124,6 +1148,20 @@ const ROUND_ERROR_SCHEMA: AgentBuilderTelemetryEvent['schema'] = {
     _meta: {
       description: 'The ID of the agent involved in the conversation',
       optional: false,
+    },
+  },
+  template_id: {
+    type: 'keyword',
+    _meta: {
+      description: CONVERSATION_TEMPLATE_ID_DESCRIPTION,
+      optional: true,
+    },
+  },
+  interactive: {
+    type: 'boolean',
+    _meta: {
+      description: ROUND_INTERACTIVE_DESCRIPTION,
+      optional: true,
     },
   },
 };

@@ -35,6 +35,7 @@ import type {
   SerializedMetadataValue,
   TimelineEvent,
 } from '@kbn/agent-builder-common';
+import type { ConversationLifecycleSource } from '@kbn/agent-builder-server';
 import type { AgentRegistry } from '../../agents/agent_registry';
 import { CONVERSATION_BULK_GET_MAX_IDS } from '../../../../common/constants';
 import { createRound } from '../../../test_utils';
@@ -43,6 +44,11 @@ import { createClient, type ConversationClient } from './client';
 import type { Document } from './converters';
 import { roundToEvents } from './rounds_to_events';
 import type { ConversationEventsServiceStart } from '../../conversation_events';
+import {
+  createConversationLifecycleService,
+  createScopedConversationLifecycleNotifier,
+  type ScopedConversationLifecycleNotifier,
+} from '../../conversation_lifecycle';
 
 jest.mock('../templates/registry', () => ({ getTemplate: jest.fn() }));
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -2448,6 +2454,45 @@ describe('ConversationClient', () => {
 
         expect(eventEmitter.emitMetadataPatched).not.toHaveBeenCalled();
       });
+
+      it('a throwing callback does not fail the write', async () => {
+        const logger = loggerMock.create();
+        const eventEmitter = {
+          ...buildEventEmitter(),
+          emitMetadataPatched: jest.fn(() => {
+            throw new Error('listener exploded');
+          }),
+        };
+        const clientWithCb = createClient({
+          space: testSpace,
+          logger,
+          esClient: mockRawEsClient as unknown as ElasticsearchClient,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          conversationEvents: mockConversationEvents,
+          user: { id: 'user-1', username: 'test-user', isAdmin: false },
+          eventEmitter,
+        });
+
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: template.id,
+            metadata: { status: 'open' },
+          })
+        );
+
+        await expect(
+          clientWithCb.patchMetadata('conversation-1', { severity: 'high' })
+        ).resolves.toEqual({
+          conversation: expect.objectContaining({ id: 'conversation-1' }),
+          changedFields: ['severity'],
+        });
+
+        expect(eventEmitter.emitMetadataPatched).toHaveBeenCalledTimes(1);
+        expect(mockEsClient.index).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Failed to notify metadata patched for conversation "conversation-1": Error: listener exploded'
+        );
+      });
     });
   });
 
@@ -3087,6 +3132,595 @@ describe('ConversationClient', () => {
           events: [attachmentAddedEvent('evt-att-5')],
         })
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe('conversation lifecycle notifications', () => {
+    const template = makeTemplate(
+      'investigation',
+      {
+        severity: { input_type: 'SELECT', description: 'Severity', options: ['low', 'high'] },
+        status: {
+          input_type: 'SELECT',
+          description: 'Status',
+          options: ['open', 'closed'],
+          default_value: 'open',
+        },
+        summary: { input_type: 'TEXT', description: 'Summary' },
+        tags: { input_type: 'TEXT_ARRAY', description: 'Tags' },
+        notified: { input_type: 'TOGGLE', description: 'Notified' },
+      },
+      2
+    );
+
+    const flushListeners = () => new Promise((resolve) => setImmediate(resolve));
+
+    let logger: ReturnType<typeof loggerMock.create>;
+    let lifecycleNotifier: jest.Mocked<ScopedConversationLifecycleNotifier>;
+    let clientWithLifecycle: ConversationClient;
+
+    const buildClient = (notifier: ScopedConversationLifecycleNotifier) =>
+      createClient({
+        space: testSpace,
+        logger,
+        esClient: mockRawEsClient as unknown as ElasticsearchClient,
+        agentRegistry: agentRegistry as unknown as AgentRegistry,
+        conversationEvents: mockConversationEvents,
+        user: { id: 'user-1', username: 'test-user', isAdmin: false },
+        lifecycleNotifier: notifier,
+      });
+
+    beforeEach(() => {
+      logger = loggerMock.create();
+      lifecycleNotifier = { notifyCreated: jest.fn(), notifyMetadataUpdated: jest.fn() };
+      clientWithLifecycle = buildClient(lifecycleNotifier);
+      getTemplateMock.mockReturnValue(template);
+      mockEsClient.index.mockResolvedValue({ _seq_no: 2, _primary_term: 1 });
+    });
+
+    describe('create', () => {
+      beforeEach(() => {
+        mockEsClient.index.mockResolvedValue({ result: 'created', _seq_no: 0, _primary_term: 1 });
+        mockGetReturnsIndexedDocument();
+      });
+
+      it('reports created with every field that has a value, serialized, with next only', async () => {
+        await clientWithLifecycle.create({
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+          template_id: 'investigation',
+          metadata: { notified: true, tags: ['a', 'b'] },
+        });
+
+        expect(lifecycleNotifier.notifyCreated).toHaveBeenCalledTimes(1);
+        expect(lifecycleNotifier.notifyCreated).toHaveBeenCalledWith({
+          changes: {
+            notified: { next: 'true' },
+            status: { next: 'open' },
+            tags: { next: ['a', 'b'] },
+          },
+          conversationId: 'conversation-1',
+          templateId: 'investigation',
+          templateVersion: 2,
+        });
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('reports created after the conversation is indexed', async () => {
+        await clientWithLifecycle.create({
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+          template_id: 'investigation',
+        });
+
+        expect(mockEsClient.index.mock.invocationCallOrder[0]).toBeLessThan(
+          lifecycleNotifier.notifyCreated.mock.invocationCallOrder[0]
+        );
+      });
+
+      it('reports created with empty changes when no field has a value', async () => {
+        getTemplateMock.mockReturnValue(
+          makeTemplate('investigation', { summary: { input_type: 'TEXT', description: 'S' } })
+        );
+
+        await clientWithLifecycle.create({
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+          template_id: 'investigation',
+        });
+
+        expect(lifecycleNotifier.notifyCreated).toHaveBeenCalledWith(
+          expect.objectContaining({ changes: {}, templateId: 'investigation', templateVersion: 1 })
+        );
+      });
+
+      it('reports created even when reading the conversation back fails', async () => {
+        mockGetDocumentNotFound();
+
+        await expect(
+          clientWithLifecycle.create({
+            id: 'conversation-1',
+            title: 'Conversation 1',
+            agent_id: 'agent-1',
+            rounds: [],
+            template_id: 'investigation',
+          })
+        ).rejects.toThrow();
+
+        expect(lifecycleNotifier.notifyCreated).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not report a conversation created without a template', async () => {
+        await clientWithLifecycle.create({
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+        });
+
+        expect(lifecycleNotifier.notifyCreated).not.toHaveBeenCalled();
+      });
+
+      it('does not report when the conversation could not be indexed', async () => {
+        mockEsClient.index.mockRejectedValue(createConflictError());
+
+        await expect(
+          clientWithLifecycle.create({
+            id: 'conversation-1',
+            title: 'Conversation 1',
+            agent_id: 'agent-1',
+            rounds: [],
+            template_id: 'investigation',
+          })
+        ).rejects.toThrow();
+
+        expect(lifecycleNotifier.notifyCreated).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('patchMetadata', () => {
+      it('reports metadata_updated with the previous and next value of each changed field', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            templateVersion: 2,
+            metadata: { severity: 'low', status: 'open' },
+          })
+        );
+
+        await clientWithLifecycle.patchMetadata('conversation-1', {
+          severity: 'low',
+          status: 'closed',
+          tags: ['x'],
+        });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledTimes(1);
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledWith({
+          changes: {
+            status: { next: 'closed', previous: 'open' },
+            tags: { next: ['x'] },
+          },
+          conversationId: 'conversation-1',
+          templateId: 'investigation',
+          templateVersion: 2,
+        });
+        expect(lifecycleNotifier.notifyCreated).not.toHaveBeenCalled();
+      });
+
+      it('does not report a patch that changes nothing', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await clientWithLifecycle.patchMetadata('conversation-1', { status: 'open' });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('reports the values of the attempt that was written when the write is retried', async () => {
+        mockGetDocumentResponseOnce(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+        // A concurrent write set severity between the first read and the retry.
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { severity: 'high', status: 'open' },
+          })
+        );
+        mockEsClient.index.mockRejectedValueOnce(createConflictError());
+        mockEsClient.index.mockResolvedValue({ _seq_no: 3, _primary_term: 1 });
+
+        await clientWithLifecycle.patchMetadata('conversation-1', {
+          severity: 'low',
+          status: 'closed',
+        });
+
+        expect(mockEsClient.index).toHaveBeenCalledTimes(2);
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledTimes(1);
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledWith(
+          expect.objectContaining({
+            changes: {
+              severity: { next: 'low', previous: 'high' },
+              status: { next: 'closed', previous: 'open' },
+            },
+          })
+        );
+      });
+
+      it('does not report when the write fails', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({ templateId: 'investigation' })
+        );
+        mockEsClient.index.mockRejectedValue(new Error('disk full'));
+
+        await expect(
+          clientWithLifecycle.patchMetadata('conversation-1', { severity: 'high' })
+        ).rejects.toThrow('disk full');
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('does not fail the write when the notifier throws', async () => {
+        lifecycleNotifier.notifyMetadataUpdated.mockImplementation(() => {
+          throw new Error('notifier exploded');
+        });
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await expect(
+          clientWithLifecycle.patchMetadata('conversation-1', { severity: 'high' })
+        ).resolves.toEqual({
+          conversation: expect.objectContaining({ id: 'conversation-1' }),
+          changedFields: ['severity'],
+        });
+
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Failed to notify conversation lifecycle "metadata_updated" for conversation "conversation-1": Error: notifier exploded'
+        );
+      });
+    });
+
+    describe('applyTemplate', () => {
+      it('reports the seeded defaults when a template is first applied', async () => {
+        mockGetDocumentResponse(createConversationDocumentWithTemplate());
+
+        await clientWithLifecycle.applyTemplate('conversation-1', 'investigation');
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledWith({
+          changes: { status: { next: 'open' } },
+          conversationId: 'conversation-1',
+          templateId: 'investigation',
+          templateVersion: 2,
+        });
+      });
+
+      it('reports seeded and dropped fields on a version bump, but not preserved ones', async () => {
+        getTemplateMock.mockReturnValue(
+          makeTemplate(
+            'investigation',
+            {
+              kept_field: { input_type: 'TEXT', description: 'Kept' },
+              new_field: { input_type: 'TEXT', description: 'New', default_value: 'seeded' },
+            },
+            3
+          )
+        );
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            templateVersion: 2,
+            metadata: { dropped_field: 'old', kept_field: 'kept' },
+          })
+        );
+
+        await clientWithLifecycle.applyTemplate('conversation-1', 'investigation');
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledWith({
+          changes: {
+            dropped_field: { previous: 'old' },
+            new_field: { next: 'seeded' },
+          },
+          conversationId: 'conversation-1',
+          templateId: 'investigation',
+          templateVersion: 3,
+        });
+      });
+
+      it('does not report re-applying a template that changes no value', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            templateVersion: 2,
+            metadata: { status: 'closed' },
+          })
+        );
+
+        await clientWithLifecycle.applyTemplate('conversation-1', 'investigation');
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('does not report when the template is rejected', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({ templateId: 'escalation' })
+        );
+
+        await expect(
+          clientWithLifecycle.applyTemplate('conversation-1', 'investigation')
+        ).rejects.toThrow();
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('update', () => {
+      it('reports metadata_updated when the update replaces the metadata', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            templateVersion: 2,
+            metadata: { severity: 'low', status: 'open' },
+          })
+        );
+
+        await clientWithLifecycle.update({
+          id: 'conversation-1',
+          metadata: { notified: true, status: 'closed' },
+        });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).toHaveBeenCalledWith({
+          changes: {
+            notified: { next: 'true' },
+            severity: { previous: 'low' },
+            status: { next: 'closed', previous: 'open' },
+          },
+          conversationId: 'conversation-1',
+          templateId: 'investigation',
+          templateVersion: 2,
+        });
+      });
+
+      it('does not report an update without metadata', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await clientWithLifecycle.update({ id: 'conversation-1', title: 'Renamed' });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('does not report an update whose metadata is unchanged', async () => {
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await clientWithLifecycle.update({ id: 'conversation-1', metadata: { status: 'open' } });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+
+      it('does not report metadata written to a conversation without a template', async () => {
+        mockGetDocumentResponse(createConversationDocumentWithTemplate());
+
+        await clientWithLifecycle.update({
+          id: 'conversation-1',
+          metadata: { deductive_session_id: 'session-1' },
+        });
+
+        expect(lifecycleNotifier.notifyMetadataUpdated).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('delivery to subscribers', () => {
+      const workflowSource: ConversationLifecycleSource = {
+        isTestRun: false,
+        type: 'workflow',
+        workflowExecutionId: 'exec-1',
+        workflowId: 'wf-1',
+      };
+
+      const buildSubscribedClient = (source: ConversationLifecycleSource = workflowSource) => {
+        const lifecycle = createConversationLifecycleService({ logger });
+        const setup = lifecycle.setup();
+        const notifier = createScopedConversationLifecycleNotifier(lifecycle.start(), {
+          source,
+          spaceId: testSpace,
+        });
+        return { client: buildClient(notifier), setup };
+      };
+
+      it('delivers only the subscribed fields, only to subscribers of the template, with no request', async () => {
+        const { client: subscribedClient, setup } = buildSubscribedClient();
+        const statusListener = jest.fn();
+        const escalationListener = jest.fn();
+        setup.onMetadataUpdated(
+          { fields: ['status'], templateIds: ['investigation'] },
+          statusListener
+        );
+        setup.onMetadataUpdated(
+          { fields: ['status'], templateIds: ['escalation'] },
+          escalationListener
+        );
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            templateVersion: 2,
+            metadata: { status: 'open' },
+          })
+        );
+
+        await subscribedClient.patchMetadata('conversation-1', {
+          status: 'closed',
+          summary: 'free text that must not leak',
+        });
+        await flushListeners();
+
+        expect(escalationListener).not.toHaveBeenCalled();
+        expect(statusListener).toHaveBeenCalledTimes(1);
+        const [event] = statusListener.mock.calls[0];
+        expect(event).toEqual({
+          changes: { status: { next: 'closed', previous: 'open' } },
+          conversationId: 'conversation-1',
+          source: workflowSource,
+          spaceId: testSpace,
+          templateId: 'investigation',
+          templateVersion: 2,
+        });
+        expect(Object.keys(event).sort()).toEqual([
+          'changes',
+          'conversationId',
+          'source',
+          'spaceId',
+          'templateId',
+          'templateVersion',
+        ]);
+      });
+
+      it('does not call a subscriber when none of its fields changed', async () => {
+        const { client: subscribedClient, setup } = buildSubscribedClient();
+        const listener = jest.fn();
+        setup.onMetadataUpdated({ fields: ['severity'], templateIds: ['investigation'] }, listener);
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await subscribedClient.patchMetadata('conversation-1', { status: 'closed' });
+        await flushListeners();
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it('does not fail the write when listeners throw or reject', async () => {
+        const { client: subscribedClient, setup } = buildSubscribedClient();
+        const filter = { fields: ['status'], templateIds: ['investigation'] };
+        setup.onMetadataUpdated(filter, () => {
+          throw new Error('listener exploded');
+        });
+        setup.onMetadataUpdated(filter, () => Promise.reject(new Error('async boom')));
+        mockGetDocumentResponse(
+          createConversationDocumentWithTemplate({
+            templateId: 'investigation',
+            metadata: { status: 'open' },
+          })
+        );
+
+        await expect(
+          subscribedClient.patchMetadata('conversation-1', { status: 'closed' })
+        ).resolves.toEqual(expect.objectContaining({ changedFields: ['status'] }));
+        await flushListeners();
+
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Conversation lifecycle "metadata_updated" listener failed for conversation "conversation-1": Error: listener exploded'
+        );
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Conversation lifecycle "metadata_updated" listener failed for conversation "conversation-1": Error: async boom'
+        );
+      });
+
+      it.each<{
+        entryPoint: string;
+        kind: 'created' | 'metadata_updated';
+        source: ConversationLifecycleSource;
+        storedMetadata?: Record<string, SerializedMetadataValue>;
+        write: (conversationClient: ConversationClient) => Promise<unknown>;
+      }>([
+        {
+          entryPoint: 'create',
+          kind: 'created',
+          source: { type: 'http_api' },
+          write: (conversationClient) =>
+            conversationClient.create({
+              id: 'conversation-1',
+              title: 'Conversation 1',
+              agent_id: 'agent-1',
+              rounds: [],
+              template_id: 'investigation',
+            }),
+        },
+        {
+          entryPoint: 'patchMetadata',
+          kind: 'metadata_updated',
+          source: workflowSource,
+          storedMetadata: { status: 'open' },
+          write: (conversationClient) =>
+            conversationClient.patchMetadata('conversation-1', { status: 'closed' }),
+        },
+        {
+          entryPoint: 'applyTemplate',
+          kind: 'metadata_updated',
+          source: { type: 'execution' },
+          storedMetadata: {},
+          write: (conversationClient) =>
+            conversationClient.applyTemplate('conversation-1', 'investigation'),
+        },
+        {
+          entryPoint: 'update',
+          kind: 'metadata_updated',
+          source: { type: 'server_api' },
+          storedMetadata: { status: 'open' },
+          write: (conversationClient) =>
+            conversationClient.update({ id: 'conversation-1', metadata: { status: 'closed' } }),
+        },
+      ])(
+        '$entryPoint reports the source the client was constructed with',
+        async ({ kind, source, storedMetadata, write }) => {
+          const { client: subscribedClient, setup } = buildSubscribedClient(source);
+          const listener = jest.fn();
+          const filter = { fields: ['status'], templateIds: ['investigation'] };
+          if (kind === 'created') {
+            setup.onCreated(filter, listener);
+            mockEsClient.index.mockResolvedValue({
+              result: 'created',
+              _seq_no: 0,
+              _primary_term: 1,
+            });
+            mockGetReturnsIndexedDocument();
+          } else {
+            setup.onMetadataUpdated(filter, listener);
+            mockGetDocumentResponse(
+              createConversationDocumentWithTemplate({
+                templateId: 'investigation',
+                metadata: storedMetadata,
+              })
+            );
+          }
+
+          await write(subscribedClient);
+          await flushListeners();
+
+          expect(listener).toHaveBeenCalledTimes(1);
+          expect(listener).toHaveBeenCalledWith(
+            expect.objectContaining({ source, spaceId: testSpace })
+          );
+        }
+      );
     });
   });
 
