@@ -444,12 +444,18 @@ describe('buildOverviewStepExecutionFromContext', () => {
 });
 
 describe('isOverviewContextField', () => {
-  it.each(['workflow.name', 'execution.id', 'consts.target_index', 'kibanaUrl', 'now'])(
-    'treats %s as a workflow context path',
-    (field) => {
-      expect(isOverviewContextField(field)).toBe(true);
-    }
-  );
+  it.each([
+    'workflow.name',
+    'execution.id',
+    'consts.target_index',
+    'kibanaUrl',
+    'now',
+    'parent.executionId',
+    'root.executionId',
+    'root.workflowId',
+  ])('treats %s as a workflow context path', (field) => {
+    expect(isOverviewContextField(field)).toBe(true);
+  });
 
   it.each(['trace.traceId', 'trace.entryTransactionId', 'executionError.message', 'skipReason'])(
     'treats display-only %s as not a context path',

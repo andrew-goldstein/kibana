@@ -9,7 +9,11 @@
 
 import type { CoreStart } from '@kbn/core/server';
 import type { EsWorkflowExecution, WorkflowContext } from '@kbn/workflows';
-import { pickWorkflowDocumentVersion } from '@kbn/workflows';
+import {
+  hasParentWorkflowExecution,
+  hasRootWorkflowLineage,
+  pickWorkflowDocumentVersion,
+} from '@kbn/workflows';
 import {
   applyInputDefaults,
   getInputsFromDefinition,
@@ -19,6 +23,21 @@ import { buildWorkflowExecutionUrl, getKibanaUrl } from '../utils';
 
 export type WorkflowExecutionForInputRendering = Partial<EsWorkflowExecution> &
   Pick<EsWorkflowExecution, 'id' | 'workflowId' | 'spaceId' | 'createdAt'>;
+
+/** Root of the composition chain: self at top level, the stored root for a child, else unknown. */
+const buildRootContext = ({
+  context,
+  id,
+  workflowId,
+}: WorkflowExecutionForInputRendering): WorkflowContext['root'] => {
+  if (!hasParentWorkflowExecution(context)) {
+    return { workflowId, executionId: id };
+  }
+
+  return hasRootWorkflowLineage(context)
+    ? { workflowId: context.rootWorkflowId, executionId: context.rootWorkflowExecutionId }
+    : undefined;
+};
 
 export function buildInputDefaultRenderContext(
   workflowExecution: WorkflowExecutionForInputRendering,
@@ -75,6 +94,7 @@ export function buildInputDefaultRenderContext(
             depth: parentDepth !== undefined ? parentDepth + 1 : 0,
           }
         : undefined,
+    root: buildRootContext(workflowExecution),
     metadata,
   };
 }

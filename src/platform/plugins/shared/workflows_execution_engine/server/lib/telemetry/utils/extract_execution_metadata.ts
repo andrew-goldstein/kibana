@@ -7,7 +7,11 @@
  * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
-import { ExecutionStatus } from '@kbn/workflows';
+import {
+  ExecutionStatus,
+  hasParentWorkflowExecution,
+  hasRootWorkflowLineage,
+} from '@kbn/workflows';
 import type {
   EsWorkflowExecution,
   EsWorkflowStepExecution,
@@ -119,6 +123,16 @@ export interface WorkflowExecutionTelemetryMetadata extends OutputSizeTelemetryF
    * Only present for sub-workflow executions when set on the execution context.
    */
   parentWorkflowInvocation?: 'sync' | 'async';
+  /**
+   * The execution ID of the parent workflow execution that invoked this sub-workflow.
+   * Only present for sub-workflow executions when available in context.
+   */
+  parentWorkflowExecutionId?: string;
+  /**
+   * The execution ID of the top-level execution at the root of this sub-workflow chain.
+   * Only present for sub-workflow executions whose context carries the root lineage.
+   */
+  rootWorkflowExecutionId?: string;
   /**
    * Event-chain depth when this run was scheduled by the event-driven trigger handler.
    * Distinct from `compositionDepth` (sub-workflow nesting). Omitted when not an event-chain execution.
@@ -485,12 +499,15 @@ export function extractEventChainVisitedWorkflowIdsFromExecution(
  * Returns empty object for top-level executions.
  *
  * @param workflowExecution - The workflow execution
- * @returns compositionDepth and optional parentWorkflowId / parentWorkflowInvocation when this is a child execution
+ * @returns compositionDepth and optional parentWorkflowId / parentWorkflowInvocation /
+ * parentWorkflowExecutionId / rootWorkflowExecutionId when this is a child execution
  */
 export function extractCompositionContext(workflowExecution: EsWorkflowExecution): {
   compositionDepth?: number;
   parentWorkflowId?: string;
   parentWorkflowInvocation?: ParentWorkflowInvocationMode;
+  parentWorkflowExecutionId?: string;
+  rootWorkflowExecutionId?: string;
 } {
   if (workflowExecution.triggeredBy !== 'workflow-step') {
     return {};
@@ -503,11 +520,19 @@ export function extractCompositionContext(workflowExecution: EsWorkflowExecution
     typeof context.parentWorkflowId === 'string' ? context.parentWorkflowId : undefined;
   const parentWorkflowInvocation =
     (context.parentWorkflowInvocation as ParentWorkflowInvocationMode) || undefined;
+  const parentWorkflowExecutionId = hasParentWorkflowExecution(context)
+    ? context.parentWorkflowExecutionId
+    : undefined;
+  const rootWorkflowExecutionId = hasRootWorkflowLineage(context)
+    ? context.rootWorkflowExecutionId
+    : undefined;
 
   return {
     compositionDepth,
     ...(parentWorkflowId && { parentWorkflowId }),
     ...(parentWorkflowInvocation && { parentWorkflowInvocation }),
+    ...(parentWorkflowExecutionId && { parentWorkflowExecutionId }),
+    ...(rootWorkflowExecutionId && { rootWorkflowExecutionId }),
   };
 }
 
