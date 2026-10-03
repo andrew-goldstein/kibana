@@ -78,6 +78,23 @@ const buildDeps = () => {
 };
 
 describe('createAttachmentPublicClient', () => {
+  describe('conversation client source', () => {
+    it.each(['http_api', 'workflow', 'server_api'] as const)(
+      'builds the conversation client with its own bound source (%s)',
+      async (source) => {
+        const deps = buildDeps();
+        deps.conversationClient.get.mockResolvedValue({ id: 'c1', attachments: [], rounds: [] });
+
+        await deps.build(source).list({ conversationId: 'c1' });
+
+        expect(deps.conversationsService.getScopedClient).toHaveBeenCalledWith({
+          request: deps.request,
+          source: { type: source },
+        });
+      }
+    );
+  });
+
   describe('list', () => {
     it('returns active attachments by default', async () => {
       const deps = buildDeps();
@@ -94,6 +111,7 @@ describe('createAttachmentPublicClient', () => {
 
       expect(deps.conversationsService.getScopedClient).toHaveBeenCalledWith({
         request: deps.request,
+        source: { type: 'http_api' },
       });
       expect(result.results.map((r) => r.id)).toEqual(['a1']);
       expect(typeof result.total_token_estimate).toBe('number');

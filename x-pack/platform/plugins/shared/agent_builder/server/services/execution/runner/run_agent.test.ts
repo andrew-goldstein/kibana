@@ -76,6 +76,21 @@ describe('runAgent', () => {
     expect(agentClient.get).toHaveBeenCalledWith(params.agentId, { access: 'use' });
   });
 
+  it('builds the conversation client with the execution source', async () => {
+    await runAgent({
+      agentExecutionParams: {
+        agentId: 'test-agent',
+        agentParams: { nextInput: { message: 'bar' } },
+      },
+      parentManager: runnerManager,
+    });
+
+    expect(runnerDeps.conversationService.getScopedClient).toHaveBeenCalledWith({
+      request: runnerDeps.request,
+      source: { type: 'execution' },
+    });
+  });
+
   it('records the agent name on the run context stack', async () => {
     const createChild = jest.spyOn(runnerManager, 'createChild');
 

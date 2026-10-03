@@ -39,6 +39,7 @@ import type {
   ConversationEventsServiceSetup,
   ConversationEventsServiceStart,
 } from './conversation_events';
+import type { ConversationLifecycleServiceSetup } from './conversation_lifecycle';
 import type { SkillServiceSetup, SkillServiceStart } from './skills';
 import type { TrackingService } from '../telemetry/tracking_service';
 import type { AnalyticsService } from '../telemetry';
@@ -60,6 +61,7 @@ export interface InternalSetupServices {
   attachments: AttachmentServiceSetup;
   renderers: RendererServiceSetup;
   conversationEvents: ConversationEventsServiceSetup;
+  conversationLifecycle: ConversationLifecycleServiceSetup;
   hooks: HooksServiceSetup;
   skills: SkillServiceSetup;
   plugins: PluginsServiceSetup;

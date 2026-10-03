@@ -212,7 +212,10 @@ export function registerConversationRoutes({
           pinned,
         } = request.query;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const { results, total } = await client.list({ agentId, page, perPage, sortOrder, pinned });
 
         return response.ok<ListConversationsResponse>({
@@ -262,7 +265,10 @@ export function registerConversationRoutes({
         const { conversations: conversationsService } = getInternalServices();
         const { conversation_id: conversationId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const conversation = await client.get(conversationId);
 
         return response.ok<GetConversationResponse>({
@@ -309,7 +315,10 @@ export function registerConversationRoutes({
         const { conversations: conversationsService } = getInternalServices();
         const { conversation_id: conversationId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const status = await client.delete(conversationId);
 
         return response.ok<DeleteConversationResponse>({
@@ -426,7 +435,7 @@ export function registerConversationRoutes({
         } = request.body;
 
         const [client, agentRegistry] = await Promise.all([
-          conversationsService.getScopedClient({ request }),
+          conversationsService.getScopedClient({ request, source: { type: 'http_api' } }),
           agentsService.getRegistry({ request }),
         ]);
         const publicClient = createConversationPublicClient({ client, agentRegistry });
@@ -512,7 +521,10 @@ export function registerConversationRoutes({
         const { conversations: conversationsService } = getInternalServices();
         const { conversation_id: conversationId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const accessControl = await client.updateAccessControl(
           conversationId,
           request.body as UpdateConversationAccessControlRequestBody
@@ -591,7 +603,10 @@ export function registerConversationRoutes({
         const { conversations: conversationsService } = getInternalServices();
         const { conversation_id: conversationId } = request.params;
 
-        const client = await conversationsService.getScopedClient({ request });
+        const client = await conversationsService.getScopedClient({
+          request,
+          source: { type: 'http_api' },
+        });
         const events = await client.addCustomEvents({
           id: conversationId,
           events: request.body.events,

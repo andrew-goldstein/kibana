@@ -9,6 +9,7 @@ import { updateConversationMetadataStepDefinition } from './update_conversation_
 import {
   createStepHandlerContext,
   createWorkflowStepConversationClientMock,
+  stepConversationSource,
 } from '../../test_utils/workflow_steps';
 
 const getAgentRegistry = jest.fn().mockResolvedValue({ get: jest.fn() });
@@ -133,5 +134,27 @@ describe('updateConversationMetadataStepDefinition', () => {
     });
 
     expect(definition.inputSchema.safeParse({ updates: { status: 'open' } }).success).toBe(false);
+  });
+
+  it('builds the conversation client with the workflow source from the step context', async () => {
+    const { getConversationClient } = createWorkflowStepConversationClientMock({
+      patchMetadata: jest.fn().mockResolvedValue({
+        changedFields: ['status'],
+        conversation: { id: 'conv-1', metadata: { status: 'resolved' } },
+      }),
+    });
+    const definition = updateConversationMetadataStepDefinition({
+      getConversationClient,
+      getAgentRegistry,
+      getExecutionService,
+    });
+    const context = createStepHandlerContext({ input: baseInput });
+
+    await definition.handler(context);
+
+    expect(getConversationClient).toHaveBeenCalledWith(
+      jest.mocked(context.contextManager.getFakeRequest).mock.results[0].value,
+      stepConversationSource
+    );
   });
 });

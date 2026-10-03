@@ -6,6 +6,7 @@
  */
 
 import type { KibanaRequest } from '@kbn/core/server';
+import type { ConversationLifecycleWorkflowSource } from '@kbn/agent-builder-server';
 import type { ServerStepDefinition } from '@kbn/workflows-extensions/server';
 import type { AgentExecutionService } from '@kbn/agent-builder-server/execution';
 import type { ConversationClient } from '../services/conversation';
@@ -17,7 +18,11 @@ import { addConversationEventStepDefinition } from './steps/add_conversation_eve
 import { addUserMessageStepDefinition } from './steps/add_user_message';
 
 export interface ConversationStepDeps {
-  getConversationClient: (request: KibanaRequest) => Promise<ConversationClient>;
+  /** Returns a client whose writes are attributed to the calling step's workflow execution. */
+  getConversationClient: (
+    request: KibanaRequest,
+    source: ConversationLifecycleWorkflowSource
+  ) => Promise<ConversationClient>;
   getAgentRegistry: (request: KibanaRequest) => Promise<AgentRegistry>;
   getExecutionService: () => AgentExecutionService;
 }

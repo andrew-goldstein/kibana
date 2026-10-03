@@ -13,6 +13,11 @@ import type { StaticToolRegistration, ToolRegistry } from './tools';
 import type { AttachmentTypeDefinition, AttachmentPublicClient } from './attachments';
 import type { RendererTypeDefinition } from './renderers';
 import type { ConversationEventTypeDefinition } from './conversation_events';
+import type {
+  ConversationLifecycleCreatedListener,
+  ConversationLifecycleFilter,
+  ConversationLifecycleMetadataUpdatedListener,
+} from './conversation_lifecycle';
 import type { SkillDefinition } from './skills';
 import type { SkillRegistry } from './skills/registry';
 import type {
@@ -255,6 +260,20 @@ export interface ConversationEventsSetup {
   register(definition: ConversationEventTypeDefinition): void;
 }
 
+/** AgentBuilder conversation lifecycle setup contract. Listeners receive no request. */
+export interface ConversationLifecycleSetup {
+  /** Subscribe to conversations created with one of the filter's templates. */
+  onCreated(
+    filter: ConversationLifecycleFilter,
+    listener: ConversationLifecycleCreatedListener
+  ): void;
+  /** Subscribe to changes of the filter's metadata fields on conversations with one of its templates. */
+  onMetadataUpdated(
+    filter: ConversationLifecycleFilter,
+    listener: ConversationLifecycleMetadataUpdatedListener
+  ): void;
+}
+
 export interface AgentBuilderPluginSetup {
   /**
    * Agents setup contract, which can be used to register built-in agents.
@@ -280,6 +299,11 @@ export interface AgentBuilderPluginSetup {
    * Conversation events setup contract, which can be used to register custom event types.
    */
   conversationEvents: ConversationEventsSetup;
+  /**
+   * Conversation lifecycle setup contract, which can be used to subscribe to conversation creation
+   * and metadata updates.
+   */
+  conversationLifecycle: ConversationLifecycleSetup;
   /**
    * Hooks setup contract, which can be used to register lifecycle event hooks.
    */

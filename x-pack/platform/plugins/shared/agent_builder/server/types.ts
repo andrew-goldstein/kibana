@@ -45,6 +45,7 @@ export type {
   ToolsStart,
   AttachmentsSetup,
   ConversationEventsSetup,
+  ConversationLifecycleSetup,
   SkillsSetup,
   SkillsStart,
   AgentsSetup,

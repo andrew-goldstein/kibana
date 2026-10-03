@@ -139,7 +139,10 @@ export function registerInternalExecutionRoutes({
         });
       }
 
-      const conversationClient = await conversationsService.getScopedClient({ request });
+      const conversationClient = await conversationsService.getScopedClient({
+        request,
+        source: { type: 'http_api' },
+      });
 
       const abortController = new AbortController();
       request.events.aborted$.subscribe(() => {

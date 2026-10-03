@@ -35,6 +35,10 @@ const createSetupContractMock = (): AgentBuilderPluginSetupMock => {
     conversationEvents: {
       register: jest.fn(),
     },
+    conversationLifecycle: {
+      onCreated: jest.fn(),
+      onMetadataUpdated: jest.fn(),
+    },
     skills: {
       register: jest.fn(),
     },

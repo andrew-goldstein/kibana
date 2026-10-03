@@ -13,6 +13,7 @@ import {
 } from '../../../common/workflows/steps/create_conversation';
 import { createConversationPublicClient } from '../../services/conversation/conversation_public_client';
 import type { ConversationStepDeps } from '../registry';
+import { getWorkflowConversationSource } from './get_workflow_conversation_source';
 
 export const createConversationStepDefinition = ({
   getConversationClient,
@@ -24,7 +25,7 @@ export const createConversationStepDefinition = ({
       try {
         const request = context.contextManager.getFakeRequest();
         const [client, agentRegistry] = await Promise.all([
-          getConversationClient(request),
+          getConversationClient(request, getWorkflowConversationSource(context)),
           getAgentRegistry(request),
         ]);
         const publicClient = createConversationPublicClient({ client, agentRegistry });

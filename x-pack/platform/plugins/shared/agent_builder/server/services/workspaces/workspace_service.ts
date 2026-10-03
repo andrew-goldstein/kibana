@@ -44,7 +44,11 @@ class WorkspaceServiceImpl implements WorkspaceService {
   async getScopedClient({ request }: { request: KibanaRequest }): Promise<ScopedWorkspaceClient> {
     const { logger, elasticsearch, spaces, conversations } = this.deps;
 
-    const conversationClient = await conversations.getScopedClient({ request });
+    // Only HTTP routes build workspace clients.
+    const conversationClient = await conversations.getScopedClient({
+      request,
+      source: { type: 'http_api' },
+    });
     const workspaceClient = new WorkspaceClient({
       storage: createWorkspaceStorage({
         logger,
