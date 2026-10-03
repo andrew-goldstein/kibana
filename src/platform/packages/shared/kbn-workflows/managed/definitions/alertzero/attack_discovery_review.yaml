@@ -271,6 +271,28 @@ steps:
     with:
       conversation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
 
+  # Product telemetry. Every report step in this workflow reports only for a
+  # managed AlertZero Worker run, never fails the workflow, and sits outside any
+  # `parallel` branch: `on-failure: continue` and the short timeout keep a slow or
+  # failed report from holding up or failing the review, and a step with either
+  # cannot sit inside one. Every report is top level except the false-positive
+  # close report, which sits in its verdict arm. Nothing here reads a report's
+  # output.
+  #
+  # Reported once the Investigation is known to exist, with its id, so Investigation
+  # events join to this Worker run. The create continues past the 409 a re-review
+  # raises, and `verify_investigation` has already ended the run on any other
+  # failure, so an error on the create here means the Investigation already existed.
+  - name: report_review_started
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_review_started
+      investigation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+      is_rereview: "${{ steps.open_investigation.error != blank }}"
+
   # Always-on journal. `trigger_mode: never` (elastic/kibana#290223) persists a
   # user_message without waking the Investigation agent. A user round or
   # `ai.agent` against this conversation still would. A failed note must not
@@ -520,6 +542,20 @@ steps:
     on-failure:
       continue: true
 
+  # Reported for every verdict, so no `if`: `refresh_verdict` above is conditional.
+  # A failed analysis child leaves an error and no payload, which `resolve_analysis`
+  # has already mapped to the `failed` verdict. A timeout cannot be told apart from
+  # any other failure here.
+  - name: report_analysis_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_analysis_completed
+      verdict: "{{ steps.resolve_analysis.output.verdict }}"
+      analysis_error: "${{ steps.run_fp_tp_analysis.error != blank }}"
+
   - name: journal_analysis_finished
     type: workflow.execute
     with:
@@ -574,6 +610,30 @@ steps:
             on-failure:
               continue: true
 
+          # Product telemetry: the Worker reports its own Investigation close, with
+          # the reason the close above writes. Like every report step it never fails
+          # the review. It sits in this arm, right after the close, rather than at
+          # the top level: the attack close below fails the run when it fails, and a
+          # report after the switch would then miss an Investigation that was
+          # already closed. A switch arm, unlike a `parallel` branch, accepts the
+          # step-level `timeout` and `on-failure`.
+          #
+          # The close continues on failure, so the report runs only when the close
+          # left no error. `== blank` because a step that succeeded has no `error`.
+          # It also needs the close to have changed `status`: a human may close the
+          # Investigation while the analysis runs, and then the patch succeeds as a
+          # no-op for `status` and Agentic Investigations has already reported it.
+          - name: report_investigation_closed_false_positive
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_false_positive.error == blank and steps.close_investigation_false_positive.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: ad_worker_investigation_closed
+              investigation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+              close_reason: false_positive
+
           # `reason: false_positive` is the verdict, recorded on the attack itself.
           # The claim is about the ATTACK — this narrative is not supported by its
           # evidence — not about the detection alerts underneath, which is why
@@ -612,13 +672,14 @@ steps:
                         open. {{ steps.close_attack_false_positive.error }}
                   on-failure:
                     continue: true
+                # A fixed message: the engine ships it as telemetry, so the raw
+                # error stays in the journal note above and on the close step.
                 - name: fail_close_attack_false_positive
                   type: workflow.fail
                   with:
                     message: >-
                       Failed to close the attack after closing the Investigation as a
-                      false positive.
-                      {{ steps.close_attack_false_positive.error }}
+                      false positive. The attack is still open.
 
           - name: journal_fp_closed
             type: workflow.execute
@@ -824,6 +885,36 @@ steps:
       declined: "${{ steps.escalation_gate.output.decision == 'dismissed' }}"
       expired: "${{ steps.escalation_gate.output.status == 'expired' }}"
 
+  # Guarded like the other escalation steps: `record_decision` is an unconditional
+  # `data.set`, so without the `if` every non-escalated review would report a
+  # handoff that never happened. Only a COMPLETED gate reaches here. A gate that
+  # failed or was cancelled has already ended the review at `escalation_gate`, and
+  # its outcome is on the proposal instead.
+  #
+  # The outcome reads the arms above in the order the journal note does. The
+  # fourth case is the one `record_decision` leaves without an arm: approved, but
+  # the handoff action did not succeed.
+  - name: report_handoff_resolved
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.resolve_escalation.output.escalate == true }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_handoff_resolved
+      outcome: |-
+        {%- if steps.record_decision.output.approved == true -%}
+        approved
+        {%- elsif steps.record_decision.output.declined == true -%}
+        dismissed
+        {%- elsif steps.record_decision.output.expired == true -%}
+        expired
+        {%- elsif steps.escalation_gate.output.decision == 'approved' -%}
+        approved_action_failed
+        {%- endif -%}
+      verdict: "{{ steps.resolve_analysis.output.verdict }}"
+      auto_approve_requested: "${{ steps.resolve_escalation.output.auto_approve }}"
+
   - name: journal_decision_recorded
     type: workflow.execute
     if: "${{ steps.resolve_escalation.output.escalate == true }}"
@@ -881,6 +972,26 @@ steps:
     on-failure:
       continue: true
 
+  # Product telemetry: the Worker reports its own Investigation close, with the
+  # reason the close above writes. Guarded like that close, and also on the close
+  # having left no error: it continues on failure, so without the second conjunct a
+  # failed close would still count as closed. The third conjunct needs the close to
+  # have changed `status`. A human close through Agentic Investigations dismisses
+  # this review's pending gate, which resumes it as a decline; that close then finds
+  # the Investigation already closed, and the human close is already reported there.
+  # Right after the close, before the attack close, which fails the run when it
+  # fails.
+  - name: report_investigation_closed_declined
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_decision.output.declined == true and steps.close_investigation_declined.error == blank and steps.close_investigation_declined.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: ad_worker_investigation_closed
+      investigation_id: "{{ steps.resolve_investigation_id.output.investigation_id }}"
+      close_reason: other
+
   # Closed with NO `reason`, unlike the false-positive branch. There the analysis
   # produced a verdict about the attack, so `false_positive` records it. Here the
   # analyst only declined an escalation, which says the attack is not worth deeper
@@ -915,12 +1026,14 @@ steps:
                 still open. {{ steps.close_attack_declined.error }}
           on-failure:
             continue: true
+        # A fixed message: the engine ships it as telemetry, so the raw error stays
+        # in the journal note above and on the close step.
         - name: fail_close_attack_declined
           type: workflow.fail
           with:
             message: >-
               Failed to close the attack after closing the Investigation on a declined
-              escalation. {{ steps.close_attack_declined.error }}
+              escalation. The attack is still open.
 
   - name: journal_attack_status_declined
     type: workflow.execute

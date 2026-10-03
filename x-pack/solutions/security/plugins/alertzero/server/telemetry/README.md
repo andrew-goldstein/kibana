@@ -18,7 +18,7 @@ Run reliability (started, completed, failed, cancelled, timed out) is not duplic
 
 ### What a join reaches
 
-The ids above add no content of their own, but they join to events other plugins already ship. `run_id` and `execution_id` join to the Workflows engine's own execution events (`workflows_execution_workflow_completed`, `_failed` and `_cancelled`) through `workflowExecutionId`, and those carry the raw `spaceId`, the `workflowId` (for a custom workflow, usually built from the workflow's name), `ruleId` on an alert-triggered run, and the free-text `errorMessage` and `cancellationReason`. `investigation_id` joins to the Agent Builder events on `conversation_id`, including `agent_builder_round_error`, whose `error_message` is truncated to 500 characters. So "no space ids" and "no free text" hold only within AlertZero's own events, not across a join.
+The ids above add no content of their own, but they join to events other plugins already ship. `run_id` and `execution_id` join to the Workflows engine's own execution events (`workflows_execution_workflow_completed`, `_failed` and `_cancelled`) through `workflowExecutionId`, and those carry the raw `spaceId`, the `workflowId` (for a custom workflow, usually built from the workflow's name), `ruleId` on an alert-triggered run, and the free-text `errorMessage` and `cancellationReason`. `investigation_id` joins to the Agent Builder events on `conversation_id`, including `agent_builder_round_error`, whose `error_message` is truncated to 500 characters. So "no space ids" and "no free text" hold only within AlertZero's own events, not across a join. To keep AlertZero's own text out of that join, a `workflow.fail` message in an AlertZero managed workflow interpolates only definition constants, `| size` counts and a few named numbers (the close-alerts action's counts, which analysts also see as the proposal's error), and `managed/definitions/alertzero/fail_messages.test.ts` enforces it. The three response actions (`actions/defend/`) belong to @elastic/security-defend-workflows and are fixed in that team's own change.
 
 The schema tests (`event_types.test.ts`) enforce the following:
 - every field has a description;
@@ -82,6 +82,17 @@ Emitted by the runner once every review has been dispatched.
 | `attacks_generated` | long | yes | Attacks the model generated, before deduplication |
 | `attacks_persisted` | long | yes | Attacks persisted and dispatched for review |
 
+The runner derives `run_outcome` from its own counts, first match wins:
+
+1. `empty_no_alerts`: no generation batch, because no alert was retrieved.
+2. `failed_all_batches`: every batch failed.
+3. `degraded_partial`: some batches failed, whether or not attacks persisted.
+4. `produced`: at least one attack persisted.
+5. `empty_all_duplicates`: attacks were generated, but every one already existed.
+6. `empty_no_attacks`: nothing was generated.
+
+There is no `skipped_space_disabled` outcome: a space with AlertZero off never launches the runner.
+
 ### `alertzero_ad_worker_review_started`
 
 Emitted by a review once its Investigation exists.
@@ -109,13 +120,13 @@ Emitted by a review after a **completed** escalation gate. For a gate that faile
 | Field | Type | Required | Description |
 |---|---|---|---|
 | envelope | | | See above |
-| `outcome` | keyword | yes | `approved`, `dismissed`, `expired` or `approved_action_failed` |
+| `outcome` | keyword | yes | `approved` (approved, and the handoff action succeeded), `dismissed`, `expired` (nobody decided) or `approved_action_failed` (approved, but the handoff action did not succeed) |
 | `verdict` | keyword | no | The verdict that led to the escalation (`true_positive` or `inconclusive`) |
 | `auto_approve_requested` | boolean | no | Whether the review asked the gate to auto-approve |
 
 ### `alertzero_ad_worker_investigation_closed`
 
-Emitted by a review after it closes its own Investigation: on a false-positive verdict, and when the analyst declines the escalation. `alertzero_ad_worker_review_started` already covers the open.
+Emitted by a review after it closes its own Investigation: on a false-positive verdict (`report_investigation_closed_false_positive`, `close_reason: false_positive`), and when the analyst declines the escalation (`report_investigation_closed_declined`, `close_reason: other`). Each close continues on failure, so each report runs only when its close left no error. Each report also needs its close to have changed the Investigation's `status`, so a review that finds its Investigation already closed by a human (for example, a human close that dismissed the review's pending gate) sends nothing: that close is reported once, as `agentic_investigations_investigation_closed`. `alertzero_ad_worker_review_started` already covers the open.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
