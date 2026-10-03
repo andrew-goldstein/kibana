@@ -7,7 +7,7 @@
 
 import { isEqual } from 'lodash';
 import type { KibanaRequest, Logger } from '@kbn/core/server';
-import type { UpdateWorkerResponse } from '@kbn/alertzero-common';
+import type { UpdateWorkerResponse, WorkerSettings } from '@kbn/alertzero-common';
 import {
   ListWorkersResponse,
   SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID,
@@ -30,6 +30,12 @@ import type {
 import { getManagedWorkflowDefinition } from '@kbn/workflows/managed';
 import { parseWorkflowYamlToJSON } from '@kbn/workflows-yaml';
 import { workerRegistry, type WorkerRegistration } from '../../managed_workflows/worker_registry';
+import type { AlertZeroTelemetryReporter } from '../../telemetry';
+import {
+  ALERTZERO_TELEMETRY_EVENTS,
+  buildWorkerActivatedPayload,
+  buildWorkerSettingsChangedPayloads,
+} from '../../telemetry';
 import type { WatchWorkflowsManagementClient } from '../watches/watch_workflows_management_client';
 import type { AgentLookup } from '../utils';
 import { buildAgentLookup, projectSkillsFromDefinition } from '../utils';
@@ -108,6 +114,28 @@ export type InstallWorkerForRequest = (
   }
 ) => Promise<void>;
 
+/**
+ * Binding a Worker's first service account is not a user's settings change: the browser creates
+ * the account and sends it with the Worker's first enable (onboarding, or a Worker a settings save
+ * installed disabled). So when the previous settings had no account, the account is not compared.
+ * Replacing one account with another, or clearing it, is still a `service_account` change.
+ */
+const withoutFirstAccountBinding = (
+  previous: WorkerSettings,
+  next: WorkerSettings
+): WorkerSettings =>
+  previous.serviceAccountId === undefined
+    ? { ...previous, serviceAccountId: next.serviceAccountId }
+    : previous;
+
+/** A confirmed settings write, reported once the rest of the PATCH succeeds. */
+interface SettingsWrite {
+  nextValues: ManagedWorkflowTemplateValues;
+  previousValues: ManagedWorkflowTemplateValues;
+  /** The revision the write was accepted against; null when the Worker had no document. */
+  settingsRevision: number | null;
+}
+
 export type WorkerUpdateResult =
   | { outcome: 'updated'; response: UpdateWorkerResponse }
   | { outcome: 'not-found' }
@@ -127,17 +155,19 @@ export class WorkersService {
       | Promise<PluginScopedManagedWorkflowsApi | undefined>
       | undefined,
     private readonly logger: Logger,
-    private readonly agentOpts: {
+    private readonly options: {
       /** Lazy ensure of the shared thin agent for the caller's space. */
       ensureAgentForSpace?: (spaceId: string) => Promise<void>;
       agentBuilder?: AgentBuilderPluginStart;
       /** Code-registered agent types owned by this plugin, used for skill base resolution. */
       agentTypes?: readonly AgentTypeDefinition[];
+      /** Reports the Worker settings and activation events; without it nothing is reported. */
+      telemetryReporter?: AlertZeroTelemetryReporter;
     } = {},
     private readonly alertTriageOpts: AlertTriageOpts = {},
     private readonly installWorkerForRequest: InstallWorkerForRequest
   ) {
-    this.agentTypeMap = new Map((agentOpts.agentTypes ?? []).map((t) => [t.id, t]));
+    this.agentTypeMap = new Map((options.agentTypes ?? []).map((t) => [t.id, t]));
   }
 
   private requireManagement(): WatchWorkflowsManagementClient {
@@ -171,12 +201,12 @@ export class WorkersService {
   }
 
   private async ensureAgent(spaceId: string): Promise<void> {
-    await this.agentOpts.ensureAgentForSpace?.(spaceId);
+    await this.options.ensureAgentForSpace?.(spaceId);
   }
 
   private async buildAgentLookup(request: KibanaRequest) {
-    if (!this.agentOpts.agentBuilder) return undefined;
-    return buildAgentLookup(this.agentOpts.agentBuilder, this.agentTypeMap, request, this.logger);
+    if (!this.options.agentBuilder) return undefined;
+    return buildAgentLookup(this.options.agentBuilder, this.agentTypeMap, request, this.logger);
   }
 
   private async hiddenWorkerIds(request: KibanaRequest): Promise<ReadonlySet<string>> {
@@ -184,7 +214,7 @@ export class WorkersService {
     const gatedWorkerIds = entries.flatMap(([, workerIds]) => workerIds);
     if (gatedWorkerIds.length === 0) return new Set();
 
-    const { agentBuilder } = this.agentOpts;
+    const { agentBuilder } = this.options;
     if (!agentBuilder) return new Set(gatedWorkerIds);
 
     try {
@@ -261,6 +291,9 @@ export class WorkersService {
       spaceId,
       workflowIdSuffix: spaceId,
     });
+    const wasInstalled = status.installed;
+    const wasEnabled = Boolean(status.enabled);
+    let settingsWrite: SettingsWrite | undefined;
 
     const isAlertTriageWorker = workerId === SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID;
     // Rules the caller cannot edit (ML rules without ML authz), so this call could not attach or
@@ -340,6 +373,11 @@ export class WorkersService {
         );
         return { outcome: 'failed' };
       }
+      settingsWrite = {
+        nextValues: applied.values,
+        previousValues: currentValues,
+        settingsRevision: state?.documentVersion ?? null,
+      };
 
       await management.updateWorkflow(
         status.workflowId,
@@ -446,6 +484,18 @@ export class WorkersService {
 
     const agentLookup = await this.buildAgentLookup(request);
     const worker = await this.projectWorker(registration, spaceId, request, agentLookup);
+    // A first install is reported as activation, so its enabled state is not a change.
+    this.reportSettingsChanged({
+      ...(wasInstalled && patch.enabled != null
+        ? { enabled: { next: patch.enabled, previous: wasEnabled } }
+        : {}),
+      registration,
+      settingsWrite,
+      spaceId,
+    });
+    if (!wasInstalled && status.installed) {
+      this.reportActivated(worker, spaceId);
+    }
     return {
       outcome: 'updated',
       response: { worker, ...(skippedRuleCount > 0 ? { skippedRuleCount } : {}) },
@@ -525,6 +575,77 @@ export class WorkersService {
   ): Promise<AlertTriageAttachmentService | undefined> {
     const { getAttachmentService } = this.alertTriageOpts;
     return getAttachmentService?.(request, installedWorkflowId);
+  }
+
+  /**
+   * One event per setting the PATCH changed, counting an enable or disable as one; reported only
+   * once every write of the PATCH succeeded, and never throws.
+   */
+  private reportSettingsChanged({
+    enabled,
+    registration,
+    settingsWrite,
+    spaceId,
+  }: {
+    enabled?: { next: boolean; previous: boolean };
+    registration: WorkerRegistration;
+    settingsWrite: SettingsWrite | undefined;
+    spaceId: string;
+  }): void {
+    const { telemetryReporter } = this.options;
+    if (!telemetryReporter) return;
+    try {
+      const next = settingsWrite && registration.settings.toSettings(settingsWrite.nextValues);
+      const previous =
+        settingsWrite && registration.settings.toSettings(settingsWrite.previousValues);
+      buildWorkerSettingsChangedPayloads({
+        ...(enabled ? { enabled } : {}),
+        ...(next && previous
+          ? {
+              settings: {
+                next,
+                previous: withoutFirstAccountBinding(previous, next),
+              },
+            }
+          : {}),
+        settingsRevision: settingsWrite?.settingsRevision ?? null,
+        spaceId,
+        workerId: registration.id,
+      }).forEach((payload) =>
+        telemetryReporter(ALERTZERO_TELEMETRY_EVENTS.WorkerSettingsChanged, payload)
+      );
+    } catch (error) {
+      this.logger.debug(
+        () =>
+          `Failed to report settings telemetry for worker ${registration.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+      );
+    }
+  }
+
+  /** Reports a Worker's first install in a space from its projected state; never throws. */
+  private reportActivated(worker: Worker, spaceId: string): void {
+    const { telemetryReporter } = this.options;
+    if (!telemetryReporter) return;
+    try {
+      telemetryReporter(
+        ALERTZERO_TELEMETRY_EVENTS.WorkerActivated,
+        buildWorkerActivatedPayload({
+          ...(worker.state === 'unavailable' ? {} : { autonomyLevel: worker.settings.autonomy }),
+          enabled: worker.enabled,
+          spaceId,
+          workerId: worker.id,
+        })
+      );
+    } catch (error) {
+      this.logger.debug(
+        () =>
+          `Failed to report activation telemetry for worker ${worker.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+      );
+    }
   }
 
   private async projectWorker(

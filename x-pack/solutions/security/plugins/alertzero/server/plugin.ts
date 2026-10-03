@@ -15,6 +15,7 @@ import {
   type PluginInitializerContext,
 } from '@kbn/core/server';
 import { DEFAULT_SPACE_ID } from '@kbn/core-spaces-common';
+import type { PluginScopedManagedWorkflowsApi } from '@kbn/workflows/server/types';
 import type { WorkflowsServerPluginSetup } from '@kbn/workflows-management-plugin/server';
 import type { AgentService } from '@kbn/fleet-plugin/server';
 import { SECURITY_SOLUTION_ALERT_ANALYSIS_WORKFLOW_ENABLED } from '@kbn/management-settings-ids';
@@ -60,9 +61,23 @@ import { createAssertAlertZeroAccess } from './agent_builder_tools/assert_alertz
 import { agentType, ensureAgent, ensureAgentSafe, registerAgentType } from './agent';
 import { createActionDiscoverySkill } from './agent_builder/skills/action_discovery';
 import { registerAttachments } from './agent_builder/attachments/register_attachments';
-import { registerStepDefinitions } from './step_types';
 import { makeIsContextEngineEnabled } from './step_types/is_context_engine_enabled';
 import { makeScopedResolveHostEnrollment } from './services/fleet/resolve_host_enrollment';
+import {
+  createAlertZeroTelemetryReporter,
+  readTelemetryOptIn,
+  registerAlertZeroTelemetryEvents,
+} from './telemetry';
+import {
+  REPORT_STEP_OPT_IN_TIMEOUT_MS,
+  registerAlertZeroStepDefinitions,
+  registerStepDefinitions,
+} from './step_types';
+import {
+  createTelemetrySnapshotDependencies,
+  registerTelemetrySnapshotTask,
+  scheduleTelemetrySnapshotTask,
+} from './tasks/telemetry_snapshot';
 
 export class AlertZeroPlugin
   implements
@@ -83,6 +98,8 @@ export class AlertZeroPlugin
   };
   private spaces?: AlertZeroStartDependencies['spaces'];
   private workflowsManagementApi?: WorkflowsServerPluginSetup['management'];
+  /** Resolved during `start`; the report step awaits it for its owner-bound managed check. */
+  private managedWorkflows?: Promise<PluginScopedManagedWorkflowsApi | undefined>;
 
   /** Created during `start`; routes resolve them lazily after managed-workflow initialization. */
   private watchesService?: WatchesService;
@@ -128,6 +145,7 @@ export class AlertZeroPlugin
       agenticInvestigations,
       features,
       searchInferenceEndpoints,
+      taskManager,
       workflowsExtensions,
       workflowsManagement,
     }: AlertZeroSetupDependencies
@@ -142,12 +160,46 @@ export class AlertZeroPlugin
     // Registered inside the config guard so the deployment kill switch removes the setting
     // entirely; `withAlertZeroEnabled` then never reads an unregistered key.
     registerUiSettings(coreSetup.uiSettings);
+    // Inside the guard too: with the kill switch off, no AlertZero event type exists to report.
+    registerAlertZeroTelemetryEvents(coreSetup.analytics);
+    // Inside the guard too, so the kill switch leaves no snapshot task type to claim.
+    if (taskManager) {
+      registerTelemetrySnapshotTask({
+        getDependencies: async () => {
+          const [core, { spaces, telemetry }] = await coreSetup.getStartServices();
+          return createTelemetrySnapshotDependencies({
+            core,
+            getManagedWorkflows: async () => this.managedWorkflows,
+            spaces,
+            telemetry,
+          });
+        },
+        logger: this.logger.get('telemetry'),
+        taskManager,
+      });
+    }
 
     this.workflowsManagementApi = workflowsManagement.management;
 
     // Missing runtime dependencies must not make installed workflows eligible for orphan cleanup.
     registerOwner({ workflowsExtensions });
     if (agentBuilder && proposals && agenticInvestigations) {
+      // The Worker YAML that calls this step is installed only when these plugins are present.
+      registerAlertZeroStepDefinitions({
+        analytics: coreSetup.analytics,
+        areServiceAccountsEnabled: () => this.serviceAccountsEnabled,
+        getManagedWorkflowState: async () => this.managedWorkflows,
+        getWorkflowsManagement: () => this.workflowsManagementApi,
+        isTelemetryOptedIn: async () => {
+          const [, { telemetry }] = await coreSetup.getStartServices();
+          return readTelemetryOptIn({
+            isOptedIn$: telemetry?.isOptedIn$,
+            timeoutMs: REPORT_STEP_OPT_IN_TIMEOUT_MS,
+          });
+        },
+        logger: this.logger.get('telemetry'),
+        workflowsExtensions,
+      });
       const assertAlertZeroAccess = createAssertAlertZeroAccess(async () => {
         const [core, { security }] = await coreSetup.getStartServices();
         return { core, security };
@@ -262,9 +314,24 @@ export class AlertZeroPlugin
 
     const { agentBuilder, agenticInvestigations, proposals } = plugins;
     // Optional dependencies allow the upgrade shell to load without starting feature work.
+    if (!agentBuilder || !proposals || !agenticInvestigations) {
+      return {
+        registerAlertTriageAttachmentServiceProvider:
+          this.registerAlertTriageAttachmentServiceProvider,
+      };
+    }
+    // Scheduled before the service accounts check, so the daily summary also reports a
+    // deployment that has AlertZero but not service accounts. With them off it reads no Workers,
+    // only spaces and settings through core services.
+    if (plugins.taskManager) {
+      scheduleTelemetrySnapshotTask({
+        logger: this.logger.get('telemetry'),
+        taskManager: plugins.taskManager,
+      });
+    }
     // Service accounts are required the same way: with the flag off the plugin stays mounted
     // for the unavailable screen and does not install or schedule workers.
-    if (!agentBuilder || !proposals || !agenticInvestigations || !this.serviceAccountsEnabled) {
+    if (!this.serviceAccountsEnabled) {
       return {
         registerAlertTriageAttachmentServiceProvider:
           this.registerAlertTriageAttachmentServiceProvider,
@@ -287,6 +354,7 @@ export class AlertZeroPlugin
       );
       return undefined;
     });
+    this.managedWorkflows = managedWorkflows;
 
     this.conversationProposalsService = new ConversationProposalsService(
       proposals.getProposalsService(),
@@ -312,6 +380,10 @@ export class AlertZeroPlugin
           ensureAgentSafe({ agentBuilder, spaceId, logger: this.logger }),
         agentBuilder,
         agentTypes: [agentType],
+        telemetryReporter: createAlertZeroTelemetryReporter({
+          analytics: core.analytics,
+          logger: this.logger.get('telemetry'),
+        }),
       },
       {
         // Reads whatever was registered via `registerAlertTriageAttachmentServiceProvider` at
