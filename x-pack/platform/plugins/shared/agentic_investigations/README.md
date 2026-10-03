@@ -25,6 +25,7 @@ server/
   plugin.ts config.ts types.ts
   features.ts            umbrella feature and its privileges
   services/              user resolution, shared by every entity
+  telemetry/             EBT event types and never-throw reporters, shared by every entity
   impact/                routes, service, storage, step handlers, Agent Builder attachment
   escalations/           routes and service
 public/
@@ -147,3 +148,7 @@ The filter is **fixed and server-side**: `template_id: "escalation" and not meta
 - **Last-write-wins on concurrent appends.** The array union for `linked_investigations` is computed in the service (outside the OCC write callback), so two concurrent `PATCH` requests can each read stale state and one link can be silently lost. The fix is to move the union computation into `writeConversation`'s `fields` callback. Accepted for MVP; follow-up filed.
 - **List caps at 10,000 results.** Offset pagination cannot go beyond Elasticsearch's default result window. Escalations beyond that threshold are unreachable through this API. `search_after` would be needed for deeper paging.
 - **Closed escalations are never returned.** The `status: "closed"` filter is not toggleable. A separate endpoint or a future filter parameter would be needed to retrieve closed escalations.
+
+## Telemetry
+
+Investigation and escalation lifecycle events (`agentic_investigations_*`) go through core analytics (EBT). The services report after each write and never fail it. Events cover only changes made through the Agentic Investigations API (its HTTP routes or services): workflow writes that bypass this plugin are not reported. Every event and field, and the privacy contract, are in [`server/telemetry/README.md`](server/telemetry/README.md).
