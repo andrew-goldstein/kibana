@@ -1,0 +1,93 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
+ */
+
+import { BehaviorSubject, of } from 'rxjs';
+import { coreMock } from '@kbn/core/server/mocks';
+import { savedObjectsClientMock } from '@kbn/core/server/mocks';
+import { createTelemetrySnapshotDependencies } from './create_telemetry_snapshot_dependencies';
+
+const setup = ({ withSpaces = true }: { withSpaces?: boolean } = {}) => {
+  const core = coreMock.createStart();
+  const unsafeClient = savedObjectsClientMock.create();
+  const scopedClient = savedObjectsClientMock.create();
+  unsafeClient.asScopedToNamespace.mockReturnValue(scopedClient);
+  core.savedObjects.getUnsafeInternalClient.mockReturnValue(unsafeClient);
+  const managedWorkflows = { getInstalledWorkflowState: jest.fn(), getWorkflowStatus: jest.fn() };
+  const isOptedIn$ = new BehaviorSubject(true);
+  const dependencies = createTelemetrySnapshotDependencies({
+    core,
+    getManagedWorkflows: async () => managedWorkflows,
+    spaces: withSpaces ? ({} as never) : undefined,
+    telemetry: { isOptedIn$ } as never,
+  });
+  return { core, dependencies, isOptedIn$, managedWorkflows, scopedClient, unsafeClient };
+};
+
+describe('createTelemetrySnapshotDependencies', () => {
+  it('reads Advanced Settings through the internal client scoped to the space', () => {
+    const { core, dependencies, scopedClient, unsafeClient } = setup();
+
+    dependencies.getUiSettingsClient('space-a');
+
+    expect(unsafeClient.asScopedToNamespace).toHaveBeenCalledWith('space-a');
+    expect(core.uiSettings.asScopedToClient).toHaveBeenCalledWith(scopedClient);
+    expect(core.savedObjects.createInternalRepository).not.toHaveBeenCalled();
+  });
+
+  it('enumerates spaces through the space saved objects when the spaces plugin is enabled', async () => {
+    const { core, dependencies } = setup();
+    const find = jest.fn().mockResolvedValue({ saved_objects: [{ id: 'space-a' }] });
+    core.savedObjects.createInternalRepository.mockReturnValue({ find } as never);
+
+    await expect(dependencies.listSpaceIds(new AbortController().signal)).resolves.toEqual([
+      'default',
+      'space-a',
+    ]);
+    expect(core.savedObjects.createInternalRepository).toHaveBeenCalledWith(['space']);
+  });
+
+  it('has only the default space without the spaces plugin', async () => {
+    const { core, dependencies } = setup({ withSpaces: false });
+
+    await expect(dependencies.listSpaceIds(new AbortController().signal)).resolves.toEqual([
+      'default',
+    ]);
+    expect(core.savedObjects.createInternalRepository).not.toHaveBeenCalled();
+  });
+
+  it('reads the deployment-wide Attack Discovery Workflows flag with its default of true', async () => {
+    const { core, dependencies } = setup();
+    core.featureFlags.getBooleanValue$.mockReturnValue(of(false));
+
+    await expect(dependencies.getAttackDiscoveryWorkflowsEnabled()).resolves.toBe(false);
+    expect(core.featureFlags.getBooleanValue$).toHaveBeenCalledWith(
+      'securitySolution.attackDiscoveryWorkflowsEnabled',
+      true
+    );
+  });
+
+  it('passes the telemetry opt-in stream, core analytics and the managed workflows client', async () => {
+    const { core, dependencies, isOptedIn$, managedWorkflows } = setup();
+
+    expect(dependencies.isOptedIn$).toBe(isOptedIn$);
+    expect(dependencies.analytics).toBe(core.analytics);
+    await expect(dependencies.getManagedWorkflows()).resolves.toBe(managedWorkflows);
+  });
+
+  it('has no opt-in stream without the telemetry plugin', () => {
+    const core = coreMock.createStart();
+
+    const dependencies = createTelemetrySnapshotDependencies({
+      core,
+      getManagedWorkflows: async () => undefined,
+      spaces: undefined,
+      telemetry: undefined,
+    });
+
+    expect(dependencies.isOptedIn$).toBeUndefined();
+  });
+});
