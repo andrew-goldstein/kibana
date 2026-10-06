@@ -16,6 +16,12 @@
  */
 export type WellKnownWorkflowTriggerSource = 'manual' | 'scheduled' | 'alert' | 'workflow-step';
 
+/** `triggeredBy` of every execution a `workflow.execute` or `workflow.executeAsync` step starts. */
+export const WORKFLOW_STEP_TRIGGER_SOURCE: Extract<
+  WellKnownWorkflowTriggerSource,
+  'workflow-step'
+> = 'workflow-step';
+
 const WELL_KNOWN_SET: ReadonlySet<string> = new Set<WellKnownWorkflowTriggerSource>([
   'manual',
   'scheduled',

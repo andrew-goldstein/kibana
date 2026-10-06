@@ -11,9 +11,14 @@ import {
   getEventDrivenWorkflowTriggerEvidence,
   isEventDrivenWorkflowTriggerSource,
   isWellKnownWorkflowTriggerSource,
+  WORKFLOW_STEP_TRIGGER_SOURCE,
 } from './well_known_trigger_sources';
 
 describe('isWellKnownWorkflowTriggerSource', () => {
+  it('treats the sub-workflow trigger source constant as well known', () => {
+    expect(isWellKnownWorkflowTriggerSource(WORKFLOW_STEP_TRIGGER_SOURCE)).toBe(true);
+  });
+
   it.each(['manual', 'scheduled', 'alert', 'workflow-step'] as const)(
     'returns true for %s',
     (value) => {

@@ -7,6 +7,8 @@
  * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
+import { WORKFLOW_STEP_TRIGGER_SOURCE } from './well_known_trigger_sources';
+
 export const WORKFLOW_EXECUTE_STEP_TYPE = 'workflow.execute' as const;
 export const WORKFLOW_EXECUTE_ASYNC_STEP_TYPE = 'workflow.executeAsync' as const;
 
@@ -29,3 +31,7 @@ export const isSyncParentInvocation = (
 } =>
   context?.parentWorkflowInvocation === 'sync' &&
   typeof context?.parentWorkflowExecutionId === 'string';
+
+/** True when a parent workflow step did not start the execution, so it is the root of its own chain. */
+export const isTopLevelWorkflowExecution = ({ triggeredBy }: { triggeredBy?: string }): boolean =>
+  triggeredBy !== WORKFLOW_STEP_TRIGGER_SOURCE;
