@@ -21,6 +21,7 @@ import { createClient } from './client';
 import type { ConversationEventBus } from '../../workflows/triggers/conversation_event_bus';
 import { createScopedConversationEventEmitter } from '../../workflows/triggers/conversation_event_bus';
 import type { ConversationEventsServiceStart } from '../conversation_events';
+import type { AnalyticsService } from '../../telemetry';
 
 export interface ConversationService {
   getScopedClient(options: { request: KibanaRequest }): Promise<ConversationClient>;
@@ -38,6 +39,7 @@ interface ConversationServiceDeps {
   agents: AgentsServiceStart;
   eventBus?: ConversationEventBus;
   conversationEvents: ConversationEventsServiceStart;
+  analyticsService?: AnalyticsService;
 }
 
 export class ConversationServiceImpl implements ConversationService {
@@ -48,6 +50,7 @@ export class ConversationServiceImpl implements ConversationService {
   private readonly agents: AgentsServiceStart;
   private readonly eventBus?: ConversationEventBus;
   private readonly conversationEvents: ConversationEventsServiceStart;
+  private readonly analyticsService?: AnalyticsService;
 
   constructor({
     logger,
@@ -57,6 +60,7 @@ export class ConversationServiceImpl implements ConversationService {
     agents,
     eventBus,
     conversationEvents,
+    analyticsService,
   }: ConversationServiceDeps) {
     this.logger = logger;
     this.security = security;
@@ -65,6 +69,7 @@ export class ConversationServiceImpl implements ConversationService {
     this.agents = agents;
     this.eventBus = eventBus;
     this.conversationEvents = conversationEvents;
+    this.analyticsService = analyticsService;
   }
 
   async getScopedClient({ request }: { request: KibanaRequest }): Promise<ConversationClient> {
@@ -98,6 +103,7 @@ export class ConversationServiceImpl implements ConversationService {
     const space = getCurrentSpaceId({ request, spaces: this.spaces });
     const agentRegistry = await this.agents.getRegistry({ request });
     const eventBus = this.eventBus;
+    const analyticsService = this.analyticsService;
 
     return createClient({
       user,
@@ -107,6 +113,9 @@ export class ConversationServiceImpl implements ConversationService {
       agentRegistry,
       conversationEvents: this.conversationEvents,
       eventEmitter: eventBus ? createScopedConversationEventEmitter(eventBus, request) : undefined,
+      reportFieldChange: analyticsService
+        ? (params) => analyticsService.reportConversationFieldChanged(params)
+        : undefined,
     });
   }
 

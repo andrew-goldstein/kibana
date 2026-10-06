@@ -2607,6 +2607,198 @@ describe('ConversationClient', () => {
     });
   });
 
+  describe('field change telemetry', () => {
+    const template = makeTemplate('tmpl-fields', {
+      status: {
+        input_type: 'SELECT',
+        description: 'Status',
+        default_value: 'open',
+        options: ['open', 'closed'],
+        report_changes: true,
+      },
+      close_reason: {
+        input_type: 'SELECT',
+        description: 'Close reason',
+        options: ['benign', 'other'],
+        report_changes: true,
+      },
+      severity: { input_type: 'SELECT', description: 'Sev', options: ['low', 'high'] },
+    });
+
+    const createClientWithReporter = (reportFieldChange: jest.Mock, logger = loggerMock.create()) =>
+      createClient({
+        space: testSpace,
+        logger,
+        esClient: mockRawEsClient as unknown as ElasticsearchClient,
+        agentRegistry: agentRegistry as unknown as AgentRegistry,
+        conversationEvents: mockConversationEvents,
+        user: { id: 'user-1', username: 'test-user', isAdmin: false },
+        reportFieldChange,
+      });
+
+    beforeEach(() => {
+      getTemplateMock.mockReturnValue(template);
+      mockEsClient.index.mockResolvedValue({ _seq_no: 2, _primary_term: 1 });
+    });
+
+    it('reports a close and its reason as two events once the write has landed', async () => {
+      const reportFieldChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await createClientWithReporter(reportFieldChange).patchMetadata(
+        'conversation-1',
+        { status: 'closed', close_reason: 'benign' },
+        { source: 'execution' }
+      );
+
+      expect(reportFieldChange).toHaveBeenCalledTimes(2);
+      expect(reportFieldChange).toHaveBeenNthCalledWith(1, {
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-fields',
+        field: 'status',
+        previous_value: 'open',
+        next_value: 'closed',
+        source: 'execution',
+        change_kind: 'updated',
+      });
+      expect(reportFieldChange).toHaveBeenNthCalledWith(2, {
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-fields',
+        field: 'close_reason',
+        next_value: 'benign',
+        source: 'execution',
+        change_kind: 'updated',
+      });
+    });
+
+    it('reports a reopen as one status event, and no close reason event', async () => {
+      const reportFieldChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'closed', close_reason: 'benign' },
+        })
+      );
+
+      await createClientWithReporter(reportFieldChange).patchMetadata(
+        'conversation-1',
+        { status: 'open' },
+        { source: 'http_api' }
+      );
+
+      expect(reportFieldChange).toHaveBeenCalledTimes(1);
+      expect(reportFieldChange).toHaveBeenCalledWith({
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-fields',
+        field: 'status',
+        previous_value: 'closed',
+        next_value: 'open',
+        source: 'http_api',
+        change_kind: 'updated',
+      });
+    });
+
+    it('does not report a change to a field the template does not opt in', async () => {
+      const reportFieldChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await createClientWithReporter(reportFieldChange).patchMetadata(
+        'conversation-1',
+        { severity: 'high' },
+        { source: 'workflow' }
+      );
+
+      expect(reportFieldChange).not.toHaveBeenCalled();
+    });
+
+    it('does not report when the write fails', async () => {
+      const reportFieldChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+      mockEsClient.index.mockRejectedValue(new Error('disk full'));
+
+      await expect(
+        createClientWithReporter(reportFieldChange).patchMetadata(
+          'conversation-1',
+          { status: 'closed' },
+          { source: 'http_api' }
+        )
+      ).rejects.toThrow('disk full');
+
+      expect(reportFieldChange).not.toHaveBeenCalled();
+    });
+
+    it('a throwing reporter does not fail the write', async () => {
+      const logger = loggerMock.create();
+      const reportFieldChange = jest.fn(() => {
+        throw new Error('reporter exploded');
+      });
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await expect(
+        createClientWithReporter(reportFieldChange, logger).patchMetadata(
+          'conversation-1',
+          { status: 'closed' },
+          { source: 'http_api' }
+        )
+      ).resolves.toEqual({
+        conversation: expect.objectContaining({ id: 'conversation-1' }),
+        changedFields: ['status'],
+      });
+
+      expect(mockEsClient.index).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to report field changes for conversation "conversation-1": Error: reporter exploded'
+      );
+    });
+
+    it('reports the values a create seeds, as created', async () => {
+      const reportFieldChange = jest.fn();
+      mockEsClient.index.mockResolvedValue({ result: 'created', _seq_no: 0, _primary_term: 1 });
+      mockGetReturnsIndexedDocument();
+
+      await createClientWithReporter(reportFieldChange).create(
+        {
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+          template_id: 'tmpl-fields',
+        },
+        { source: 'server_api' }
+      );
+
+      expect(reportFieldChange).toHaveBeenCalledTimes(1);
+      expect(reportFieldChange).toHaveBeenCalledWith({
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-fields',
+        field: 'status',
+        next_value: 'open',
+        source: 'server_api',
+        change_kind: 'created',
+      });
+    });
+  });
+
   describe('create with template', () => {
     beforeEach(() => {
       jest.clearAllMocks();

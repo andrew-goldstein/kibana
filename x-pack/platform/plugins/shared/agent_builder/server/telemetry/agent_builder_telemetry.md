@@ -347,6 +347,61 @@ Fired when a tool call fails.
 | `error_message` | keyword | yes | Error message (truncated to 500 chars). |
 | `duration_ms` | integer | yes | Tool execution time in milliseconds. |
 
+### `agent_builder_conversation_field_changed`
+
+Fired once per **template field whose stored value a write changed**, for the fields a
+conversation template opts in with `report_changes` (see
+[Reporting template field changes](#reporting-template-field-changes)). One write can send
+several: closing an Investigation with a reason sends one event for `status` and one for
+`close_reason`.
+
+It is sent from the conversation client after the write has landed, on create and on every write
+the `ai.conversation.updated` workflow trigger also describes (`patchMetadata`, `update`,
+`applyTemplate` and the rest), for every writer: an agent through its tools, a workflow step, an
+HTTP route, or another plugin through the server API. A write that leaves a field as it was sends
+nothing for it. A failure to describe or report a change is logged and never fails the write.
+
+Only SELECT fields can opt in, and the values sent are the field's `options`. A stored value that
+isn't one of them is reported as `unrecognized` (not `other`, which templates use as a real
+option). Templates are registered by plugins in code, so the template id, the field name and the
+values are fixed strings, never customer content.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `conversation_id` | keyword | yes | The conversation whose field changed. Usually a random UUID, but a caller may supply its own. |
+| `template_id` | keyword | yes | The template that declares the field. |
+| `field` | keyword | yes | The name of the template field that changed. |
+| `previous_value` | keyword | no | The value before the write. Absent when the write created the conversation, when it applied the template (values stored under another template aren't values of this one), or when the field had no value. |
+| `next_value` | keyword | no | The value after the write. Absent when the write cleared the field. |
+| `source` | keyword | yes | `execution`, `workflow`, `http_api` or `server_api`: the same value the `ai.conversation.updated` workflow trigger reports. |
+| `change_kind` | keyword | yes | `created` when the write created the conversation, otherwise `updated`. |
+
+What it doesn't report: who made the change (only how it reached storage), fields the template
+doesn't opt in, non-SELECT fields, and a value written again unchanged. A select field can't be
+cleared through `patchMetadata`, so a reopened Investigation keeps its last close reason, and a
+reopen sends only the `status` event.
+
+### Reporting template field changes
+
+A template owner opts a field in by setting `report_changes: true` on its definition:
+
+```ts
+status: {
+  input_type: 'SELECT',
+  options: ['open', 'closed'],
+  report_changes: true,
+},
+```
+
+- `report_changes` is only allowed on `SELECT` fields. Registering a template that sets it on any
+  other input type fails validation (`validateTemplateDefinition`), so free text can't be
+  reported by mistake.
+- Choose fields whose options are worth counting over time, such as a lifecycle status or a close
+  reason. Each change sends one event, so prefer fields that change a few times in a
+  conversation's life.
+- The built-in `investigation` template reports `status` and `close_reason`, and the `escalation`
+  template reports `status` (`agent_builder_platform/server/conversation_templates`).
+
 ### Conversation origin
 
 `agent_builder_round_complete`, `agent_builder_round_error`, `agent_builder_tool_call_success`

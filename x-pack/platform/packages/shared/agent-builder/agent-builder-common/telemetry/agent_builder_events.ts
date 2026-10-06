@@ -7,6 +7,7 @@
 
 import type { EventTypeOpts } from '@kbn/core/public';
 import type { ConversationOriginType } from '../chat/conversation';
+import type { ConversationWriteSource } from '../triggers';
 
 /**
  * Event type constants for Agent Builder telemetry events.
@@ -41,6 +42,7 @@ export const AGENT_BUILDER_EVENT_TYPES = {
   HitlQuestionAnswered: `${TELEMETRY_PREFIX}_hitl_question_answered`,
   FeedbackSubmitted: `${TELEMETRY_PREFIX}_feedback_submitted`,
   FeedbackRetracted: `${TELEMETRY_PREFIX}_feedback_retracted`,
+  ConversationFieldChanged: `${TELEMETRY_PREFIX}_conversation_field_changed`,
 } as const;
 
 export type OptInSource =
@@ -186,6 +188,19 @@ export interface ReportRoundErrorParams {
   agent_id: string;
   round_id?: string;
   workflow_execution_id?: string;
+}
+
+export interface ReportConversationFieldChangedParams {
+  conversation_id: string;
+  template_id: string;
+  /** The template field whose value changed; the template opts it in with `report_changes`. */
+  field: string;
+  /** One of the field's options, or `unrecognized`. Absent on a create, or when the template was just applied. */
+  previous_value?: string;
+  /** One of the field's options, or `unrecognized`. Absent when the write cleared the field. */
+  next_value?: string;
+  source: ConversationWriteSource;
+  change_kind: 'created' | 'updated';
 }
 
 export interface ReportAgentCreatedParams {
@@ -462,6 +477,8 @@ export interface AgentBuilderTelemetryEventsMap {
   [AGENT_BUILDER_EVENT_TYPES.HitlQuestionAnswered]: ReportHitlQuestionAnsweredParams;
   [AGENT_BUILDER_EVENT_TYPES.FeedbackSubmitted]: ReportFeedbackSubmittedParams;
   [AGENT_BUILDER_EVENT_TYPES.FeedbackRetracted]: ReportFeedbackRetractedParams;
+  /** Fired once per template field, opted in with `report_changes`, whose value a write changed. */
+  [AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged]: ReportConversationFieldChangedParams;
 }
 
 export type AgentBuilderTelemetryEvent =
@@ -482,6 +499,7 @@ export type AgentBuilderTelemetryEvent =
   | EventTypeOpts<ReportRoundCompleteParams>
   | EventTypeOpts<ReportExecutionCompleteParams>
   | EventTypeOpts<ReportRoundErrorParams>
+  | EventTypeOpts<ReportConversationFieldChangedParams>
   | EventTypeOpts<ReportToolCallSuccessParams>
   | EventTypeOpts<ReportToolCallErrorParams>
   | EventTypeOpts<ReportManageEntityListViewParams>
@@ -512,6 +530,7 @@ export type AgentBuilderEventTypes =
   | typeof AGENT_BUILDER_EVENT_TYPES.RoundComplete
   | typeof AGENT_BUILDER_EVENT_TYPES.ExecutionComplete
   | typeof AGENT_BUILDER_EVENT_TYPES.RoundError
+  | typeof AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged
   | typeof AGENT_BUILDER_EVENT_TYPES.ToolCallSuccess
   | typeof AGENT_BUILDER_EVENT_TYPES.ToolCallError
   | typeof AGENT_BUILDER_EVENT_TYPES.ManageEntityListView
@@ -1421,6 +1440,67 @@ const ROUND_ERROR_EVENT: AgentBuilderTelemetryEvent = {
   schema: ROUND_ERROR_SCHEMA,
 };
 
+const CONVERSATION_FIELD_CHANGED_EVENT: AgentBuilderTelemetryEvent = {
+  eventType: AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged,
+  schema: {
+    conversation_id: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'ID of the conversation whose field changed. Usually a random UUID, but a caller may supply its own (for example, an id derived from one of its records).',
+        optional: false,
+      },
+    },
+    template_id: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'ID of the conversation template that declares the field (a template registered in code, such as "investigation" or "escalation")',
+        optional: false,
+      },
+    },
+    field: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'Name of the template field whose value changed. Only SELECT fields the template opts in with report_changes are reported.',
+        optional: false,
+      },
+    },
+    previous_value: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'Value before the write: one of the options the template declares for the field, or unrecognized. Absent when the write created the conversation, applied the template, or the field had no value.',
+        optional: true,
+      },
+    },
+    next_value: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'Value after the write: one of the options the template declares for the field, or unrecognized. Absent when the write cleared the field.',
+        optional: true,
+      },
+    },
+    source: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'How the write reached storage: execution (an agent, through its tools), workflow (a workflow step), http_api (an HTTP route) or server_api (another plugin, through the server API)',
+        optional: false,
+      },
+    },
+    change_kind: {
+      type: 'keyword',
+      _meta: {
+        description: 'created when the write created the conversation, otherwise updated',
+        optional: false,
+      },
+    },
+  },
+};
+
 const TOOL_CALL_SUCCESS_EVENT: AgentBuilderTelemetryEvent = {
   eventType: AGENT_BUILDER_EVENT_TYPES.ToolCallSuccess,
   schema: {
@@ -1923,4 +2003,5 @@ export const agentBuilderServerEbtEvents: Array<EventTypeOpts<Record<string, unk
   ROUND_ERROR_EVENT,
   TOOL_CALL_SUCCESS_EVENT,
   TOOL_CALL_ERROR_EVENT,
+  CONVERSATION_FIELD_CHANGED_EVENT,
 ];

@@ -5,6 +5,7 @@
  * 2.0.
  */
 
+import { createAnalytics } from '@elastic/ebt/client';
 import type { AnalyticsServiceSetup } from '@kbn/core/server';
 import type { MockedLogger } from '@kbn/logging-mocks';
 import { loggerMock } from '@kbn/logging-mocks';
@@ -51,6 +52,100 @@ describe('AnalyticsService', () => {
     describe.each(agentBuilderServerEbtEvents)('eventType: $eventType', (eventConfig) => {
       it('registers the event type', () => {
         expect(analytics.registerEventType).toHaveBeenCalledWith(eventConfig);
+      });
+    });
+  });
+
+  describe('reportConversationFieldChanged', () => {
+    const params = {
+      conversation_id: 'conversation-1',
+      template_id: 'investigation',
+      field: 'status',
+      previous_value: 'open',
+      next_value: 'closed',
+      source: 'execution' as const,
+      change_kind: 'updated' as const,
+    };
+
+    it('reports the event as given', () => {
+      service.reportConversationFieldChanged(params);
+
+      expect(analytics.reportEvent).toHaveBeenCalledWith(
+        AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged,
+        params
+      );
+    });
+
+    it('never throws when reporting fails', () => {
+      analytics.reportEvent.mockImplementation(() => {
+        throw new Error('analytics down');
+      });
+
+      expect(() => service.reportConversationFieldChanged(params)).not.toThrow();
+      expect(logger.debug).toHaveBeenCalled();
+    });
+
+    describe('against the registered schema, in dev mode', () => {
+      const devAnalytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+
+      beforeAll(() => {
+        new AnalyticsService(
+          devAnalytics as unknown as AnalyticsServiceSetup,
+          loggerMock.create()
+        ).registerAgentBuilderEventTypes();
+      });
+
+      afterAll(() => {
+        devAnalytics.shutdown();
+      });
+
+      it('accepts a full payload', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged, params)
+        ).not.toThrow();
+      });
+
+      it('accepts a create, with no previous value', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged, {
+            conversation_id: 'conversation-1',
+            template_id: 'investigation',
+            field: 'status',
+            next_value: 'open',
+            source: 'workflow',
+            change_kind: 'created',
+          })
+        ).not.toThrow();
+      });
+
+      it('accepts a cleared field, with no next value', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged, {
+            conversation_id: 'conversation-1',
+            template_id: 'investigation',
+            field: 'close_reason',
+            previous_value: 'benign',
+            source: 'server_api',
+            change_kind: 'updated',
+          })
+        ).not.toThrow();
+      });
+
+      it('rejects a payload without the field name', () => {
+        const { field: _field, ...withoutField } = params;
+
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged, withoutField)
+        ).toThrow(/\[field\]/);
+      });
+
+      it('rejects a key the schema does not declare', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationFieldChanged, {
+            ...params,
+            verdict: 'free text',
+          })
+        ).toThrow(/verdict/);
       });
     });
   });

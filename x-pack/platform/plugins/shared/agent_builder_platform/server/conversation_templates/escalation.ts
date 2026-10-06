@@ -19,6 +19,7 @@ export const escalationTemplate: ConversationTemplate = {
       default_value: 'open',
       required: true,
       options: ['open', 'closed'],
+      report_changes: true,
     },
     severity: {
       input_type: 'SELECT',
