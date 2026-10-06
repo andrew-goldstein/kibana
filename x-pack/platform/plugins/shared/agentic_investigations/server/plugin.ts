@@ -49,6 +49,10 @@ import { InvestigationsQueryService } from './investigations/services/investigat
 import { createInvestigationsClient } from './investigations/services/investigations_client';
 import { createConversationReadCheck } from './investigation_attachments';
 import { createUserResolver } from './services/resolve_user';
+import {
+  createAgenticInvestigationsTelemetryReporter,
+  registerAgenticInvestigationsTelemetryEvents,
+} from './telemetry';
 import type { ResolveUser } from './services/resolve_user';
 import type {
   AgenticInvestigationsPluginSetup,
@@ -89,6 +93,7 @@ export class AgenticInvestigationsPlugin
     { features, workflowsExtensions, agentBuilder }: AgenticInvestigationsSetupDependencies
   ): AgenticInvestigationsPluginSetup {
     registerFeatures({ features, escalationsEnabled: this.escalationsEnabled });
+    registerAgenticInvestigationsTelemetryEvents(coreSetup.analytics);
 
     if (this.escalationsEnabled) {
       registerEscalationConversationEvents(agentBuilder);
@@ -231,12 +236,18 @@ export class AgenticInvestigationsPlugin
       documents: hypothesesAttachment.createService({ esClient, logger: this.logger }),
     });
 
+    const telemetry = createAgenticInvestigationsTelemetryReporter({
+      analytics: coreStart.analytics,
+      logger: this.logger,
+    });
+
     this.investigationStatusService = new InvestigationStatusService({
       getConversationClient: (request) =>
         plugins.agentBuilder.conversations.getScopedClient({ request }),
       getProposals: () => plugins.proposals,
       getSpaceId: (request) => this.getSpaceId(request),
       logger: this.logger,
+      telemetry,
     });
 
     this.investigationsQueryService = new InvestigationsQueryService({
@@ -274,6 +285,8 @@ export class AgenticInvestigationsPlugin
           plugins.agentBuilder.attachments.getScopedClient({ request }),
         conversationTemplates: plugins.agentBuilder.conversationTemplates,
         getInvestigationStatusService: () => this.requireInvestigationStatusService(),
+        getSpaceId: (request) => this.getSpaceId(request),
+        telemetry,
       });
     }
 

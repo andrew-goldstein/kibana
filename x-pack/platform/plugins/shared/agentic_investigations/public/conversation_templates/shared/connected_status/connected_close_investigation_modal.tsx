@@ -29,6 +29,8 @@ export interface ConnectedCloseInvestigationModalProps {
    * decision lands, rather than wait for the next refetch to see it.
    */
   dropDecidedProposal?: (proposalId: string) => Promise<void> | void;
+  /** Called once the close has landed, before `onClose`. */
+  onClosed?: () => void;
 }
 
 /**
@@ -46,7 +48,7 @@ export interface ConnectedCloseInvestigationModalProps {
  */
 export const ConnectedCloseInvestigationModal: React.FC<
   CloseInvestigationModalRenderProps & ConnectedCloseInvestigationModalProps
-> = ({ investigation, onClose, dropDecidedProposal }) => {
+> = ({ investigation, onClose, dropDecidedProposal, onClosed }) => {
   const { services } = useKibana<CoreStart>();
   const queryClient = useQueryClient();
   const conversationId = investigation.conversationId ?? investigation.id;
@@ -91,6 +93,7 @@ export const ConnectedCloseInvestigationModal: React.FC<
           },
         });
         invalidateInvestigations();
+        onClosed?.();
         services.notifications?.toasts.addSuccess(i18n.CLOSE_INVESTIGATION_SUCCESS);
         if (result.failed_proposal_ids.length > 0) {
           services.notifications?.toasts.addWarning(i18n.PARTIAL_PROPOSAL_DISMISS_WARNING);
@@ -125,6 +128,7 @@ export const ConnectedCloseInvestigationModal: React.FC<
       invalidateAll,
       invalidateInvestigations,
       onClose,
+      onClosed,
       previewData?.pending_proposals,
       refetchPreview,
       services.notifications?.toasts,

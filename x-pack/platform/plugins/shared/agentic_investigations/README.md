@@ -33,6 +33,7 @@ server/
   features.ts            umbrella feature and its privileges
   services/              user resolution, shared by every entity
   investigation_attachments/  `defineInvestigationAttachment` factory and the agent tool helper
+  telemetry/             EBT event types and never-throw reporters, shared by every entity
   impact/                routes, service, storage, step handlers, Agent Builder attachment, agent tool
   subjects/              service, claims, request-scoped client, storage, Agent Builder attachment
   hypotheses/            service, storage, Agent Builder attachment, agent tool
@@ -287,3 +288,7 @@ The step requires conversation `converse` access and the `investigation` templat
 `{ workflowExecutionId }`, preserves existing order, and skips the write when the ID is already
 present. A missing list is initialized. Appends assume sequential handoffs; concurrent callers
 can overwrite each other's additions.
+
+## Telemetry
+
+Investigation and escalation lifecycle events (`agentic_investigations_*`) go through core analytics (EBT). The services report after each write and never fail it. Events cover only changes made through the Agentic Investigations API (its HTTP routes or services): workflow writes that bypass this plugin are not reported. Every event and field, and the privacy contract, are in [`server/telemetry/README.md`](server/telemetry/README.md).

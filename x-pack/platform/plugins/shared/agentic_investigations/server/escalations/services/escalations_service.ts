@@ -36,6 +36,14 @@ import type { ImpactReadClient } from '../../impact/services/impact_client';
 import type { InvestigationStatusService } from '../../investigations/services/investigation_status_service';
 import { assertNoUnexpectedProposals } from '../../investigations/services/investigation_status_service';
 import { CloseTargetsChangedError } from '../../investigations/services/close_targets_changed_error';
+import type { AgenticInvestigationsTelemetryReporter } from '../../telemetry';
+import {
+  buildEscalationClosedEvents,
+  buildEscalationCreatedEvent,
+  buildEscalationInvestigationLinkedEvents,
+  isDefaultSpace,
+  reportTelemetryEvents,
+} from '../../telemetry';
 import { EscalationCloseIncompleteError } from './escalation_close_incomplete_error';
 import { LinkedInvestigationUnavailableError } from './linked_investigation_unavailable_error';
 import {
@@ -117,6 +125,10 @@ const buildEscalationsFilter = (
 
 const ESCALATIONS_LIST_SORT: ConversationSearchSort = { field: 'updated_at', order: 'desc' };
 
+/** The investigation ids an escalation's metadata links. */
+const getLinkedInvestigationIds = (conversation: EscalationConversation): string[] =>
+  (conversation.metadata?.[ESCALATION_LINKED_INVESTIGATIONS_FIELD] ?? []) as string[];
+
 export interface EscalationsServiceDeps {
   logger: Logger;
   getConversationClient: (request: KibanaRequest) => Promise<ConversationPublicClient>;
@@ -124,6 +136,9 @@ export interface EscalationsServiceDeps {
   conversationTemplates: ConversationTemplatesStart;
   getInvestigationStatusService: () => InvestigationStatusService;
   getImpactClient: (request: KibanaRequest) => ImpactReadClient;
+  getSpaceId: (request: KibanaRequest) => string;
+  /** Reports lifecycle events after each write; omit to report nothing. */
+  telemetry?: AgenticInvestigationsTelemetryReporter;
 }
 
 export class EscalationsService {
@@ -137,6 +152,8 @@ export class EscalationsService {
   ) => Promise<AttachmentPublicClient>;
   private readonly conversationTemplates: ConversationTemplatesStart;
   private readonly getInvestigationStatusService: () => InvestigationStatusService;
+  private readonly getSpaceId: EscalationsServiceDeps['getSpaceId'];
+  private readonly telemetry: EscalationsServiceDeps['telemetry'];
 
   constructor({
     logger,
@@ -145,6 +162,8 @@ export class EscalationsService {
     conversationTemplates,
     getInvestigationStatusService,
     getImpactClient,
+    getSpaceId,
+    telemetry,
   }: EscalationsServiceDeps) {
     this.logger = logger;
     this.getImpactClient = getImpactClient;
@@ -152,6 +171,8 @@ export class EscalationsService {
     this.getAttachmentsClient = getAttachmentsClient;
     this.conversationTemplates = conversationTemplates;
     this.getInvestigationStatusService = getInvestigationStatusService;
+    this.getSpaceId = getSpaceId;
+    this.telemetry = telemetry;
   }
 
   async create(
@@ -226,6 +247,21 @@ export class EscalationsService {
       },
     ]);
 
+    reportTelemetryEvents({
+      buildEvents: () => [
+        buildEscalationCreatedEvent({
+          assignees,
+          escalationId: escalation.id,
+          investigationId: body.linked_investigation_id,
+          isDefaultSpace: isDefaultSpace(this.getSpaceId(request)),
+          linkedInvestigationCount: metadata[ESCALATION_LINKED_INVESTIGATIONS_FIELD].length,
+          visibility: body.visibility,
+        }),
+      ],
+      logger: this.logger,
+      telemetry: this.telemetry,
+    });
+
     return escalation;
   }
 
@@ -255,7 +291,7 @@ export class EscalationsService {
       }
     }
 
-    const prev = (current.metadata?.[ESCALATION_LINKED_INVESTIGATIONS_FIELD] ?? []) as string[];
+    const prev = getLinkedInvestigationIds(current);
     // Use a Set so duplicates within the incoming payload and against prev are both removed.
     const union = [...new Set([...prev, ...toAdd])];
 
@@ -266,7 +302,7 @@ export class EscalationsService {
       );
     }
 
-    const { conversation } = await client.patchMetadata(
+    const { conversation, changedFields } = await client.patchMetadata(
       escalationId,
       { [ESCALATION_LINKED_INVESTIGATIONS_FIELD]: union },
       { access: 'converse' }
@@ -283,6 +319,19 @@ export class EscalationsService {
           data: toEventData(resolved.get(id)!),
         }))
     );
+
+    reportTelemetryEvents({
+      buildEvents: () =>
+        buildEscalationInvestigationLinkedEvents({
+          changedFields,
+          escalationId,
+          isDefaultSpace: isDefaultSpace(this.getSpaceId(request)),
+          nextIds: getLinkedInvestigationIds(conversation),
+          previousIds: prev,
+        }),
+      logger: this.logger,
+      telemetry: this.telemetry,
+    });
 
     return conversation;
   }
@@ -426,8 +475,7 @@ export class EscalationsService {
     const allFailedProposalIds: string[] = [];
 
     if (body.status === 'closed') {
-      const linkedIds = (current.metadata?.[ESCALATION_LINKED_INVESTIGATIONS_FIELD] ??
-        []) as string[];
+      const linkedIds = getLinkedInvestigationIds(current);
       if (linkedIds.length > 0) {
         const resolved = await client.bulkGet(linkedIds);
 
@@ -468,18 +516,25 @@ export class EscalationsService {
           // Reuse the same check as investigations — throws CloseTargetsChangedError.
           assertNoUnexpectedProposals(allPending, body.expected_proposal_ids);
         }
+        // Each close reports its own `escalation_cascade` event after its own write, so only
+        // the investigations that really closed are reported.
         const results = await Promise.allSettled(
           openIds.map((id) =>
-            statusSvc.setStatus(request, id, {
-              status: 'closed',
-              dismiss_reason: body.dismiss_reason,
-              rationale: body.rationale,
-              // Pass the full expected_proposal_ids list. The pre-flight check above already
-              // verified that every pending proposal across all open investigations was
-              // expected, so the per-investigation check inside setStatus will always pass.
-              // We still send it so the service stays correct if called in isolation.
-              expected_proposal_ids: body.expected_proposal_ids,
-            })
+            statusSvc.setStatus(
+              request,
+              id,
+              {
+                status: 'closed',
+                dismiss_reason: body.dismiss_reason,
+                rationale: body.rationale,
+                // Pass the full expected_proposal_ids list. The pre-flight check above already
+                // verified that every pending proposal across all open investigations was
+                // expected, so the per-investigation check inside setStatus will always pass.
+                // We still send it so the service stays correct if called in isolation.
+                expected_proposal_ids: body.expected_proposal_ids,
+              },
+              { closedBy: 'escalation_cascade' }
+            )
           )
         );
 
@@ -509,11 +564,27 @@ export class EscalationsService {
       }
     }
 
-    const { conversation: updated } = await client.patchMetadata(
+    const { conversation: updated, changedFields } = await client.patchMetadata(
       escalationId,
       { [ESCALATION_STATUS_FIELD]: body.status },
       { access: 'converse' }
     );
+
+    reportTelemetryEvents({
+      buildEvents: () =>
+        buildEscalationClosedEvents({
+          changedFields,
+          createdAt: current.created_at,
+          escalationId,
+          investigationsClosed: closedInvestigationIds.length,
+          isDefaultSpace: isDefaultSpace(this.getSpaceId(request)),
+          linkedInvestigationCount: getLinkedInvestigationIds(current).length,
+          nextStatus: body.status,
+          now: Date.now(),
+        }),
+      logger: this.logger,
+      telemetry: this.telemetry,
+    });
 
     return {
       escalation_id: updated.id,

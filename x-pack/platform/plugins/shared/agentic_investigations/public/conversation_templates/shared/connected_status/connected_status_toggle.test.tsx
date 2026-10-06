@@ -13,15 +13,22 @@ import { statusSignal } from './status_signal';
 
 const mockSettleDeclinedProposals = jest.fn();
 const mockSetInvestigationStatus = jest.fn();
+const mockSetEscalationStatus = jest.fn();
 const mockAddSuccess = jest.fn();
+const mockReportFlyoutInteraction = jest.fn();
 
 jest.mock('@kbn/kibana-react-plugin/public', () => ({
-  useKibana: () => ({ services: { notifications: { toasts: { addSuccess: mockAddSuccess } } } }),
+  useKibana: () => ({
+    services: { notifications: { toasts: { addDanger: jest.fn(), addSuccess: mockAddSuccess } } },
+  }),
 }));
 
 jest.mock('@kbn/agentic-investigations-common', () => ({
   StatusToggle: ({ onChange }: { onChange: (status: 'open' | 'closed') => void }) => (
-    <button onClick={() => onChange('closed')}>toggle</button>
+    <>
+      <button onClick={() => onChange('closed')}>toggle</button>
+      <button onClick={() => onChange('open')}>reopen</button>
+    </>
   ),
 }));
 
@@ -40,7 +47,7 @@ jest.mock('../../../investigations/hooks/use_investigations_api', () => ({
 }));
 
 jest.mock('../../../escalations/hooks/use_escalations_api', () => ({
-  useSetEscalationStatus: () => ({ mutate: jest.fn(), isLoading: false }),
+  useSetEscalationStatus: () => ({ mutate: mockSetEscalationStatus, isLoading: false }),
   useEscalationClosePreview: () => ({ data: undefined, refetch: jest.fn() }),
 }));
 
@@ -50,6 +57,10 @@ jest.mock('../../../investigations/hooks/use_can_manage_investigations', () => (
 
 jest.mock('../../../escalations/hooks/use_escalation_privileges', () => ({
   useCanManageEscalations: () => true,
+}));
+
+jest.mock('../../../telemetry/use_report_flyout_interaction', () => ({
+  useReportFlyoutInteraction: () => mockReportFlyoutInteraction,
 }));
 
 jest.mock('./use_settle_declined_proposals', () => ({
@@ -114,5 +125,52 @@ describe('ConnectedStatusToggle closing an investigation', () => {
     expect(mockSettleDeclinedProposals).not.toHaveBeenCalled();
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['proposals'] });
     expect(bump).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ConnectedStatusToggle telemetry', () => {
+  const settle =
+    (outcome: 'success' | 'error') =>
+    (_vars: unknown, { onError, onSuccess }: { onError: () => void; onSuccess: () => void }) =>
+      outcome === 'success' ? onSuccess() : onError();
+
+  const renderReopenToggle = (templateId: 'investigation' | 'escalation') =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ConnectedStatusToggle conversationId="conv-1" templateId={templateId} status="closed" />
+      </QueryClientProvider>
+    );
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each(['investigation', 'escalation'] as const)(
+    'reports status_edit for a %s status change that lands',
+    (templateId) => {
+      mockSetInvestigationStatus.mockImplementation(settle('success'));
+      mockSetEscalationStatus.mockImplementation(settle('success'));
+      renderReopenToggle(templateId);
+
+      fireEvent.click(screen.getByText('reopen'));
+
+      expect(mockReportFlyoutInteraction).toHaveBeenCalledTimes(1);
+      expect(mockReportFlyoutInteraction).toHaveBeenCalledWith('status_edit', templateId);
+    }
+  );
+
+  it('does not report a status change that fails', () => {
+    mockSetInvestigationStatus.mockImplementation(settle('error'));
+    mockSetEscalationStatus.mockImplementation(settle('error'));
+    renderReopenToggle('investigation');
+
+    fireEvent.click(screen.getByText('reopen'));
+
+    expect(mockReportFlyoutInteraction).not.toHaveBeenCalled();
+  });
+
+  it('reports status_edit once for a close that lands', () => {
+    closeInvestigation(['p-1']);
+
+    expect(mockReportFlyoutInteraction).toHaveBeenCalledTimes(1);
+    expect(mockReportFlyoutInteraction).toHaveBeenCalledWith('status_edit', 'investigation');
   });
 });

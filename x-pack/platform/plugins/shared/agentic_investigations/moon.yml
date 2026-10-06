@@ -53,6 +53,7 @@ dependsOn:
   - '@kbn/charts-theme'
   - '@kbn/core-ui-settings-browser'
   - '@kbn/visualization-utils'
+  - '@kbn/core-spaces-common'
 tags:
   - plugin
   - prod

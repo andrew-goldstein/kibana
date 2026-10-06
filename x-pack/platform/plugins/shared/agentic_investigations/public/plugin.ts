@@ -17,6 +17,7 @@ import { registerWorkflowExecutionPublicStepDefinitions } from './workflow_execu
 import { registerTemplate } from './conversation_templates/registry/register_template';
 import { escalationTemplate } from './conversation_templates/templates/escalation/register';
 import { investigationTemplate } from './conversation_templates/templates/investigation/register';
+import { flyoutInteractionEvent } from './telemetry/flyout_interaction_event';
 import type {
   AgenticInvestigationsPublicConfig,
   AgenticInvestigationsPublicPluginSetup,
@@ -48,9 +49,10 @@ export class AgenticInvestigationsPublicPlugin
   }
 
   setup(
-    _core: CoreSetup,
+    core: CoreSetup,
     { workflowsExtensions }: AgenticInvestigationsPublicSetupDependencies
   ): AgenticInvestigationsPublicPluginSetup {
+    core.analytics.registerEventType(flyoutInteractionEvent);
     registerImpactPublicStepDefinitions(workflowsExtensions);
     registerInvestigationPublicStepDefinitions(workflowsExtensions);
     registerWorkflowExecutionPublicStepDefinitions(workflowsExtensions);
