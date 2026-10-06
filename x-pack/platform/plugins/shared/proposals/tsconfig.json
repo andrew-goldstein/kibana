@@ -37,7 +37,8 @@
     "@kbn/kibana-react-plugin",
     "@kbn/proposals-common",
     "@kbn/proposals-ui",
-    "@kbn/user-profile-components"
+    "@kbn/user-profile-components",
+    "@kbn/telemetry-plugin"
   ],
   "exclude": ["target/**/*"]
 }

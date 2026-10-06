@@ -42,7 +42,10 @@ const allowAll = (): jest.Mocked<ProposalPrivilegesChecker> => ({
   canManage: jest.fn().mockResolvedValue(true),
 });
 
-const createContext = (input: Record<string, unknown>): StepHandlerContext<never, never> =>
+const createContext = (
+  input: Record<string, unknown>,
+  workflowContext: Record<string, unknown> = {}
+): StepHandlerContext<never, never> =>
   ({
     input,
     rawInput: input,
@@ -51,6 +54,7 @@ const createContext = (input: Record<string, unknown>): StepHandlerContext<never
       getContext: jest.fn().mockReturnValue({
         execution: { id: EXECUTION_ID, executedBy: 'worker-user' },
         workflow: { spaceId: SPACE_ID },
+        ...workflowContext,
       }),
       getScopedEsClient: jest.fn(),
       getFakeRequest: jest.fn().mockReturnValue(FAKE_REQUEST),
@@ -300,14 +304,33 @@ describe('proposals.createProposal step', () => {
     jest.clearAllMocks();
   });
 
-  const createDefinition = (create: jest.Mock, privileges = allowAll()) => ({
+  const createDefinition = (
+    create: jest.Mock,
+    privileges = allowAll(),
+    getWorkflowExecution = jest.fn().mockResolvedValue(null),
+    isTelemetryOptedIn = async () => true
+  ) => ({
     definition: getCreateProposalStepDefinition({
       getProposalsService: () => ({ create } as unknown as ProposalsService),
+      getWorkflowsApi: () => ({ getWorkflowExecution }),
+      isTelemetryOptedIn,
       resolveUser,
       privileges,
     }),
+    getWorkflowExecution,
     privileges,
   });
+
+  /** The persisted calling execution the step reads, a top-level managed Worker. */
+  const callerExecution = {
+    context: {},
+    id: 'exec-caller',
+    managed: true,
+    managedBy: 'alertzero',
+    spaceId: SPACE_ID,
+  };
+
+  const CALLER_CONTEXT = { parent: { executionId: 'exec-caller', workflowId: 'wf-caller' } };
 
   it('should take the workflow execution id from the step context rather than the caller', async () => {
     const create = jest.fn().mockResolvedValue({
@@ -334,6 +357,7 @@ describe('proposals.createProposal step', () => {
       expect.objectContaining({ workflowExecutionId: EXECUTION_ID }),
       {
         autoApproveRequested: undefined,
+        caller: {},
         spaceId: SPACE_ID,
         user: resolvedUser,
         request: FAKE_REQUEST,
@@ -519,6 +543,134 @@ describe('proposals.createProposal step', () => {
       expect.anything(),
       expect.objectContaining({ autoApproveRequested: true })
     );
+  });
+
+  it('should record the verified caller and its run, never the calling workflow, as storage-only provenance', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue(callerExecution)
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune', autoApprove: true },
+        CALLER_CONTEXT
+      )
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        autoApproveRequested: true,
+        caller: { callerManaged: true, callerRunId: 'exec-caller' },
+      })
+    );
+  });
+
+  it('should read the caller in the gate space under the execution credentials', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition, getWorkflowExecution } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue(callerExecution)
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune' },
+        CALLER_CONTEXT
+      )
+    );
+
+    expect(getWorkflowExecution).toHaveBeenCalledWith('exec-caller', SPACE_ID, {
+      omitStepExecutions: true,
+      request: FAKE_REQUEST,
+    });
+  });
+
+  it('should still create the proposal when the caller cannot be read', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockRejectedValue(new Error('index unavailable'))
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune' },
+        CALLER_CONTEXT
+      )
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ autoApproveRequested: undefined, caller: {} })
+    );
+  });
+
+  it('should still create the proposal when the workflows API is unavailable', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const definition = getCreateProposalStepDefinition({
+      getProposalsService: () => ({ create } as unknown as ProposalsService),
+      getWorkflowsApi: () => {
+        throw new Error('not set up');
+      },
+      isTelemetryOptedIn: async () => true,
+      resolveUser,
+      privileges: allowAll(),
+    });
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune' },
+        CALLER_CONTEXT
+      )
+    );
+
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('should not look up the caller while telemetry is opted out', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition, getWorkflowExecution } = createDefinition(
+      create,
+      allowAll(),
+      jest.fn().mockResolvedValue(callerExecution),
+      async () => false
+    );
+
+    await definition.handler(
+      createContext(
+        { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune' },
+        CALLER_CONTEXT
+      )
+    );
+
+    // The walk only feeds telemetry, so an opted-out cluster pays for none of it.
+    expect(getWorkflowExecution).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ caller: undefined })
+    );
+  });
+
+  it('should not look up the caller before the manage check passes', async () => {
+    const privileges = allowAll();
+    privileges.assertCanManage.mockRejectedValue(new ProposalForbiddenError('nope'));
+    const { definition, getWorkflowExecution } = createDefinition(jest.fn(), privileges);
+
+    await expect(
+      definition.handler(
+        createContext(
+          { conversationId: 'conv-1', origin: 'alertzero', comment: 'Tune' },
+          CALLER_CONTEXT
+        )
+      )
+    ).rejects.toMatchObject({ type: 'PermissionError' });
+    expect(getWorkflowExecution).not.toHaveBeenCalled();
   });
 
   it('should assert manage before writing anything', async () => {

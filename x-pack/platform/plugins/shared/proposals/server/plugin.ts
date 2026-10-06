@@ -28,6 +28,7 @@ import { reviseProposalTool } from './agent_builder/tools/revise_proposal_tool';
 import { createProposalManagementSkill } from './agent_builder/skills/proposal_management';
 import { registerStepDefinitions } from './step_types';
 import { createProposalsStorageClient } from './storage/proposals_storage';
+import { readTelemetryOptIn } from './telemetry';
 import { createProposalTool } from './tools/create_proposal_tool';
 import type {
   ProposalsPluginSetup,
@@ -35,6 +36,12 @@ import type {
   ProposalsSetupDependencies,
   ProposalsStartDependencies,
 } from './types';
+
+/**
+ * How long a gate write waits for the telemetry opt-in before reading it as opted out. The
+ * telemetry plugin replays its latest decision, so this only bounds a plugin that never answers.
+ */
+const TELEMETRY_OPT_IN_WRITE_PATH_TIMEOUT_MS = 1_000;
 
 export class ProposalsPlugin
   implements
@@ -53,6 +60,7 @@ export class ProposalsPlugin
   private proposalPrivileges?: ProposalPrivilegesChecker;
   private spaces?: ProposalsStartDependencies['spaces'];
   private resolveUser?: ResolveProposalUser;
+  private telemetryStart?: ProposalsStartDependencies['telemetry'];
 
   constructor(context: PluginInitializerContext) {
     this.logger = context.logger.get();
@@ -60,7 +68,7 @@ export class ProposalsPlugin
 
   setup(
     coreSetup: CoreSetup<ProposalsStartDependencies>,
-    { features, workflowsExtensions, workflowsManagement, agentBuilder }: ProposalsSetupDependencies
+    { agentBuilder, features, workflowsExtensions, workflowsManagement }: ProposalsSetupDependencies
   ): ProposalsPluginSetup {
     // The workflows management API is only exposed on the setup contract.
     this.workflowsManagementApi = workflowsManagement.management;
@@ -107,6 +115,8 @@ export class ProposalsPlugin
     registerStepDefinitions({
       workflowsExtensions,
       getProposalsService: () => this.requireProposalsService(),
+      getWorkflowsApi: () => this.requireWorkflowsApi(),
+      isTelemetryOptedIn: () => this.isTelemetryOptedIn(),
       resolveUser: (request) => this.requireUserResolver()(request),
       // Steps register during setup but only run once Kibana has started, so
       // the authorization service is resolved per call rather than captured
@@ -127,6 +137,7 @@ export class ProposalsPlugin
 
   start(coreStart: CoreStart, plugins: ProposalsStartDependencies): ProposalsPluginStart {
     this.spaces = plugins.spaces;
+    this.telemetryStart = plugins.telemetry;
     this.resolveUser = createProposalUserResolver({
       userProfile: coreStart.userProfile,
       security: coreStart.security,
@@ -163,6 +174,17 @@ export class ProposalsPlugin
       getProposalsService: () => this.requireProposalsService(),
       getProposalPrivileges: () => this.requireProposalPrivileges(),
     };
+  }
+
+  /**
+   * Whether telemetry is opted in right now. Never throws: no telemetry plugin, or no decision
+   * within the timeout, reads as opted out, so a write path is never held up for long.
+   */
+  private isTelemetryOptedIn(): Promise<boolean> {
+    return readTelemetryOptIn({
+      isOptedIn$: this.telemetryStart?.isOptedIn$,
+      timeoutMs: TELEMETRY_OPT_IN_WRITE_PATH_TIMEOUT_MS,
+    });
   }
 
   private requireWorkflowsApi(): WorkflowsServerPluginSetup['management'] {

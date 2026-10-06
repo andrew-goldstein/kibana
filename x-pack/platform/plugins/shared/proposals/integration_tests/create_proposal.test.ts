@@ -471,4 +471,160 @@ describe('create-investigation-proposal workflow execution', () => {
       expect(fixture.proposals()[0].decision).toBe('approved');
     });
   });
+
+  describe('caller provenance', () => {
+    const REVIEW = {
+      context: { parentWorkflowExecutionId: 'exec-runner' },
+      id: 'exec-review',
+      isTestRun: false,
+      managed: true,
+      managedBy: 'alertzero',
+      spaceId: 'fake_space_id',
+      workflowId: 'wf-review',
+    };
+    const RUNNER = {
+      ...REVIEW,
+      context: { parent: { executionId: 'exec-floor', workflowId: 'wf-floor' } },
+      id: 'exec-runner',
+      workflowId: 'wf-runner',
+    };
+    const FLOOR = { ...REVIEW, context: {}, id: 'exec-floor', workflowId: 'wf-floor' };
+    /** The AlertZero bridge every Worker now reaches the gate through, as the gate's direct parent. */
+    const WRAPPER = {
+      ...REVIEW,
+      context: { parentWorkflowExecutionId: 'exec-review' },
+      id: 'exec-wrapper',
+      workflowId: 'system-create-alertzero-proposal',
+    };
+
+    it('should verify the caller as managed and record the root of its run', async () => {
+      fixture.setCallerLineage([REVIEW, RUNNER, FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).toEqual(
+        expect.objectContaining({ callerManaged: true, callerRunId: 'exec-floor' })
+      );
+    });
+
+    it('should not verify a caller no plugin manages', async () => {
+      fixture.setCallerLineage([{ ...FLOOR, managed: false, managedBy: null }]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance?.callerManaged).toBe(false);
+    });
+
+    it('should walk through the wrapper to the root of the Worker run', async () => {
+      fixture.setCallerLineage([WRAPPER, REVIEW, RUNNER, FLOOR]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      // The gate's literal parent is the wrapper, but the run is the Worker's,
+      // so it joins the Worker's own events. The wrapper itself is not stored.
+      const proposal = fixture.onlyProposal();
+      expect(proposal.provenance).toEqual(
+        expect.objectContaining({ callerManaged: true, callerRunId: 'exec-floor' })
+      );
+    });
+
+    it('should not verify a custom workflow that calls the managed wrapper', async () => {
+      const CUSTOM = { ...FLOOR, id: 'exec-custom', managed: false, managedBy: null };
+      fixture.setCallerLineage([
+        { ...WRAPPER, context: { parentWorkflowExecutionId: 'exec-custom' } },
+        CUSTOM,
+      ]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).toEqual(
+        expect.objectContaining({ callerManaged: false, callerRunId: 'exec-custom' })
+      );
+    });
+
+    it('should still create the proposal when an ancestor cannot be read', async () => {
+      // The runner is missing, so the run root is unknown: a best-effort field
+      // must never be what stops the gate.
+      fixture.setCallerLineage([REVIEW]);
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      const { provenance } = fixture.onlyProposal();
+      expect(provenance?.callerManaged).toBe(false);
+      expect(provenance?.callerRunId).toBeUndefined();
+      expect(fixture.executionStatus()).toBe(ExecutionStatus.WAITING_FOR_INPUT);
+    });
+
+    it('should record no caller for a gate run directly', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.onlyProposal().provenance).not.toHaveProperty('callerManaged');
+    });
+
+    it('should carry the caller onto a retry, which continues the same run', async () => {
+      fixture.setCallerLineage([REVIEW, RUNNER, FLOOR]);
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [, clone] = fixture.proposals();
+      expect(clone.provenance?.callerRunId).toBe('exec-floor');
+    });
+  });
+
+  describe('attempts', () => {
+    it('should start at the first attempt and count a retry as the next', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [original, clone] = fixture.proposals();
+      expect([original.provenance?.attempt, clone.provenance?.attempt]).toEqual([1, 2]);
+    });
+  });
+
+  describe('stored settle path', () => {
+    it('should record a timed-out gate as settled by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(fixture.onlyProposal().provenance?.settledBy).toBe('deadline');
+    });
+
+    it('should record a spent attempt budget as settled by the iteration limit', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      const { provenance, status } = fixture.onlyProposal();
+      expect([status, provenance?.settledBy]).toEqual(['expired', 'iteration_limit']);
+    });
+
+    it('should record a failed run as settled by the workflow failure', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      const { provenance, status } = fixture.onlyProposal();
+      expect([status, provenance?.settledBy]).toEqual(['expired', 'workflow_failure']);
+    });
+
+    it('should record nothing for an outcome the loop wrote itself', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(fixture.onlyProposal().provenance?.settledBy).toBeUndefined();
+    });
+
+    it('should not reattribute an action failure the loop already recorded', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(fixture.proposals()[0].provenance?.settledBy).toBeUndefined();
+    });
+  });
 });

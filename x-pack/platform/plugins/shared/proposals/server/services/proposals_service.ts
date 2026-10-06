@@ -52,7 +52,9 @@ import {
 } from './esql';
 import type { ChartsWindow } from './esql';
 import type { ProposalDocument, ProposalsStorageClient } from '../storage/proposals_storage';
+import type { ProposalCallerProvenance } from '../storage/proposal_provenance';
 import { CONFIDENCE_RANK_FIELD, IMPACT_RANK_FIELD, toSortRanks } from '../storage/sort_ranks';
+import { toTelemetryActionId } from '../telemetry';
 import {
   ProposalConflictError,
   ProposalInvalidActionInputError,
@@ -65,6 +67,20 @@ type WorkflowsManagementApi = WorkflowsServerPluginSetup['management'];
 interface ActionWorkflowDefinition {
   consts?: { actionMetadata?: unknown };
   triggers?: Array<{ type?: string; inputs?: { properties?: Record<string, unknown> } }>;
+}
+
+/** The parts of an action workflow this service reads: its definition, and whether it is managed. */
+interface ActionWorkflow {
+  definition?: ActionWorkflowDefinition | null;
+  managed?: boolean;
+  originManagedWorkflowId?: string | null;
+}
+
+/** What the creation path learns from its one read of the action workflow. */
+interface ResolvedAction {
+  /** The storage-only `actionId`: its managed definition id, or `custom`. */
+  actionId: string;
+  metadata: ActionMetadata | undefined;
 }
 
 /**
@@ -94,7 +110,7 @@ export interface UpdateProposalParams {
   executionError?: string;
   /** Who made the decision, for reporting only. Not stored: nothing reads it back. */
   decisionSource?: ProposalDecisionSource;
-  /** The settle path, for reporting only. */
+  /** The settle path. Stored only by the write that moves the proposal to a terminal status. */
   settledBy?: ProposalSettledBy;
 }
 
@@ -127,6 +143,7 @@ export class ProposalsService {
   async create(
     params: CreateProposalRequest,
     {
+      caller,
       spaceId,
       user,
       request,
@@ -136,6 +153,8 @@ export class ProposalsService {
        * asserts. For reporting only, and not stored.
        */
       autoApproveRequested?: boolean;
+      /** The calling run, which the gate derives from persisted executions. Storage-only. */
+      caller?: ProposalCallerProvenance;
       spaceId: string;
       user?: ProposalUser;
       request: KibanaRequest;
@@ -148,13 +167,15 @@ export class ProposalsService {
     // proposal look action-bearing when it is not.
     const actionWorkflowId = blankToUndefined(params.actionWorkflowId);
 
-    // A single fetch of the action definition serves three purposes: the queue
+    // A single fetch of the action definition serves four purposes: the queue
     // grouping, the impact (intrinsic to the action rather than to the situation
-    // that produced it), and rejecting an `actionInput` the action could not
-    // accept — before an analyst is asked to approve something that cannot run.
-    const metadata = actionWorkflowId
+    // that produced it), rejecting an `actionInput` the action could not
+    // accept — before an analyst is asked to approve something that cannot run —
+    // and the action id telemetry may name the action by.
+    const action = actionWorkflowId
       ? await this.resolveAndValidateAction(actionWorkflowId, params.actionInput, spaceId, request)
       : undefined;
+    const metadata = action?.metadata;
 
     // Caller first in both: it knows the situation the proposal came out of,
     // which the action's own metadata cannot. A category can end up absent —
@@ -195,6 +216,14 @@ export class ProposalsService {
       // `clone()` retries deliberately do not touch it: a retry is not a revision.
       rootProposalId: id,
       revision: 1,
+      provenance: {
+        // The mirror image of `revision`: a revision is not a retry, so only
+        // `clone()` moves it.
+        attempt: 1,
+        // Absent when the action could not be read: unknown, rather than a guess.
+        ...(action ? { actionId: action.actionId } : {}),
+        ...caller,
+      },
     };
 
     await this.deps.storage.index({ id, document, op_type: 'create' });
@@ -244,7 +273,7 @@ export class ProposalsService {
 
   async get(id: string, spaceId: string, request: KibanaRequest): Promise<ProposalWithMetadata> {
     const { proposal } = await this.load(id, spaceId);
-    return this.withMetadata(stripRanks(proposal), spaceId, request);
+    return this.withMetadata(stripStorageFields(proposal), spaceId, request);
   }
 
   /**
@@ -443,7 +472,7 @@ export class ProposalsService {
 
     await this.resumeGate(annotated, { spaceId, request, approved });
 
-    return stripRanks(annotated);
+    return stripStorageFields(annotated);
   }
 
   /**
@@ -542,6 +571,11 @@ export class ProposalsService {
       proposal.decidedAt ??
       (params.decision !== undefined || isTerminal(status) ? new Date().toISOString() : undefined);
 
+    // Only the write that actually settles the proposal says which path did.
+    // The failure handler re-writes `failed` onto a record whose action already
+    // failed, and that must not reattribute an outcome the loop recorded.
+    const settles = isTerminal(status) && !isTerminal(proposal.status);
+
     const updated: StoredProposalRecord = {
       ...proposal,
       status,
@@ -549,6 +583,9 @@ export class ProposalsService {
       ...(settledAt !== undefined ? { decidedAt: settledAt } : {}),
       ...(params.decision !== undefined
         ? { decidedBy: params.decidedBy ?? proposal.decidedBy }
+        : {}),
+      ...(settles && params.settledBy !== undefined
+        ? { provenance: { ...proposal.provenance, settledBy: params.settledBy } }
         : {}),
       ...(params.dismissReason !== undefined ? { dismissReason: params.dismissReason } : {}),
       ...(params.rationale !== undefined ? { rationale: params.rationale } : {}),
@@ -558,7 +595,7 @@ export class ProposalsService {
 
     await this.writeDocument(id, document, { seqNo, primaryTerm });
 
-    return stripRanks(updated);
+    return stripStorageFields(updated);
   }
 
   /**
@@ -573,6 +610,10 @@ export class ProposalsService {
    *
    * `workflowExecutionId` is the original's, because the gate execution is
    * still running and parked — approving the clone resumes that same execution.
+   * The caller provenance is inherited for the same reason: the retry continues
+   * the same run. So are `rootProposalId`, keeping the retry in its chain, and
+   * `actionId`, because the retry re-offers the same action. The outcome
+   * provenance is reset with the rest of the outcome.
    */
   async clone(
     { id, executionError }: CloneProposalParams,
@@ -606,6 +647,7 @@ export class ProposalsService {
     // What the predecessor will carry once the supersession write below lands,
     // resolved here so both documents agree on it.
     const failure = executionError ?? original.executionError;
+    const { settledBy: _settledBy, ...inherited } = original.provenance ?? {};
 
     const document: ProposalDocument = {
       ...original,
@@ -620,6 +662,11 @@ export class ProposalsService {
       // Why the attempt this one re-offers failed. Denormalised from the
       // predecessor so the queue can say so from the row it already has.
       previousExecutionError: failure,
+      provenance: {
+        ...inherited,
+        // `?? 1` covers records created before this field existed.
+        attempt: (inherited.attempt ?? 1) + 1,
+      },
     };
 
     // The clone is created before the original is marked, deliberately. The
@@ -651,6 +698,8 @@ export class ProposalsService {
    * `createdAt`, `expiresAt` and `workflowExecutionId` are inherited rather than
    * restarted — the deadline and the gate execution belong to the chain, not to
    * any single revision — mirroring `clone()`'s inheritance of the same fields.
+   * `actionId` is inherited too, since a revision keeps the same action; the
+   * input check below re-reads the action but does not re-resolve it.
    */
   async revise(
     { id, title, comment, actionInput, impact, confidence }: ReviseProposalParams,
@@ -706,6 +755,7 @@ export class ProposalsService {
 
     const revisionId = uuidv4();
     const rootProposalId = original.rootProposalId ?? id;
+    const { settledBy: _settledBy, ...inherited } = original.provenance ?? {};
     // `?? 1` covers records created before this field existed. Bound to a `number`
     // local so the spread below does not widen it back to `number | undefined`.
     const revision: number = (original.revision ?? 1) + 1;
@@ -727,6 +777,11 @@ export class ProposalsService {
       // revision corrects a proposal, it does not run anything, so the last
       // attempt to fail is still the one the predecessor was re-offered for.
       ...(nextTitle !== undefined ? { title: nextTitle } : {}),
+      // The caller, attempt and action carry over; the settle path is the
+      // predecessor's outcome, not this revision's. `?? 1` covers a record
+      // written before provenance existed, so the revision always has an
+      // attempt, like every record `create()` and `clone()` write.
+      provenance: { ...inherited, attempt: inherited.attempt ?? 1 },
       ...(comment !== undefined ? { comment } : {}),
       ...(mergedActionInput !== undefined ? { actionInput: mergedActionInput } : {}),
       impact: nextImpact,
@@ -934,28 +989,38 @@ export class ProposalsService {
     spaceId: string,
     request: KibanaRequest
   ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    return definition && this.readActionMetadata(actionWorkflowId, definition);
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    const definition = workflow?.definition;
+    return definition ? this.readActionMetadata(actionWorkflowId, definition) : undefined;
   }
 
   /**
-   * The creation path: one fetch, then both the metadata and the input check.
-   * An invalid input throws, because a proposal whose action can never run has
-   * no business sitting in a human's queue.
+   * The creation path: one fetch, then the metadata, the input check and the
+   * action id. An invalid input throws, because a proposal whose action can
+   * never run has no business sitting in a human's queue. `undefined` when the
+   * action could not be read at all.
    */
   private async resolveAndValidateAction(
     actionWorkflowId: string,
     actionInput: Record<string, unknown> | undefined,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    if (!definition) {
+  ): Promise<ResolvedAction | undefined> {
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    if (!workflow) {
       return undefined;
     }
 
+    // Resolved even without a definition: whether the workflow is managed is
+    // known from the workflow itself.
+    const actionId = toTelemetryActionId(workflow);
+    const { definition } = workflow;
+    if (!definition) {
+      return { actionId, metadata: undefined };
+    }
+
     this.assertActionInputValid(actionWorkflowId, definition, actionInput);
-    return this.readActionMetadata(actionWorkflowId, definition);
+    return { actionId, metadata: this.readActionMetadata(actionWorkflowId, definition) };
   }
 
   /**
@@ -988,16 +1053,24 @@ export class ProposalsService {
     }
   }
 
-  private async fetchActionDefinition(
+  private async fetchActionWorkflow(
     actionWorkflowId: string,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionWorkflowDefinition | undefined> {
+  ): Promise<ActionWorkflow | undefined> {
     try {
       const workflow = await this.deps
         .getWorkflowsApi()
         .getWorkflow(actionWorkflowId, spaceId, request);
-      return workflow?.definition as ActionWorkflowDefinition | undefined;
+      if (!workflow) {
+        return undefined;
+      }
+      const { definition, managed, originManagedWorkflowId } = workflow;
+      return {
+        definition: definition as ActionWorkflowDefinition | null | undefined,
+        managed,
+        originManagedWorkflowId,
+      };
     } catch (error) {
       this.deps.logger.warn(
         `Failed to read action workflow [${actionWorkflowId}]: ${
@@ -1279,14 +1352,15 @@ const toFilterClauses = (
 };
 
 /**
- * Drops the storage-only sort ranks, so they never reach the API contract.
- * One key rather than a list, because they are nested under `ranks`: a third
- * rank is a change to `ProposalSortRanks` alone.
+ * Drops the storage-only sort ranks and provenance, so they never reach the
+ * API contract. Each is one key, so a new rank or provenance field is a change
+ * to `ProposalSortRanks` or `ProposalProvenance` alone.
  */
-const stripRanks = ({ ranks, ...proposal }: StoredProposalRecord): Proposal => proposal;
+const stripStorageFields = ({ ranks, provenance, ...proposal }: StoredProposalRecord): Proposal =>
+  proposal;
 
 const toProposal = (id: string, document: ProposalDocument): Proposal =>
-  stripRanks({ id, ...document });
+  stripStorageFields({ id, ...document });
 
 /**
  * Ceiling on the legacy pointer walk in `getLatestRevision`. A chain longer

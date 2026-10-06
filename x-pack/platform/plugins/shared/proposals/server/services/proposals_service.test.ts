@@ -11,9 +11,11 @@ import { ExecutionStatus } from '@kbn/workflows';
 import {
   DEFAULT_PROPOSAL_TITLE,
   PROPOSAL_ATTACHMENT_TYPE,
+  type CreateProposalRequest,
   type ListProposalsQuery,
 } from '@kbn/proposals-common';
 import type { ProposalDocument, ProposalsStorageClient } from '../storage/proposals_storage';
+import type { ProposalProvenance } from '../storage/proposal_provenance';
 import {
   ProposalConflictError,
   ProposalInvalidActionInputError,
@@ -2549,6 +2551,378 @@ describe('ProposalsService', () => {
       await expect(service.chartsSummary(chartsQuery, SPACE_ID)).rejects.toThrow(
         'all shards failed'
       );
+    });
+  });
+});
+
+describe('ProposalsService storage-only provenance', () => {
+  /** Every provenance field, so adding one without covering it here is a type error. */
+  const PROVENANCE: Required<ProposalProvenance> = {
+    actionId: 'security-isolate-host',
+    attempt: 2,
+    callerManaged: true,
+    callerRunId: 'exec-root',
+    settledBy: 'deadline',
+  };
+
+  const CALLER = {
+    callerManaged: true,
+    callerRunId: 'exec-root',
+  };
+
+  const createParams: CreateProposalRequest = {
+    conversationId: 'conv-1',
+    comment: 'Tune the noisy rule',
+    confidence: 'medium',
+    origin: 'alertzero',
+    workflowExecutionId: EXECUTION_ID,
+  };
+
+  const indexedDocument = (storage: ReturnType<typeof createStorage>, call = 0) =>
+    storage.index.mock.calls[call][0].document as ProposalDocument;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('create', () => {
+    it('should store the caller it was given under provenance', async () => {
+      const storage = createStorage();
+      const { service } = createService(storage);
+
+      await service.create(createParams, { caller: CALLER, request, spaceId: SPACE_ID });
+
+      expect(indexedDocument(storage).provenance).toEqual(expect.objectContaining(CALLER));
+    });
+
+    it('should start every proposal at the first attempt', async () => {
+      const storage = createStorage();
+      const { service } = createService(storage);
+
+      await service.create(createParams, { request, spaceId: SPACE_ID });
+
+      expect(indexedDocument(storage).provenance?.attempt).toBe(1);
+    });
+
+    describe('action id', () => {
+      const withAction: CreateProposalRequest = {
+        ...createParams,
+        actionWorkflowId: 'secret-customer-workflow',
+      };
+
+      it("should store a managed action workflow's origin definition id", async () => {
+        const storage = createStorage();
+        const workflowsApi = createWorkflowsApi();
+        workflowsApi.getWorkflow.mockResolvedValue({
+          definition: {},
+          managed: true,
+          originManagedWorkflowId: 'security-isolate-host',
+        });
+        const { service } = createService(storage, workflowsApi);
+
+        await service.create(withAction, { request, spaceId: SPACE_ID });
+
+        expect(indexedDocument(storage).provenance?.actionId).toBe('security-isolate-host');
+      });
+
+      it('should store custom, never the raw id, for a workflow no plugin manages', async () => {
+        const storage = createStorage();
+        const workflowsApi = createWorkflowsApi();
+        workflowsApi.getWorkflow.mockResolvedValue({
+          definition: {},
+          managed: false,
+          originManagedWorkflowId: null,
+        });
+        const { service } = createService(storage, workflowsApi);
+
+        await service.create(withAction, { request, spaceId: SPACE_ID });
+
+        expect(indexedDocument(storage).provenance?.actionId).toBe('custom');
+      });
+
+      it('should resolve the action id from the one action read creation already makes', async () => {
+        const storage = createStorage();
+        const { service, workflowsApi } = createService(storage);
+
+        await service.create(withAction, { request, spaceId: SPACE_ID });
+
+        expect(workflowsApi.getWorkflow).toHaveBeenCalledTimes(1);
+      });
+
+      it('should store no action id for a proposal without an action', async () => {
+        const storage = createStorage();
+        const { service } = createService(storage);
+
+        await service.create(createParams, { request, spaceId: SPACE_ID });
+
+        expect(indexedDocument(storage).provenance).not.toHaveProperty('actionId');
+      });
+
+      it('should store no action id when the action workflow cannot be read', async () => {
+        const storage = createStorage();
+        const workflowsApi = createWorkflowsApi();
+        workflowsApi.getWorkflow.mockRejectedValue(new Error('workflows API unavailable'));
+        const { service } = createService(storage, workflowsApi);
+
+        await service.create(withAction, { request, spaceId: SPACE_ID });
+
+        expect(indexedDocument(storage).provenance).not.toHaveProperty('actionId');
+      });
+
+      it('should store no action id when the action workflow is missing or hidden', async () => {
+        const storage = createStorage();
+        const workflowsApi = createWorkflowsApi();
+        workflowsApi.getWorkflow.mockResolvedValue(null);
+        const { service } = createService(storage, workflowsApi);
+
+        await service.create(withAction, { request, spaceId: SPACE_ID });
+
+        expect(indexedDocument(storage).provenance).not.toHaveProperty('actionId');
+      });
+    });
+
+    it('should store no caller for a proposal created without one', async () => {
+      const storage = createStorage();
+      const { service } = createService(storage);
+
+      await service.create(createParams, { request, spaceId: SPACE_ID });
+
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('callerManaged');
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('callerRunId');
+    });
+
+    it('should not return the storage-only provenance', async () => {
+      const storage = createStorage();
+      const { service } = createService(storage);
+
+      const proposal = await service.create(createParams, {
+        caller: CALLER,
+        request,
+        spaceId: SPACE_ID,
+      });
+
+      expect(proposal).not.toHaveProperty('provenance');
+    });
+  });
+
+  describe('update', () => {
+    it.each([
+      ['deadline', 'pending', 'expired', undefined],
+      ['iteration_limit', 'pending', 'expired', undefined],
+      ['workflow_failure', 'executing', 'failed', 'approved'],
+    ] as const)(
+      'should record settledBy %s when a %s proposal settles as %s',
+      async (settledBy, from, to, decision) => {
+        const storage = createStorage(baseDocument({ decision, status: from }));
+        const { service } = createService(storage);
+
+        await service.update({ id: 'proposal-1', settledBy, status: to }, SPACE_ID);
+
+        expect(indexedDocument(storage).provenance?.settledBy).toBe(settledBy);
+      }
+    );
+
+    it('should keep the rest of the provenance when it records the settle path', async () => {
+      const { settledBy: _settledBy, ...rest } = PROVENANCE;
+      const storage = createStorage(baseDocument({ provenance: rest }));
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', settledBy: 'deadline', status: 'expired' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance).toEqual({ ...rest, settledBy: 'deadline' });
+    });
+
+    it('should not reattribute a proposal that had already settled with the same status', async () => {
+      // The workflow's failure handler re-writes `failed` onto a record whose
+      // action already failed; the action, not the handler, settled it.
+      const storage = createStorage(baseDocument({ decision: 'approved', status: 'failed' }));
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', settledBy: 'workflow_failure', status: 'failed' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance?.settledBy).toBeUndefined();
+    });
+
+    it('should ignore settledBy on a write that does not settle the proposal', async () => {
+      const storage = createStorage(baseDocument());
+      const { service } = createService(storage);
+
+      await service.update(
+        { id: 'proposal-1', rationale: 'Noted', settledBy: 'deadline' },
+        SPACE_ID
+      );
+
+      expect(indexedDocument(storage).provenance?.settledBy).toBeUndefined();
+    });
+
+    it('should not return the storage-only provenance', async () => {
+      const storage = createStorage(baseDocument({ provenance: PROVENANCE }));
+      const { service } = createService(storage);
+
+      const proposal = await service.update({ id: 'proposal-1', rationale: 'Noted' }, SPACE_ID);
+
+      expect(proposal).not.toHaveProperty('provenance');
+    });
+  });
+
+  describe('clone', () => {
+    const failedWithProvenance = (provenance: Partial<ProposalProvenance> = {}) =>
+      baseDocument({
+        decision: 'approved',
+        provenance: { ...PROVENANCE, ...provenance },
+        status: 'failed',
+      });
+
+    it('should inherit the caller, since a retry continues the same run', async () => {
+      const storage = createStorage(failedWithProvenance());
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).toEqual(expect.objectContaining(CALLER));
+    });
+
+    it('should drop the settle path, which describes the original', async () => {
+      const storage = createStorage(failedWithProvenance());
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('settledBy');
+    });
+
+    it('should count the retry as the next attempt', async () => {
+      const storage = createStorage(failedWithProvenance({ attempt: 2 }));
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance?.attempt).toBe(3);
+    });
+
+    it('should read an original that predates attempt as the first attempt', async () => {
+      const storage = createStorage(baseDocument({ decision: 'approved', status: 'failed' }));
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance?.attempt).toBe(2);
+    });
+
+    it('should inherit the action id, since a retry re-offers the same action', async () => {
+      const storage = createStorage(failedWithProvenance());
+      const { service, workflowsApi } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance?.actionId).toBe('security-isolate-host');
+      expect(workflowsApi.getWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('should leave the original provenance untouched when marking it superseded', async () => {
+      const storage = createStorage(failedWithProvenance());
+      const { service } = createService(storage);
+
+      await service.clone({ id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage, 1).provenance).toEqual(PROVENANCE);
+    });
+  });
+
+  describe('revise', () => {
+    const pendingWithProvenance = () =>
+      baseDocument({ provenance: { ...CALLER, attempt: 2, settledBy: 'deadline' } });
+
+    it('should inherit the caller and the attempt, since a revision is not a retry', async () => {
+      const storage = createStorage(pendingWithProvenance());
+      const { service } = createService(storage);
+
+      await service.revise({ comment: 'Tightened', id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).toEqual(
+        expect.objectContaining({ ...CALLER, attempt: 2 })
+      );
+    });
+
+    it('should give a revision of a record written before provenance its first attempt', async () => {
+      const storage = createStorage(baseDocument());
+      const { service } = createService(storage);
+
+      await service.revise({ comment: 'Tightened', id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).toEqual({ attempt: 1 });
+    });
+
+    it('should inherit the action id, since a revision keeps the same action', async () => {
+      const storage = createStorage(
+        baseDocument({ provenance: { ...CALLER, actionId: 'security-isolate-host', attempt: 1 } })
+      );
+      const workflowsApi = createWorkflowsApi();
+      // A revision re-reads the action only to validate the input; that read
+      // must not re-resolve the action id stored at creation.
+      workflowsApi.getWorkflow.mockResolvedValue({ definition: {}, managed: false });
+      const { service } = createService(storage, workflowsApi);
+
+      await service.revise(
+        { actionInput: { name: 'Noisier PowerShell' }, id: 'proposal-1' },
+        SPACE_ID,
+        request
+      );
+
+      expect(indexedDocument(storage).provenance?.actionId).toBe('security-isolate-host');
+    });
+
+    it('should drop the settle path on the new revision', async () => {
+      const storage = createStorage(pendingWithProvenance());
+      const { service } = createService(storage);
+
+      await service.revise({ comment: 'Tightened', id: 'proposal-1' }, SPACE_ID, request);
+
+      expect(indexedDocument(storage).provenance).not.toHaveProperty('settledBy');
+    });
+  });
+
+  describe('reads', () => {
+    it('should not leak the storage-only provenance from get', async () => {
+      const storage = createStorage(baseDocument({ provenance: PROVENANCE }));
+      const { service } = createService(storage);
+
+      const proposal = await service.get('proposal-1', SPACE_ID, request);
+
+      expect(proposal).not.toHaveProperty('provenance');
+    });
+
+    it('should not leak the storage-only provenance from list', async () => {
+      const storage = createStorage(baseDocument({ provenance: PROVENANCE }));
+      const { service } = createService(storage);
+
+      const { proposals } = await service.list(listQuery(), SPACE_ID, request);
+
+      expect(proposals[0]).not.toHaveProperty('provenance');
+    });
+
+    it('should not leak the storage-only provenance from releaseGate', async () => {
+      const storage = createStorage(baseDocument({ provenance: PROVENANCE }));
+      const { service } = createService(storage);
+
+      const proposal = await service.releaseGate('proposal-1', releaseParams());
+
+      expect(proposal).not.toHaveProperty('provenance');
+    });
+
+    it('should read back a proposal stored before provenance existed', async () => {
+      const storage = createStorage(baseDocument());
+      const { service } = createService(storage);
+
+      const proposal = await service.get('proposal-1', SPACE_ID, request);
+
+      expect(proposal.id).toBe('proposal-1');
     });
   });
 });
