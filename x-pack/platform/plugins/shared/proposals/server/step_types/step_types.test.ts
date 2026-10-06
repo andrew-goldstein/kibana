@@ -856,10 +856,18 @@ describe('proposals.checkDecidePrivileges step', () => {
     jest.clearAllMocks();
   });
 
+  const reportResumeRejected = jest.fn().mockResolvedValue(undefined);
+
+  const checkDefinition = (
+    privileges: ProposalPrivilegesChecker,
+    getProposalsService: () => ProposalsService = () =>
+      ({ reportResumeRejected } as unknown as ProposalsService)
+  ) => getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges });
+
   it('should report a refusal without failing the step', async () => {
     const privileges = allowAll();
     privileges.canManage.mockResolvedValue(false);
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // Failing here would spend the gate and strand the proposal, leaving no
     // way for a privileged approver to retry.
@@ -870,7 +878,7 @@ describe('proposals.checkDecidePrivileges step', () => {
   });
 
   it('should report an allowance', async () => {
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges: allowAll() });
+    const definition = checkDefinition(allowAll());
 
     const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
 
@@ -880,18 +888,19 @@ describe('proposals.checkDecidePrivileges step', () => {
   it('should fail the step when the privilege check itself errors', async () => {
     const privileges = allowAll();
     privileges.canManage.mockRejectedValue(new Error('privilege service unavailable'));
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // A service fault must stay distinguishable from a refusal, or the loop
     // would re-park forever on an outage.
     await expect(
       definition.handler(createContext({ proposalId: 'proposal-1' }))
     ).rejects.toMatchObject({ type: 'ApiError' });
+    expect(reportResumeRejected).not.toHaveBeenCalled();
   });
 
   it('should refuse an external resume without consulting the privilege service', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // An external resume carries no request, so the execution wakes under the
     // workflow runner's key — which always holds `manage_proposals`, having
@@ -907,7 +916,7 @@ describe('proposals.checkDecidePrivileges step', () => {
 
   it('should still check a named responder normally', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     const result = await definition.handler(
       createContext({ proposalId: 'proposal-1', respondedBy: 'analyst' })
@@ -915,6 +924,63 @@ describe('proposals.checkDecidePrivileges step', () => {
 
     expect(result.output).toEqual({ canDecide: true });
     expect(privileges.canManage).toHaveBeenCalledWith(FAKE_REQUEST);
+  });
+
+  describe('telemetry', () => {
+    it('should report an unprivileged resumer as a rejected resume', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+
+      await checkDefinition(privileges).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'unprivileged',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report an external resume as a rejected resume', async () => {
+      await checkDefinition(allowAll()).handler(
+        createContext({ proposalId: 'proposal-1', respondedBy: 'external_resume:step-exec-1' })
+      );
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'external_principal',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report nothing for an allowance', async () => {
+      await checkDefinition(allowAll()).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).not.toHaveBeenCalled();
+    });
+
+    it('should still refuse when the service cannot report', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      const definition = checkDefinition(privileges, () => {
+        throw new Error('proposals service not started');
+      });
+
+      const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
+
+    it('should still refuse when reporting rejects', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      reportResumeRejected.mockRejectedValueOnce(new Error('unexpected'));
+
+      const result = await checkDefinition(privileges).handler(
+        createContext({ proposalId: 'proposal-1' })
+      );
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
   });
 });
 

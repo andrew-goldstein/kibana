@@ -49,7 +49,7 @@ export const registerStepDefinitions = ({
     getSettleIncompleteProposalStepDefinition({ getProposalsService })
   );
   workflowsExtensions.registerStepDefinition(
-    getCheckDecidePrivilegesStepDefinition({ privileges })
+    getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges })
   );
   workflowsExtensions.registerStepDefinition(
     getGetProposalStepDefinition({ getProposalsService, privileges })

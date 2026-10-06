@@ -28,7 +28,11 @@ import { reviseProposalTool } from './agent_builder/tools/revise_proposal_tool';
 import { createProposalManagementSkill } from './agent_builder/skills/proposal_management';
 import { registerStepDefinitions } from './step_types';
 import { createProposalsStorageClient } from './storage/proposals_storage';
-import { readTelemetryOptIn, registerProposalsTelemetryEvents } from './telemetry';
+import {
+  createProposalsTelemetryReporter,
+  readTelemetryOptIn,
+  registerProposalsTelemetryEvents,
+} from './telemetry';
 import { createProposalTool } from './tools/create_proposal_tool';
 import type {
   ProposalsPluginSetup,
@@ -161,6 +165,14 @@ export class ProposalsPlugin
       getWorkflowsApi: () => this.requireWorkflowsApi(),
       getAttachmentsClient: (request) =>
         plugins.agentBuilder.attachments.getScopedClient({ request }),
+      // Core analytics applies the telemetry opt-in itself, so the reporter
+      // needs no check of its own.
+      telemetry: createProposalsTelemetryReporter({
+        analytics: coreStart.analytics,
+        logger: this.logger,
+      }),
+      // Lets the reads made only for telemetry be skipped on an opted-out cluster.
+      isTelemetryOptedIn: () => this.isTelemetryOptedIn(),
     });
 
     void initializeManagedWorkflows({

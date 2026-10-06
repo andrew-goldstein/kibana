@@ -5,6 +5,7 @@
  * 2.0.
  */
 
+import { createAnalytics } from '@elastic/ebt/client';
 import { httpServerMock } from '@kbn/core-http-server-mocks';
 import { loggerMock } from '@kbn/logging-mocks';
 import type { ExecutionStatus } from '@kbn/workflows';
@@ -15,6 +16,11 @@ import type { ProposalDocument, ProposalsStorageClient } from '../server/storage
 import type { CallerExecution } from '../server/step_types/resolve_caller_provenance';
 import { ProposalsService } from '../server/services/proposals_service';
 import type { ProposalPrivilegesChecker } from '../server/services/check_proposal_privileges';
+import type { ProposalsTelemetryEvent } from '../server/telemetry';
+import {
+  createProposalsTelemetryReporter,
+  registerProposalsTelemetryEvents,
+} from '../server/telemetry';
 import { registerStepDefinitionsForTest } from './register_step_definitions_for_test';
 
 /**
@@ -177,6 +183,8 @@ export interface ProposalGateFixture {
   setActionMetadata: (actionMetadata: Record<string, unknown>) => void;
   /** Makes the action workflow unreadable, as a transient API failure would. */
   failActionLookup: () => void;
+  /** Makes the action workflow a managed one, installed from the given definition id. */
+  setManagedAction: (originManagedWorkflowId: string) => void;
   /** Makes `proposals.checkDecidePrivileges` throw, failing the whole run. */
   failPrivilegeCheck: () => void;
   /**
@@ -184,6 +192,13 @@ export interface ProposalGateFixture {
    * ancestors in order. Each one is what the caller lookup reads back.
    */
   setCallerLineage: (lineage: CallerExecutionFixture[]) => void;
+  /** Every proposals telemetry event reported so far, in order. */
+  reportedEvents: () => ProposalsTelemetryEvent[];
+  /**
+   * The errors the dev-mode analytics client threw, one per report whose
+   * payload its registered schema rejected. Empty when every payload conformed.
+   */
+  rejectedReports: () => unknown[];
 }
 
 export const createProposalGateFixture = (): ProposalGateFixture => {
@@ -231,10 +246,18 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
   };
 
   const attachedProposalIds: string[] = [];
+  // A real client in dev mode rather than a bare mock, so every payload the
+  // gate produces is validated against the registered schemas.
+  const analytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+  registerProposalsTelemetryEvents(analytics);
+  const reportEvent = jest.spyOn(analytics, 'reportEvent');
 
   const service = new ProposalsService({
     storage: client,
     logger: loggerMock.create(),
+    // The spy replaced `reportEvent` on the client itself, so passing the
+    // client reports through it.
+    telemetry: createProposalsTelemetryReporter({ analytics, logger: loggerMock.create() }),
     getWorkflowsApi: () => workflowsApi as never,
     // The gate's behaviour does not depend on the conversation card, so the
     // attachment write is stubbed rather than simulated.
@@ -373,11 +396,24 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
     failActionLookup: () => {
       workflowsApi.getWorkflow.mockRejectedValue(new Error('workflows API unavailable'));
     },
+    setManagedAction: (originManagedWorkflowId) => {
+      workflowsApi.getWorkflow.mockResolvedValue({
+        definition: actionDefinition,
+        managed: true,
+        originManagedWorkflowId,
+      });
+    },
     failPrivilegeCheck: () => {
       privilegeCheckFails = true;
     },
     setCallerLineage: (lineage) => {
       callerLineage = lineage;
     },
+    reportedEvents: () =>
+      reportEvent.mock.calls.map(
+        ([eventType, payload]) => ({ eventType, payload } as ProposalsTelemetryEvent)
+      ),
+    rejectedReports: () =>
+      reportEvent.mock.results.filter(({ type }) => type === 'throw').map(({ value }) => value),
   };
 };

@@ -54,7 +54,22 @@ import type { ChartsWindow } from './esql';
 import type { ProposalDocument, ProposalsStorageClient } from '../storage/proposals_storage';
 import type { ProposalCallerProvenance } from '../storage/proposal_provenance';
 import { CONFIDENCE_RANK_FIELD, IMPACT_RANK_FIELD, toSortRanks } from '../storage/sort_ranks';
-import { toTelemetryActionId } from '../telemetry';
+import type {
+  ProposalResumeRejectedReason,
+  ProposalsTelemetryEvent,
+  ProposalsTelemetryReporter,
+} from '../telemetry';
+import {
+  buildCreatedPayload,
+  buildResumeRejectedPayload,
+  buildRetriedPayload,
+  buildRevisedPayload,
+  buildUpdateEvents,
+  PROPOSALS_TELEMETRY_EVENTS,
+  toResumeRejectedReason,
+  toTelemetryActionId,
+  toTelemetryRecord,
+} from '../telemetry';
 import {
   ProposalConflictError,
   ProposalInvalidActionInputError,
@@ -119,6 +134,13 @@ export interface ProposalsServiceDeps {
   logger: Logger;
   getWorkflowsApi: () => WorkflowsManagementApi;
   getAttachmentsClient: (request: KibanaRequest) => Promise<AttachmentPublicClient>;
+  /** Reports the proposals EBT events. Optional, so a service without it simply reports nothing. */
+  telemetry?: ProposalsTelemetryReporter;
+  /**
+   * Whether telemetry is opted in right now, so a read made only for telemetry can be skipped.
+   * Optional: without it every such read runs, and core analytics still applies the opt-in.
+   */
+  isTelemetryOptedIn?: () => Promise<boolean>;
 }
 
 /**
@@ -143,6 +165,7 @@ export class ProposalsService {
   async create(
     params: CreateProposalRequest,
     {
+      autoApproveRequested,
       caller,
       spaceId,
       user,
@@ -227,6 +250,15 @@ export class ProposalsService {
     };
 
     await this.deps.storage.index({ id, document, op_type: 'create' });
+
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalCreated,
+        payload: buildCreatedPayload(
+          toTelemetryRecord({ id, ...document }, { autoApproveRequested })
+        ),
+      },
+    ]);
 
     await this.attachToConversation(id, params.conversationId, document.title, request);
 
@@ -451,28 +483,105 @@ export class ProposalsService {
   ): Promise<Proposal> {
     const { proposal, seqNo, primaryTerm } = await this.load(id, spaceId);
 
-    // Every refusal comes first, so a rejected release leaves the record
-    // exactly as it found it. Ordering matters more than it looks: an
-    // annotation written ahead of a conflict would leave a dismiss reason on a
-    // proposal that was never dismissed, and a later approval would land on top
-    // of it.
-    this.assertDecidable(proposal);
+    try {
+      // Every refusal comes first, so a rejected release leaves the record
+      // exactly as it found it. Ordering matters more than it looks: an
+      // annotation written ahead of a conflict would leave a dismiss reason on
+      // a proposal that was never dismissed, and a later approval would land on
+      // top of it.
+      this.assertDecidable(proposal);
 
-    if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
-      throw new ProposalConflictError(
-        `Proposal [${id}] was modified since it was rendered; re-read it before approving`
+      if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
+        throw new ProposalConflictError(
+          `Proposal [${id}] was modified since it was rendered; re-read it before approving`,
+          { reason: 'input_changed' }
+        );
+      }
+
+      const annotated = await this.annotate(
+        proposal,
+        { dismissReason, rationale },
+        { seqNo, primaryTerm }
+      );
+
+      await this.resumeGate(annotated, { spaceId, request, approved });
+
+      return stripStorageFields(annotated);
+    } catch (error) {
+      // Only a typed refusal is reported: a lost annotation race or a failing
+      // resume API is not a decision attempt that was turned away.
+      const reason = toResumeRejectedReason(error);
+      if (reason !== undefined) {
+        this.reportResumeRejectedFor(proposal, reason);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Reports a decision attempt the gate workflow refused behind the gate, where
+   * the service never sees the refusal itself. Never throws, including when the
+   * proposal cannot be read. Reads nothing on an opted-out cluster, since the
+   * read exists only to build the event.
+   */
+  async reportResumeRejected({
+    id,
+    reason,
+    spaceId,
+  }: {
+    id: string;
+    reason: ProposalResumeRejectedReason;
+    spaceId: string;
+  }): Promise<void> {
+    const { isTelemetryOptedIn, telemetry } = this.deps;
+    if (!telemetry || (isTelemetryOptedIn && !(await isTelemetryOptedIn()))) {
+      return;
+    }
+    try {
+      const { proposal } = await this.load(id, spaceId);
+      this.reportResumeRejectedFor(proposal, reason);
+    } catch (error) {
+      this.deps.logger.debug(
+        () =>
+          `Did not report a rejected resume of proposal [${id}]: ${
+            error instanceof Error ? error.message : String(error)
+          }`
       );
     }
+  }
 
-    const annotated = await this.annotate(
-      proposal,
-      { dismissReason, rationale },
-      { seqNo, primaryTerm }
-    );
+  private reportResumeRejectedFor(
+    proposal: StoredProposalRecord,
+    reason: ProposalResumeRejectedReason
+  ): void {
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalResumeRejected,
+        payload: buildResumeRejectedPayload(toTelemetryRecord(proposal), reason),
+      },
+    ]);
+  }
 
-    await this.resumeGate(annotated, { spaceId, request, approved });
-
-    return stripStorageFields(annotated);
+  /**
+   * Reports the events a write produced, after it resolved. Never throws:
+   * building a payload runs inside the guard too, so telemetry cannot fail the
+   * write it follows.
+   */
+  private report(buildEvents: () => ProposalsTelemetryEvent[]): void {
+    const { logger, telemetry } = this.deps;
+    if (!telemetry) {
+      return;
+    }
+    try {
+      buildEvents().forEach(({ eventType, payload }) => telemetry(eventType, payload));
+    } catch (error) {
+      logger.debug(
+        () =>
+          `Failed to build proposals telemetry: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+      );
+    }
   }
 
   /**
@@ -595,6 +704,20 @@ export class ProposalsService {
 
     await this.writeDocument(id, document, { seqNo, primaryTerm });
 
+    // Diffed against the loaded record rather than the params, because a
+    // same-status rewrite is allowed and must report nothing. The decision
+    // source is only known to this write, so it travels as context.
+    this.report(() =>
+      buildUpdateEvents({
+        after: toTelemetryRecord(
+          updated,
+          params.decision !== undefined ? { decisionSource: params.decisionSource } : {}
+        ),
+        before: toTelemetryRecord(proposal),
+        now: Date.now(),
+      })
+    );
+
     return stripStorageFields(updated);
   }
 
@@ -685,6 +808,13 @@ export class ProposalsService {
     };
 
     await this.writeDocument(id, superseded, { seqNo, primaryTerm });
+
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRetried,
+        payload: buildRetriedPayload(toTelemetryRecord({ id: cloneId, ...document })),
+      },
+    ]);
 
     await this.attachToConversation(cloneId, document.conversationId, document.title, request);
 
@@ -821,6 +951,18 @@ export class ProposalsService {
       }
       throw error;
     }
+
+    // Only once both writes landed. The predecessor's move to `superseded` is
+    // part of the revision, not a status change of its own.
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRevised,
+        payload: buildRevisedPayload({
+          original: toTelemetryRecord(proposal),
+          revision: toTelemetryRecord({ id: revisionId, ...document }),
+        }),
+      },
+    ]);
 
     await this.attachToConversation(revisionId, document.conversationId, document.title, request);
 
@@ -1148,12 +1290,14 @@ export class ProposalsService {
   private assertDecidable(proposal: StoredProposalRecord): void {
     if (proposal.decision !== undefined) {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`
+        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`,
+        { reason: 'already_decided' }
       );
     }
     if (proposal.status !== 'pending') {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has settled as ${proposal.status}`
+        `Proposal [${proposal.id}] has settled as ${proposal.status}`,
+        { reason: 'settled' }
       );
     }
   }
@@ -1197,7 +1341,8 @@ export class ProposalsService {
       // written behind the gate: returning would answer the caller with a 200
       // for a record that nothing will ever decide.
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`
+        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`,
+        { reason: 'no_execution' }
       );
     }
 
@@ -1207,12 +1352,14 @@ export class ProposalsService {
     });
     if (!execution) {
       throw new ProposalConflictError(
-        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`
+        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`,
+        { reason: 'no_execution' }
       );
     }
     if (execution.status !== ExecutionStatus.WAITING_FOR_INPUT || execution.finishedAt) {
       throw new ProposalConflictError(
-        `Execution [${proposal.workflowExecutionId}] is not waiting for input (status: ${execution.status})`
+        `Execution [${proposal.workflowExecutionId}] is not waiting for input (status: ${execution.status})`,
+        { reason: 'not_waiting' }
       );
     }
 

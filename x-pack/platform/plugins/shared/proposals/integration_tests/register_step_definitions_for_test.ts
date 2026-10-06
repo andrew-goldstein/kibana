@@ -46,14 +46,14 @@ export const registerStepDefinitionsForTest = ({
     getCreateProposalStepDefinition({
       getProposalsService,
       getWorkflowsApi,
-      // Opted in, so the caller walk runs.
+      // Opted in, so the caller walk runs and every reported payload is validated.
       isTelemetryOptedIn: async () => true,
       resolveUser,
       privileges,
     }),
     getUpdateProposalStepDefinition({ getProposalsService, resolveUser, privileges }),
     getSettleIncompleteProposalStepDefinition({ getProposalsService }),
-    getCheckDecidePrivilegesStepDefinition({ privileges }),
+    getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges }),
     getGetProposalStepDefinition({ getProposalsService, privileges }),
     getCloneProposalStepDefinition({ getProposalsService, privileges }),
     getGetLatestRevisionStepDefinition({ getProposalsService, privileges }),

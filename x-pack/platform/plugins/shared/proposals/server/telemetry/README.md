@@ -40,6 +40,7 @@ The schema tests (`event_types.test.ts`) enforce the following:
 | `to_telemetry_action_id.ts` | The `action_id` the service stores at creation: a managed action workflow's definition id, or `custom` |
 | `build_*_payload.ts` | One pure payload builder per event, from the stored record (never the stripped public proposal). `payload_builders_privacy.test.ts` checks that none of them reads `title` or `previousExecutionError` |
 | `build_update_events.ts` | The events one `update()` write produces, diffed from the loaded record to the written one |
+| `to_resume_rejected_reason.ts` | The `resume_rejected` reason a refusal error stands for |
 | `types.ts` | `ProposalTelemetryRecord` (the stored fields the builders read) and `ProposalsTelemetryEvent` |
 
 ## Where each event is emitted

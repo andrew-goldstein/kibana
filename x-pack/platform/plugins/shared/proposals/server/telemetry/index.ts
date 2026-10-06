@@ -65,6 +65,7 @@ export { buildRetriedPayload } from './build_retried_payload';
 export { buildRevisedPayload } from './build_revised_payload';
 export { buildUpdateEvents } from './build_update_events';
 export { bucketExpiresIn } from './bucket_expires_in';
+export { toResumeRejectedReason } from './to_resume_rejected_reason';
 export { toTelemetryActionId } from './to_telemetry_action_id';
 export { toTelemetryCategory } from './to_telemetry_category';
 export { toTelemetryRecord } from './to_telemetry_record';
