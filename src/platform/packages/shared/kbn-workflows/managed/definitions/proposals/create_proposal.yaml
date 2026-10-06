@@ -47,6 +47,7 @@ settings:
         with:
           proposalId: '{{ variables.current_proposal_id }}'
           executionError: '{{ error.message }}'
+          settledBy: workflow_failure
 
 triggers:
   - type: manual
@@ -149,6 +150,9 @@ steps:
       # The only deadline in this workflow. Every park below derives from the
       # `expiresAt` it resolves to.
       expiresIn: "{{ inputs.expiresIn | default: '72h' }}"
+      # Recorded for reporting only; `needs_gate` below is what acts on it.
+      # Compared the same way, and `${{ }}` so the step receives a boolean.
+      autoApprove: '${{ inputs.autoApprove == true }}'
 
   # Everything the loop carries lives in variables: `data.set` is the only step
   # type exempt from output eviction, so its values survive a HITL park, a task
@@ -265,6 +269,7 @@ steps:
               # Someone answered, so there is a resumer to authorize. False on
               # a timeout, where the only principal is the workflow runner.
               gate_answered: '${{ steps.await_decision.error == blank }}'
+              decision_source: human
 
         else:
           # No human here: the caller's autonomy policy already decided, so the
@@ -280,6 +285,7 @@ steps:
               gate_error: ''
               # Nobody was asked, so there is nobody to authorize.
               gate_answered: false
+              decision_source: autonomy
 
       # Keyed on `gate_answered` rather than `needs_gate`, which skips both the
       # autonomy path and a timed-out gate. Neither has a decider: the only
@@ -335,6 +341,7 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               status: expired
               executionError: '{{ variables.gate_error }}'
+              settledBy: deadline
           - name: complete_gate_expiry
             type: data.set
             with:
@@ -374,6 +381,8 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: dismissed
               decidedBy: '{{ variables.decided_by }}'
+              # Autonomy only ever approves.
+              decisionSource: human
               # The dismiss reason and rationale are written by the route
               # before it releases the gate, because `waitForApproval` reduces
               # its resume payload to a bare boolean.
@@ -406,6 +415,7 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: approved
               decidedBy: '{{ variables.decided_by }}'
+              decisionSource: '{{ variables.decision_source }}'
               status: no_action
           - name: complete_no_action
             type: data.set
@@ -426,6 +436,7 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: approved
               decidedBy: '{{ variables.decided_by }}'
+              decisionSource: '{{ variables.decision_source }}'
               status: executing
 
           - name: execute_action
@@ -518,6 +529,7 @@ steps:
           proposalId: '{{ variables.current_proposal_id }}'
           status: expired
           executionError: 'No decision was reached within the attempt budget.'
+          settledBy: iteration_limit
       - name: complete_unfinished
         type: data.set
         with:

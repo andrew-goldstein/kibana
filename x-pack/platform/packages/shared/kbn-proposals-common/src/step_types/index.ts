@@ -42,16 +42,20 @@ export {
 } from './get_proposal_step';
 
 export {
+  proposalSettledBySchema,
   SettleIncompleteProposalStepId,
   settleIncompleteProposalStepCommonDefinition,
   settleIncompleteProposalStepInputSchema,
   settleIncompleteProposalStepOutputSchema,
   settleIncompleteProposalStatusSchema,
 } from './settle_incomplete_proposal_step';
+export type { ProposalSettledBy } from './settle_incomplete_proposal_step';
 
 export {
+  proposalDecisionSourceSchema,
   UpdateProposalStepId,
   updateProposalStepCommonDefinition,
   updateProposalStepInputSchema,
   updateProposalStepOutputSchema,
 } from './update_proposal_step';
+export type { ProposalDecisionSource } from './update_proposal_step';
