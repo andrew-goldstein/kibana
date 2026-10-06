@@ -20,12 +20,16 @@ export const ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW_ID =
 /**
  * The forensic pass itself, installed once globally and dispatched per indicator by
  * the per-space Endpoint analysis worker, which is the only scheduler authority.
+ *
+ * Version 7 carries `report_analysis_completed`, which reports how the run settled its indicator
+ * through `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible in `managedVersion`;
+ * the content hash alone would also apply it.
  */
 export const ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW = {
   billable: false,
   id: ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 6,
+  version: 7,
   yaml: FORENSICS_RUN_ENDPOINT_ANALYSIS_YAML,
 } as const satisfies ManagedWorkflowDefinition;

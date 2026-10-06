@@ -48,6 +48,8 @@ Every other Worker that closes its own Investigation reports the close the same 
 | `floor_alert_triage.yaml` (Alert Triage) | `report_worker_run_completed` | `worker_run_completed` | The last step |
 | `floor_alert_triage_review.yaml` (Alert Triage) | `report_investigation_closed_after_approval`, `report_investigation_closed_after_dismissal`, `report_investigation_closed_after_expiry` | `worker_investigation_closed` | Right after each close |
 | `floor_alert_triage_review.yaml` (Alert Triage) | `report_closure_resolved` | `alert_triage_closure_resolved` | The last step, after every outcome branch |
+| `forensics_endpoint_analysis.yaml` (Endpoint Analysis) | `report_worker_run_completed` | `worker_run_completed` | Right before `emit_result`, only when the sweep started or refused a dispatch or its search failed, so an empty one-minute poll sends nothing |
+| `forensics_run_endpoint_analysis.yaml` (Endpoint Analysis) | `report_analysis_completed` | `endpoint_analysis_completed` | Right before `emit_result` |
 | `hunt_continuous_threat_hunt.yaml` (Continuous Threat Hunt) | `report_worker_run_completed` | `worker_run_completed` | The last step, after `report_fan_out`. Each branch ends in `record_report_outcome` (a `data.set`), so the report counts outcomes across branches |
 | `hunt_package_report.yaml` (Continuous Threat Hunt) | `report_investigation_closed_benign` | `worker_investigation_closed` | Right after `dismiss_investigation_if_clean` |
 | `hunt_package_report.yaml` (Continuous Threat Hunt) | `report_report_completed` | `hunt_report_completed` | Right before `emit_result` |

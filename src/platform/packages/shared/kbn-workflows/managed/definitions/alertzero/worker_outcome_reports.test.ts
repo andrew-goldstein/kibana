@@ -12,11 +12,13 @@ import {
   ALERTZERO_COVERAGE_REVIEW_WORKFLOW,
   ALERTZERO_COVERAGE_WORKER_WORKFLOW,
   ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
+  ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW,
   ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW,
   ALERTZERO_HUNT_WORKFLOW,
   ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW,
   ALERTZERO_RULE_TUNING_WORKER_WORKFLOW,
   ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW,
+  ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW,
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW,
 } from '.';
 import { createWorkflowLiquidEngine } from '../../../common/utils';
@@ -1458,6 +1460,273 @@ describe('Continuous Threat Hunt outcome reports', () => {
     it('sends no report, host or proposal text', () => {
       expect(JSON.stringify(report.with)).not.toMatch(
         /reportId|closureSummary|proposalBullets|package_summary|package_reason|title|comment/
+      );
+    });
+  });
+});
+
+describe('Endpoint Analysis outcome reports', () => {
+  describe('the Worker (forensics_endpoint_analysis.yaml)', () => {
+    const steps = topLevelSteps(
+      ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW.yamlTemplate({
+        autonomyLevel: 'manual',
+        settingsVersion: 1,
+      })
+    );
+    const report = stepNamed(steps, 'report_worker_run_completed');
+
+    describeReportStep(steps, 'report_worker_run_completed', 'worker_run_completed', 'emit_result');
+
+    const sweepContext = ({
+      pending = 0,
+      refused = 0,
+      searchFailed = false,
+      started = 0,
+    }: {
+      pending?: number;
+      refused?: number;
+      searchFailed?: boolean;
+      started?: number;
+    }): Record<string, unknown> => ({
+      steps: {
+        search_pending_indicators: searchFailed
+          ? { error: { message: 'search failed' } }
+          : { output: { hits: { hits: [], total: { value: pending } } } },
+        ...(started + refused > 0
+          ? {
+              start_runs: {
+                output: { failed: refused, succeeded: started, total: started + refused },
+              },
+            }
+          : {}),
+      },
+    });
+
+    // The Worker polls every minute; an empty poll must not send an event.
+    it.each([
+      ['an empty poll', {}, false],
+      ['a poll whose batch the engine dropped entirely', { pending: 0, started: 0 }, false],
+      ['a poll that started analyses', { pending: 2, started: 2 }, true],
+      ['a poll whose dispatch the engine refused', { pending: 1, refused: 1 }, true],
+      ['a poll whose search failed', { searchFailed: true }, true],
+    ])('reports %s: %s', (_scenario, scenario, expected) => {
+      expect(evalGuard(report, sweepContext(scenario))).toBe(expected);
+    });
+
+    it.each([
+      [
+        'analyses started',
+        { pending: 3, started: 2 },
+        {
+          candidates_found: 3,
+          degraded: false,
+          degraded_reason: 'none',
+          items_dispatched: 2,
+          items_failed: 0,
+          items_in_flight: 2,
+          run_outcome: 'produced',
+          source_read_failed: false,
+        },
+      ],
+      [
+        'a refused dispatch next to a started one',
+        { pending: 2, refused: 1, started: 1 },
+        {
+          candidates_found: 2,
+          degraded: true,
+          degraded_reason: 'dependency_unavailable',
+          items_dispatched: 1,
+          items_failed: 1,
+          items_in_flight: 1,
+          run_outcome: 'degraded_partial',
+          source_read_failed: false,
+        },
+      ],
+      [
+        'every dispatch refused',
+        { pending: 2, refused: 2 },
+        {
+          candidates_found: 2,
+          degraded: true,
+          degraded_reason: 'dependency_unavailable',
+          items_dispatched: 0,
+          items_failed: 2,
+          items_in_flight: 0,
+          run_outcome: 'failed_all_items',
+          source_read_failed: false,
+        },
+      ],
+      [
+        'a failed search',
+        { searchFailed: true },
+        {
+          candidates_found: 0,
+          degraded: true,
+          degraded_reason: 'dependency_unavailable',
+          items_dispatched: 0,
+          items_failed: 0,
+          items_in_flight: 0,
+          run_outcome: 'failed_source_unavailable',
+          source_read_failed: true,
+        },
+      ],
+    ])('renders %s', (_scenario, scenario, expected) => {
+      expect(renderReport(report, sweepContext(scenario))).toEqual(expected);
+    });
+  });
+
+  describe('the analysis run (forensics_run_endpoint_analysis.yaml)', () => {
+    const steps = topLevelSteps(ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW.yaml);
+    const report = stepNamed(steps, 'report_analysis_completed');
+
+    describeReportStep(
+      steps,
+      'report_analysis_completed',
+      'endpoint_analysis_completed',
+      'emit_result'
+    );
+
+    const FINDING_IDS = { iocs: 'forensic-iocs-ki-1', timeline: 'forensic-timeline-ki-1' };
+
+    const runContext = ({
+      actions = 0,
+      agentFailed = false,
+      attached = true,
+      dispatched = 0,
+      dispatchFailed = 0,
+      host = 'host-1',
+      investigationReadable = true,
+      priorCount = 0,
+      readKi = true,
+      request = true,
+      supervised = false,
+    }: {
+      actions?: number;
+      agentFailed?: boolean;
+      attached?: boolean;
+      dispatched?: number;
+      dispatchFailed?: number;
+      host?: string;
+      investigationReadable?: boolean;
+      priorCount?: number;
+      readKi?: boolean;
+      request?: boolean;
+      supervised?: boolean;
+    }): Record<string, unknown> => ({
+      steps: {
+        finding_ids: { output: FINDING_IDS },
+        forensic_analysis: agentFailed
+          ? { error: { message: 'agent failed' } }
+          : {
+              output: {
+                structured_output: {
+                  propose: actions > 0,
+                  recommendedActions: Array.from({ length: actions }, () => ({})),
+                },
+              },
+            },
+        read_ki: { output: { hits: { hits: readKi ? [{ _id: 'ki-1' }] : [] } } },
+        resolve_autonomy: { output: { level: supervised ? 'supervised' : 'manual' } },
+        resolve_finding_presence: { output: { iocs: attached, timeline: attached } },
+        resolve_host: { output: { host_name: host } },
+        resolve_prior_assessment: { output: { count: priorCount } },
+        resolve_proposal_dispatch: { output: { failed: dispatchFailed } },
+        resolve_proposals: { output: { proposals_lost: dispatchFailed > 0 } },
+        resolve_request: { output: { has_request: request } },
+        resolve_run_outcome: { output: { attached, settled: attached || host === '' } },
+        verify_investigation: investigationReadable ? { output: { metadata: {} } } : {},
+        ...(dispatched + dispatchFailed > 0
+          ? { propose_actions: { output: { failed: dispatchFailed, succeeded: dispatched } } }
+          : {}),
+      },
+    });
+
+    const NOTHING = {
+      actions_recommended: 0,
+      agent_failed: false,
+      auto_approve_requested: false,
+      findings_attached: false,
+      host_resolved: true,
+      iocs_found: false,
+      proposals_dispatch_failed: 0,
+      proposals_dispatched: 0,
+      reused_prior_assessment: false,
+      timeline_found: false,
+    };
+
+    it.each([
+      [
+        'findings attached and containment proposed for auto-approval',
+        { actions: 2, dispatched: 2, supervised: true },
+        {
+          ...NOTHING,
+          actions_recommended: 2,
+          analysis_outcome: 'processed',
+          auto_approve_requested: true,
+          findings_attached: true,
+          iocs_found: true,
+          proposals_dispatched: 2,
+          timeline_found: true,
+        },
+      ],
+      [
+        "an earlier run's findings reused",
+        { priorCount: 2 },
+        {
+          ...NOTHING,
+          analysis_outcome: 'processed',
+          findings_attached: true,
+          iocs_found: true,
+          reused_prior_assessment: true,
+          timeline_found: true,
+        },
+      ],
+      [
+        'a proposal that did not reach the queue',
+        { actions: 2, dispatchFailed: 1, dispatched: 1 },
+        {
+          ...NOTHING,
+          actions_recommended: 2,
+          analysis_outcome: 'proposals_lost',
+          findings_attached: true,
+          iocs_found: true,
+          proposals_dispatch_failed: 1,
+          proposals_dispatched: 1,
+          timeline_found: true,
+        },
+      ],
+      [
+        'a failed agent that left no findings',
+        { agentFailed: true, attached: false },
+        { ...NOTHING, agent_failed: true, analysis_outcome: 'failed' },
+      ],
+      [
+        'a discovery that names no host',
+        { attached: false, host: '' },
+        { ...NOTHING, analysis_outcome: 'no_host', host_resolved: false },
+      ],
+      [
+        'an Investigation that could not be read',
+        { attached: false, investigationReadable: false },
+        { ...NOTHING, analysis_outcome: 'unreachable' },
+      ],
+      [
+        'a malformed indicator',
+        { attached: false, request: false },
+        { ...NOTHING, analysis_outcome: 'invalid' },
+      ],
+      [
+        'an indicator that was no longer pending',
+        { attached: false, readKi: false, request: false },
+        { ...NOTHING, analysis_outcome: 'not_pending' },
+      ],
+    ])('renders %s', (_scenario, scenario, expected) => {
+      expect(renderReport(report, runContext(scenario))).toEqual(expected);
+    });
+
+    it('sends no host, IoC, timeline or action content', () => {
+      expect(JSON.stringify(report.with)).not.toMatch(
+        /\{\{ steps\.resolve_host\.output\.host_name \}\}|rationale|actionId|actionInput|investigation_id/
       );
     });
   });

@@ -15,13 +15,19 @@ import {
   ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
   ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID,
   ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
+  ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW_ID,
   ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID,
   ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW_ID,
   ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
   ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID,
   ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
+  ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID,
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW_ID,
+  ALERTZERO_WORKER_DETECTION_RULE_COVERAGE_WORKFLOW_ID,
+  ALERTZERO_WORKER_DETECTION_RULE_TUNING_WORKFLOW_ID,
+  ALERTZERO_WORKER_FLOOR_ATTACK_DISCOVERY_WORKFLOW_ID,
   getManagedWorkflowDefinition,
+  getManagedWorkflowDefinitions,
 } from '@kbn/workflows/managed';
 import type { ManagedWorkflowTemplateValuesById } from '@kbn/workflows/managed';
 import {
@@ -29,8 +35,10 @@ import {
   SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID,
   SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID,
   SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID,
+  SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID,
   SYSTEM_SECURITY_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_ID,
 } from '@kbn/alertzero-common';
+import { ALERTZERO_MANAGED_WORKFLOW_OWNER_ID } from '../../../common/constants';
 import {
   REPORT_WORKER_OUTCOME_EVENTS,
   ReportWorkerOutcomeStepId,
@@ -85,6 +93,27 @@ const TEMPLATE_VALUES: Partial<ManagedWorkflowTemplateValuesById> = {
     scheduleInterval: '4h',
     settingsVersion: 1,
   },
+  [ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID]: {
+    autonomyLevel: 'manual',
+    settingsVersion: 1,
+  },
+  [ALERTZERO_WORKER_FLOOR_ATTACK_DISCOVERY_WORKFLOW_ID]: {
+    autonomyLevel: 'manual',
+    scheduleInterval: '24h',
+    settingsVersion: 1,
+  },
+  [ALERTZERO_WORKER_DETECTION_RULE_TUNING_WORKFLOW_ID]: {
+    autonomyLevel: 'manual',
+    extras: { analysisWindowDays: 7, fpCountThreshold: 10, fpRateThresholdPct: 50 },
+    scheduleInterval: '2h',
+    settingsVersion: 1,
+  },
+  [ALERTZERO_WORKER_DETECTION_RULE_COVERAGE_WORKFLOW_ID]: {
+    autonomyLevel: 'manual',
+    extras: { lookbackDays: 14, maxGapsPerRun: 5 },
+    scheduleInterval: '1h',
+    settingsVersion: 1,
+  },
 };
 
 const getManagedYaml = (workflowId: string): string => {
@@ -105,6 +134,12 @@ const reportStepsOf = (workflowId: string): YamlStep[] =>
   );
 
 const runnerReports = reportStepsOf(ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID);
+
+/** Every AlertZero managed workflow whose YAML has a report step, at any depth. */
+const WORKFLOWS_WITH_REPORT_STEPS = getManagedWorkflowDefinitions()
+  .filter(({ pluginId }) => pluginId === ALERTZERO_MANAGED_WORKFLOW_OWNER_ID)
+  .map(({ id }) => id)
+  .filter((workflowId) => reportStepsOf(workflowId).length > 0);
 const reviewReports = reportStepsOf(ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID);
 
 // Configured like the engine's templating engine.
@@ -695,7 +730,57 @@ describe('shipped Worker reports and the reportWorkerOutcome schema', () => {
       workerId: SYSTEM_SECURITY_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_ID,
       workflowId: ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW_ID,
     },
+    {
+      contexts: [
+        {
+          steps: {
+            search_pending_indicators: { output: { hits: { total: { value: 2 } } } },
+            start_runs: { output: { failed: 1, succeeded: 1 } },
+          },
+        },
+        { steps: { search_pending_indicators: { error: { message: 'search failed' } } } },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID,
+      workflowId: ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID,
+    },
+    {
+      contexts: [
+        {
+          steps: {
+            forensic_analysis: {
+              output: { structured_output: { propose: true, recommendedActions: [{}, {}] } },
+            },
+            propose_actions: { output: { failed: 0, succeeded: 2 } },
+            read_ki: { output: { hits: { hits: [{ _id: 'ki-1' }] } } },
+            resolve_autonomy: { output: { level: 'supervised' } },
+            resolve_finding_presence: { output: { iocs: true, timeline: true } },
+            resolve_host: { output: { host_name: 'host-1' } },
+            resolve_prior_assessment: { output: { count: 0 } },
+            resolve_proposal_dispatch: { output: { failed: 0 } },
+            resolve_proposals: { output: { proposals_lost: false } },
+            resolve_request: { output: { has_request: true } },
+            resolve_run_outcome: { output: { attached: true, settled: true } },
+            verify_investigation: { output: { metadata: {} } },
+          },
+        },
+        { steps: { read_ki: { output: { hits: { hits: [] } } } } },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID,
+      workflowId: ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW_ID,
+    },
   ];
+
+  // Every Worker but Attack Discovery (covered above) now reports through the step, and every
+  // report step in the AlertZero managed workflows is covered by this contract.
+  it('covers every AlertZero workflow with a report step', () => {
+    expect(
+      [
+        ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
+        ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
+        ...WORKER_WORKFLOWS.map(({ workflowId }) => workflowId),
+      ].sort()
+    ).toEqual(WORKFLOWS_WITH_REPORT_STEPS.sort());
+  });
 
   const guardPasses = (step: YamlStep, context: Record<string, unknown>): boolean =>
     !step.if || liquid.evalValueSync(step.if.trim().slice(3, -2).trim(), context) === true;
@@ -1011,6 +1096,88 @@ describe('shipped Worker reports as the debug log prints them', () => {
         items_in_flight: 0,
         lookup_failed: false,
         run_outcome: 'degraded_partial',
+        source_read_failed: false,
+      },
+    });
+  });
+
+  it('reports an Endpoint Analysis run that attached findings and proposed containment', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_FORENSICS_RUN_ENDPOINT_ANALYSIS_WORKFLOW_ID),
+          'report_analysis_completed'
+        ),
+        {
+          steps: {
+            forensic_analysis: {
+              output: { structured_output: { propose: true, recommendedActions: [{}, {}] } },
+            },
+            propose_actions: { output: { failed: 0, succeeded: 2 } },
+            read_ki: { output: { hits: { hits: [{ _id: 'ki-1' }] } } },
+            resolve_autonomy: { output: { level: 'manual' } },
+            resolve_finding_presence: { output: { iocs: true, timeline: true } },
+            resolve_host: { output: { host_name: 'host-1' } },
+            resolve_prior_assessment: { output: { count: 0 } },
+            resolve_proposal_dispatch: { output: { failed: 0 } },
+            resolve_proposals: { output: { proposals_lost: false } },
+            resolve_request: { output: { has_request: true } },
+            resolve_run_outcome: { output: { attached: true, settled: true } },
+            verify_investigation: { output: { metadata: {} } },
+          },
+        },
+        SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_endpoint_analysis_completed',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-forensics',
+        worker_id: 'system-security-forensics-endpoint-analysis',
+        actions_recommended: 2,
+        agent_failed: false,
+        analysis_outcome: 'processed',
+        auto_approve_requested: false,
+        findings_attached: true,
+        host_resolved: true,
+        iocs_found: true,
+        proposals_dispatch_failed: 0,
+        proposals_dispatched: 2,
+        reused_prior_assessment: false,
+        timeline_found: true,
+      },
+    });
+  });
+
+  it('reports an Endpoint Analysis poll that started an analysis', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID),
+          'report_worker_run_completed'
+        ),
+        {
+          steps: {
+            search_pending_indicators: { output: { hits: { total: { value: 3 } } } },
+            start_runs: { output: { failed: 0, succeeded: 2 } },
+          },
+        },
+        SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_worker_run_completed',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-forensics',
+        worker_id: 'system-security-forensics-endpoint-analysis',
+        candidates_found: 3,
+        degraded: false,
+        degraded_reason: 'none',
+        items_dispatched: 2,
+        items_failed: 0,
+        items_in_flight: 2,
+        lookup_failed: false,
+        run_outcome: 'produced',
         source_read_failed: false,
       },
     });

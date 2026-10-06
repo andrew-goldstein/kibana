@@ -18,13 +18,17 @@ export const ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID =
 /**
  * Per-space forensics worker. Owns the indicator sweep cadence and dispatches the
  * global analysis workflow per indicator.
+ *
+ * Version 5 carries `report_worker_run_completed`, which reports a sweep that started, refused or
+ * failed to find work through `alertzero.reportWorkerOutcome`. The YAML is imported, so the bump is
+ * what delivers it to spaces that already installed the Worker.
  */
 export const ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW = {
   billable: false,
   id: ALERTZERO_WORKER_FORENSICS_ENDPOINT_ANALYSIS_WORKFLOW_ID,
   management: ALERTZERO_WORKER_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 4,
+  version: 5,
   yamlTemplate: (values: CommonWorkerTemplateValues): string =>
     renderCommonWorkerYaml(FORENSICS_ENDPOINT_ANALYSIS_YAML, values),
 } as const satisfies ManagedWorkflowDefinition<CommonWorkerTemplateValues>;
