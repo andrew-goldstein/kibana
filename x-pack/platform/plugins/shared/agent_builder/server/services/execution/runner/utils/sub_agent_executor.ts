@@ -17,12 +17,15 @@ export const createSubAgentExecutor = ({
   getExecutionService,
   projectRouting,
   interactivity,
+  workflowExecutionId,
 }: {
   request: KibanaRequest;
   getExecutionService: () => AgentExecutionService;
   /** CPS routing of the parent run, inherited by every sub-agent it spawns. */
   projectRouting?: string;
   interactivity: InteractivityConfig;
+  /** The workflow run that started the parent run, inherited so sub-agent rounds join to it. */
+  workflowExecutionId?: string;
 }): SubAgentExecutor => {
   const inheritedApis = interactivity.auto_approved_apis;
   const subAgentInteractivity = createNonInteractiveConfig(inheritedApis);
@@ -70,6 +73,7 @@ export const createSubAgentExecutor = ({
             subagentName: params.subagentName,
             subagentPurpose: params.subagentPurpose,
           },
+          ...(workflowExecutionId ? { workflowExecutionId } : {}),
         },
         abortSignal: params.abortSignal,
       });
@@ -88,6 +92,7 @@ export const createSubAgentExecutor = ({
           conversationId: params.conversationId,
           autoCreateConversationWithId: false,
           nextInput: { message: params.prompt },
+          ...(workflowExecutionId ? { workflowExecutionId } : {}),
         },
         abortSignal: params.abortSignal,
       });

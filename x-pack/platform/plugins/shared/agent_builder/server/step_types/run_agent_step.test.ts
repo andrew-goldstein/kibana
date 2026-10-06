@@ -1031,6 +1031,20 @@ describe('ai.agent workflow step (Agent Builder)', () => {
       const callArg = execution.executeAgent.mock.calls[0][0];
       expect(callArg.params).not.toHaveProperty('telemetryMetadata');
     });
+
+    it('passes the workflow execution id for round telemetry, with or without a plugin-id', async () => {
+      const execution = createExecutionMock(roundCompleteEvents());
+      const serviceManager = { internalStart: { execution } } as any;
+      const step = getRunAgentStepDefinition(serviceManager);
+
+      await step.handler(createContext({ input: { message: 'hello' }, config: {} }));
+
+      expect(execution.executeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({ workflowExecutionId: 'exec-1' }),
+        })
+      );
+    });
   });
 
   describe('metadata', () => {

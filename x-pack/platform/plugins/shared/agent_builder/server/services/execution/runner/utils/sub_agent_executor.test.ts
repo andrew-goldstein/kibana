@@ -17,12 +17,13 @@ describe('createSubAgentExecutor', () => {
   let executeAgent: jest.Mock;
   let request: ReturnType<typeof httpServerMock.createKibanaRequest>;
 
-  const createExecutor = (interactivity: InteractivityConfig) => {
+  const createExecutor = (interactivity: InteractivityConfig, workflowExecutionId?: string) => {
     const executionService = { executeAgent } as unknown as AgentExecutionService;
     return createSubAgentExecutor({
       request,
       getExecutionService: () => executionService,
       interactivity,
+      workflowExecutionId,
     });
   };
 
@@ -94,6 +95,49 @@ describe('createSubAgentExecutor', () => {
     expect(executeAgent).toHaveBeenCalledWith(
       expect.objectContaining({ interactive: { enabled: false } })
     );
+  });
+
+  describe('workflow execution id', () => {
+    const runAll = async (executor: ReturnType<typeof createExecutor>) => {
+      await executor.executeSubAgent({
+        agentId: 'child',
+        prompt: 'go',
+        parentExecutionId: 'parent-execution-id',
+      });
+      await executor.createSubAgent({
+        agentId: 'child',
+        prompt: 'go',
+        parentExecutionId: 'parent-execution-id',
+        conversationId: 'conversation-id',
+        parentConversationId: 'parent-conversation-id',
+        subagentName: 'child',
+        subagentPurpose: 'testing',
+      });
+      await executor.sendToSubAgent({
+        agentId: 'child',
+        conversationId: 'conversation-id',
+        prompt: 'go',
+        parentExecutionId: 'parent-execution-id',
+      });
+      return executeAgent.mock.calls.map(([call]) => call.params);
+    };
+
+    it("passes the parent's workflow execution id to the conversation-mode sub-agents", async () => {
+      const [standalone, created, sent] = await runAll(
+        createExecutor({ enabled: false }, 'workflow-run-1')
+      );
+
+      expect(created.workflowExecutionId).toBe('workflow-run-1');
+      expect(sent.workflowExecutionId).toBe('workflow-run-1');
+      // Standalone runs report no round events, so they take no workflow execution id.
+      expect(standalone).not.toHaveProperty('workflowExecutionId');
+    });
+
+    it('passes none when the parent run has none', async () => {
+      const calls = await runAll(createExecutor({ enabled: false }));
+
+      calls.forEach((params) => expect(params).not.toHaveProperty('workflowExecutionId'));
+    });
   });
 
   describe('per-delegation pre-approvals', () => {

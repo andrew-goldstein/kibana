@@ -1795,6 +1795,136 @@ describe('handleAgentExecution — interrupted executions', () => {
   });
 });
 
+describe('handleAgentExecution — round attribution', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    generateTitleMock.mockReturnValue(of('Generated title'));
+  });
+
+  const makeFailedRoundInterruptedEvent = (): RoundInterruptedEvent => ({
+    type: ChatEventType.roundInterrupted,
+    data: {
+      round_id: 'round-1',
+      started_at: '2024-01-01T00:00:00.000Z',
+      input: { message: 'Hello' },
+      steps: [],
+      summary: { time_to_last_token: 1 },
+      attachments: [],
+    },
+  });
+
+  const createClient = () => {
+    const conversation = createEmptyConversation({ agent_id: 'test-agent', id: 'conversation-1' });
+    const conversationClient = createConversationClientMock();
+    conversationClient.get.mockResolvedValue(conversation);
+    conversationClient.appendEvents.mockImplementation(async (request) => ({
+      ...conversation,
+      events: request.events,
+      schema_version: 1,
+    }));
+    conversationClient.replaceRoundEvents.mockImplementation(async (request) => ({
+      ...conversation,
+      events: request.events,
+      schema_version: 1,
+    }));
+    return conversationClient;
+  };
+
+  const run = async ({
+    agentParams = {},
+    reportRoundComplete = jest.fn(),
+    reportRoundError = jest.fn(),
+  }: {
+    agentParams?: Record<string, unknown>;
+    reportRoundComplete?: jest.Mock;
+    reportRoundError?: jest.Mock;
+  }) => {
+    const conversationClient = createClient();
+    stubResolveServices(conversationClient);
+
+    const events$ = await handleAgentExecution({
+      abortSignal: new AbortController().signal,
+      deps: createDeps({
+        analyticsService: { reportRoundComplete, reportRoundError },
+        conversationClient,
+      }),
+      execution: {
+        agentParams: {
+          agentId: 'test-agent',
+          conversationId: 'conversation-1',
+          conversationOperation: 'UPDATE',
+          nextInput: { message: 'Hello' },
+          receivedAt: '2024-01-01T00:00:00.000Z',
+          roundId: 'round-1',
+          ...agentParams,
+        },
+        executionId: 'execution-1',
+        executionMode: AgentExecutionMode.conversation,
+        owner: { id: 'owner-1', username: 'owner' },
+      } as never,
+      request: { headers: {} } as never,
+    });
+
+    // failure scenarios surface the error on the stream; the assertions are on telemetry
+    await lastValueFrom(events$.pipe(toArray())).catch(() => undefined);
+    await flushMicrotasks();
+  };
+
+  const workflowParams = { workflowExecutionId: 'workflow-run-1' };
+
+  it('reports the workflow execution id on round complete', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({ agentParams: workflowParams, reportRoundComplete });
+
+    expect(reportRoundComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowExecutionId: 'workflow-run-1' })
+    );
+  });
+
+  it('reports no workflow execution id for a round no workflow step started', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({ reportRoundComplete });
+
+    expect(reportRoundComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowExecutionId: undefined })
+    );
+  });
+
+  it('does not report the plugin-id the step sends to inference', async () => {
+    const reportRoundComplete = jest.fn();
+    mockAgentStream([makeRoundStartedEvent(), makeRoundCompleteEvent()]);
+
+    await run({
+      agentParams: {
+        ...workflowParams,
+        telemetryMetadata: { pluginId: 'my_feature', interactionId: 'workflow-run-1' },
+      },
+      reportRoundComplete,
+    });
+
+    expect(JSON.stringify(reportRoundComplete.mock.calls)).not.toContain('my_feature');
+  });
+
+  it('reports the workflow execution id on round error', async () => {
+    const reportRoundError = jest.fn();
+    mockAgentStream(
+      [makeRoundStartedEvent(), makeFailedRoundInterruptedEvent()],
+      'asyncShared',
+      new Error('llm exploded')
+    );
+
+    await run({ agentParams: workflowParams, reportRoundError });
+
+    expect(reportRoundError).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowExecutionId: 'workflow-run-1' })
+    );
+  });
+});
+
 describe('collectAndWriteEvents — error flush', () => {
   it('flushes the pending batch before rejecting', async () => {
     const executionClient = { appendEvents: jest.fn().mockResolvedValue(undefined) };

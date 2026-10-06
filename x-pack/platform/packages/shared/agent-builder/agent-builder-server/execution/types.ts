@@ -89,6 +89,12 @@ export type ConversationOperation = 'CREATE' | 'UPDATE';
 export interface ConversationExecutionParams extends BaseExecutionParams {
   /** Id of the conversation to continue. */
   conversationId?: string;
+  /**
+   * Id of the workflow execution whose `ai.agent` step started this execution, inherited by the
+   * sub-agents it spawns. Reported on round telemetry so a round joins to the workflow run. Set by
+   * the workflow step from its own context; no route accepts it.
+   */
+  workflowExecutionId?: string;
   /** When false, the conversation will not be persisted. Defaults to true. */
   storeConversation?: boolean;
   /** Create conversation with specified ID if not found. */

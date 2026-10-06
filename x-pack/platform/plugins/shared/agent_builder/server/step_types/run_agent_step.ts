@@ -168,6 +168,7 @@ export const getRunAgentStepDefinition = (serviceManager: ServiceManager) => {
             },
             ...(maxContentLength !== undefined ? { maxContentLength } : {}),
             ...(reasoningLevel !== undefined ? { reasoningLevel } : {}),
+            workflowExecutionId: context.contextManager.getContext().execution.id,
             ...(pluginId
               ? {
                   telemetryMetadata: {

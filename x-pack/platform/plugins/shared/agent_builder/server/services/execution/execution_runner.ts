@@ -190,6 +190,7 @@ const handleConversationExecution = async ({
     browserApiTools,
     configurationOverrides,
     telemetryMetadata,
+    workflowExecutionId,
     maxContentLength,
     reasoningLevel,
     subagentCreation,
@@ -291,6 +292,7 @@ const handleConversationExecution = async ({
       interactivity,
       parentExecutionId: execution.parentExecutionId,
       projectRouting,
+      workflowExecutionId,
       roundId,
       conversationAccess,
     });
@@ -414,6 +416,7 @@ const handleConversationExecution = async ({
                 trackingService,
                 analyticsService,
                 logger,
+                workflowExecutionId,
               });
             }
           }),
@@ -429,6 +432,7 @@ const handleConversationExecution = async ({
             conversationId: conversation.id,
             executionId: execution.executionId,
             roundOrigin: telemetryOrigin,
+            workflowExecutionId,
           })
         );
       }

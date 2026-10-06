@@ -283,6 +283,7 @@ export const createRunner = (deps: CreateRunnerDeps): Runner => {
     interactivity,
     parentExecutionId,
     conversationAccess = 'readWrite',
+    workflowExecutionId,
   }: {
     request: KibanaRequest;
     /** Agent id for this run; used to lazily resolve Deductive-only config. */
@@ -300,6 +301,8 @@ export const createRunner = (deps: CreateRunnerDeps): Runner => {
     interactivity: InteractivityConfig;
     parentExecutionId?: string;
     conversationAccess?: ExecutionConversationAccess;
+    /** Passed on to the sub-agents this run spawns, so their rounds join to the workflow run. */
+    workflowExecutionId?: string;
   }): Promise<ScopedRunner> => {
     const resultStore = createResultStore({ conversation });
     const skillsStore = createSkillsStore({ skills: [] });
@@ -327,6 +330,7 @@ export const createRunner = (deps: CreateRunnerDeps): Runner => {
       getExecutionService,
       projectRouting,
       interactivity,
+      workflowExecutionId,
     });
 
     const uiSettingsClient = runnerDeps.uiSettings.asScopedToClient(
@@ -432,6 +436,7 @@ export const createRunner = (deps: CreateRunnerDeps): Runner => {
         interactive,
         parentExecutionId,
         conversationAccess = 'readWrite',
+        workflowExecutionId,
         ...otherParams
       } = params;
       const { agentId } = params;
@@ -452,6 +457,7 @@ export const createRunner = (deps: CreateRunnerDeps): Runner => {
         interactivity,
         parentExecutionId,
         conversationAccess,
+        workflowExecutionId,
         promptState: getAgentPromptStorageState({
           input: nextInput,
           conversation,
