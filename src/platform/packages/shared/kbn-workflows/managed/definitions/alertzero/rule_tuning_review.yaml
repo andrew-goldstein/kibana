@@ -271,6 +271,23 @@ steps:
     on-failure:
       continue: true
 
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # Guarded like the close, on the declined entry gate. The reason is the one the
+  # close above writes. It must run before `stop_declined`, which ends the run.
+  - name: report_investigation_closed_declined
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_entry.output.declined == true and steps.close_investigation_declined.error == blank and steps.close_investigation_declined.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+      close_reason: other
+
   # workflow.output terminates the run, so no later step needs to check the entry
   # decision.
   - name: stop_declined
@@ -1139,6 +1156,23 @@ steps:
     on-failure:
       continue: true
 
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # Guarded like the close, on the approved tuning proposal. The reason is the
+  # one the close above writes.
+  - name: report_investigation_closed_applied
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_proposal_action_decision.output.approved == true and steps.close_investigation_applied.error == blank and steps.close_investigation_applied.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+      close_reason: resolved
+
   - name: close_investigation_dismissed
     type: ai.conversation.metadata.patch
     if: >-
@@ -1152,6 +1186,23 @@ steps:
         verdict: "The tuning proposal was dismissed."
     on-failure:
       continue: true
+
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # Guarded like the close, on the dismissed tuning proposal. The reason is the
+  # one the close above writes.
+  - name: report_investigation_closed_dismissed
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_proposal_action_decision.output.dismissed == true and steps.close_investigation_dismissed.error == blank and steps.close_investigation_dismissed.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+      close_reason: other
 
   - name: emit_result
     type: workflow.output

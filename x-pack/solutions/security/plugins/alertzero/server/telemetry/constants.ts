@@ -16,6 +16,7 @@ export const ALERTZERO_TELEMETRY_EVENTS = {
   AdWorkerAnalysisCompleted: `${ALERTZERO_TELEMETRY_PREFIX}_ad_worker_analysis_completed`,
   AdWorkerHandoffResolved: `${ALERTZERO_TELEMETRY_PREFIX}_ad_worker_handoff_resolved`,
   WorkerInvestigationClosed: `${ALERTZERO_TELEMETRY_PREFIX}_worker_investigation_closed`,
+  WorkerInvestigationReopened: `${ALERTZERO_TELEMETRY_PREFIX}_worker_investigation_reopened`,
   WorkerSettingsChanged: `${ALERTZERO_TELEMETRY_PREFIX}_worker_settings_changed`,
   WorkerActivated: `${ALERTZERO_TELEMETRY_PREFIX}_worker_activated`,
   AutonomySnapshot: `${ALERTZERO_TELEMETRY_PREFIX}_autonomy_snapshot`,

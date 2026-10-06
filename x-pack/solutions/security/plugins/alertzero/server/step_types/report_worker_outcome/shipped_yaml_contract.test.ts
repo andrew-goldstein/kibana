@@ -10,8 +10,15 @@ import { createWorkflowLiquidEngine } from '@kbn/workflows';
 import {
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
+  ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
+  ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
+  ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID,
+  ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW_ID,
+  ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
+  ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
   getManagedWorkflowDefinition,
 } from '@kbn/workflows/managed';
+import type { ManagedWorkflowTemplateValuesById } from '@kbn/workflows/managed';
 import {
   REPORT_WORKER_OUTCOME_EVENTS,
   ReportWorkerOutcomeStepId,
@@ -19,8 +26,7 @@ import {
 } from '../../../common/step_types';
 
 /**
- * The contract between the shipped Attack Discovery Worker YAML and the report step's input
- * schema. `@kbn/workflows` cannot import this plugin, so this is where each shipped `with` block
+ * The contract between the shipped Worker YAML and the report step's input schema. `@kbn/workflows` cannot import this plugin, so this is where each shipped `with` block
  * is rendered the way the engine renders it and validated against the real schema.
  */
 
@@ -53,8 +59,10 @@ const getManagedYaml = (workflowId: string): string => {
   return definition.yaml;
 };
 
-const reportStepsOf = (workflowId: string): YamlStep[] =>
-  flatten((parse(getManagedYaml(workflowId)) as { steps: YamlStep[] }).steps).filter(
+const reportStepsOf = (workflowId: string): YamlStep[] => reportStepsIn(getManagedYaml(workflowId));
+
+const reportStepsIn = (yaml: string): YamlStep[] =>
+  flatten((parse(yaml) as { steps: YamlStep[] }).steps).filter(
     ({ type }) => type === ReportWorkerOutcomeStepId
   );
 
@@ -238,5 +246,88 @@ describe('shipped Attack Discovery Worker YAML and the reportWorkerOutcome schem
         success: true,
       });
     });
+  });
+});
+
+describe('shipped Worker close reports and the reportWorkerOutcome schema', () => {
+  const alertTriageValues: ManagedWorkflowTemplateValuesById[typeof ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID] =
+    {
+      autonomyLevel: 'manual',
+      extras: { autoCloseConfidenceScoreMinThreshold: 0.85 },
+      settingsVersion: 1,
+    };
+  const alertTriageYaml =
+    getManagedWorkflowDefinition(ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID)?.yamlTemplate?.(
+      alertTriageValues
+    ) ?? '';
+
+  const closeReports: Array<[string, YamlStep]> = [
+    ...reportStepsIn(alertTriageYaml).map((step): [string, YamlStep] => [
+      ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
+      step,
+    ]),
+    ...[
+      ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
+      ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
+      ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
+      ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID,
+      ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW_ID,
+    ].flatMap((workflowId) =>
+      reportStepsOf(workflowId).map((step): [string, YamlStep] => [workflowId, step])
+    ),
+  ];
+
+  // Every value a close report reads, the way the engine would have it after the close.
+  const closeContext: Record<string, unknown> = {
+    inputs: { conversation_id: INVESTIGATION_ID, investigationConversationId: INVESTIGATION_ID },
+    steps: {
+      close_investigation_resolved: {
+        output: { changed_fields: ['status'], metadata: { close_reason: 'resolved' } },
+      },
+      create_investigation: { output: { conversation_id: INVESTIGATION_ID } },
+    },
+  };
+
+  it('finds the close reports of every other Worker', () => {
+    expect(closeReports.length).toBe(12);
+  });
+
+  it.each(closeReports.map(([workflowId, step]) => [`${workflowId} ${step.name}`, step]))(
+    '%s sends a valid worker_investigation_closed',
+    (_label, step) => {
+      expect(parseRendered(step, closeContext)).toEqual({
+        data: expect.objectContaining({
+          event: 'worker_investigation_closed',
+          investigation_id: INVESTIGATION_ID,
+        }),
+        success: true,
+      });
+    }
+  );
+
+  it('reads the Rule Coverage reason back from its close', () => {
+    const [, resolved] =
+      closeReports.find(([, step]) => step.name === 'report_investigation_closed_resolved') ?? [];
+
+    expect(
+      [
+        ['resolved', 'resolved'],
+        ['other', 'other'],
+      ].map(([written]) => {
+        const result = parseRendered(resolved, {
+          ...closeContext,
+          steps: {
+            ...(closeContext.steps as Record<string, unknown>),
+            close_investigation_resolved: {
+              output: { changed_fields: ['status'], metadata: { close_reason: written } },
+            },
+          },
+        });
+        return result.success ? result.data : undefined;
+      })
+    ).toEqual([
+      expect.objectContaining({ close_reason: 'resolved' }),
+      expect.objectContaining({ close_reason: 'other' }),
+    ]);
   });
 });

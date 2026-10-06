@@ -231,6 +231,22 @@ steps:
             status: closed
             close_reason: false_positive
 
+      # Product telemetry: the Worker reports its own Investigation close. Like every
+      # report step it never fails the run. It runs only when the close above left no
+      # error and changed `status`, so a close that finds the Investigation already
+      # closed (by an analyst, or by an earlier close) is not counted again.
+      # The reason is the one the close above writes.
+      - name: report_investigation_closed_after_approval
+        type: alertzero.reportWorkerOutcome
+        if: "${{ steps.close_investigation_after_approval.error == blank and steps.close_investigation_after_approval.output.changed_fields contains 'status' }}"
+        timeout: 30s
+        on-failure:
+          continue: true
+        with:
+          event: worker_investigation_closed
+          investigation_id: "{{ inputs.conversation_id }}"
+          close_reason: false_positive
+
       - name: post_comment_outcome_approved
         type: ai.conversation.add_user_message
         on-failure:
@@ -330,6 +346,22 @@ steps:
                 status: closed
                 close_reason: other
 
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is the one the close above writes.
+          - name: report_investigation_closed_after_dismissal
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_after_dismissal.error == blank and steps.close_investigation_after_dismissal.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ inputs.conversation_id }}"
+              close_reason: other
+
           - name: post_comment_outcome_dismissed
             type: ai.conversation.add_user_message
             on-failure:
@@ -376,6 +408,22 @@ steps:
           updates:
             status: closed
             close_reason: other
+
+      # Product telemetry: the Worker reports its own Investigation close. Like every
+      # report step it never fails the run. It runs only when the close above left no
+      # error and changed `status`, so a close that finds the Investigation already
+      # closed (by an analyst, or by an earlier close) is not counted again.
+      # The reason is the one the close above writes.
+      - name: report_investigation_closed_after_expiry
+        type: alertzero.reportWorkerOutcome
+        if: "${{ steps.close_investigation_after_expiry.error == blank and steps.close_investigation_after_expiry.output.changed_fields contains 'status' }}"
+        timeout: 30s
+        on-failure:
+          continue: true
+        with:
+          event: worker_investigation_closed
+          investigation_id: "{{ inputs.conversation_id }}"
+          close_reason: other
 
       - name: post_comment_outcome_expired
         type: ai.conversation.add_user_message

@@ -136,7 +136,40 @@ For the Attack Discovery Worker it is the review: on a false-positive verdict (`
 | `investigation_id` | keyword | yes | The Investigation the Worker closed. For the Attack Discovery Worker it joins to `alertzero_ad_worker_review_started` |
 | `close_reason` | keyword | yes | The Investigation template's close reason the Worker wrote, or the class its close maps to: `false_positive`, `benign`, `resolved`, `duplicate` or `other` |
 
+Every other Worker that closes its own Investigation reports it the same way, with the same guard: right after the close, only when the close left no error and changed `status`. The reason is the one the close writes. A close that writes no reason is reported as `other`.
+
+| Worker | Workflow and close | `close_reason` |
+|---|---|---|
+| Attack Discovery | Review, false-positive verdict | `false_positive` |
+| Attack Discovery | Review, escalation declined | `other` |
+| Alert Triage | Worker, rule at its limit of waiting closure proposals (writes no reason) | `other` |
+| Alert Triage | Worker, no false positive met the confidence floor (writes no reason) | `other` |
+| Alert Triage | Closure review, proposal approved | `false_positive` |
+| Alert Triage | Closure review, proposal dismissed or expired | `other` |
+| Rule Tuning | Review, entry gate declined | `other` |
+| Rule Tuning | Review, tuning proposal approved | `resolved` |
+| Rule Tuning | Review, tuning proposal dismissed | `other` |
+| Rule Coverage | Review, decision applied: read back from the close, which writes `resolved`, or `other` when the analyst only acknowledged a report | `resolved` or `other` |
+| Rule Coverage | Review, proposal dismissed | `other` |
+| Hunt | Packaging, clean run with no confirmed hits | `benign` |
+| Hunt | Proposal gate, every Proposal of the Investigation settled | `resolved` |
+
+The Endpoint Analysis Worker doesn't close Investigations. A Worker's run that never reaches its close (a gate that expires where the Worker leaves the Investigation open, a failed run) sends nothing.
+
 Only a Worker's own closes are measured, and only for a Worker whose YAML calls the step. A close by an Agent Builder agent (`set_conversation_metadata`), a custom workflow or a direct Agent Builder API call sends nothing here. A human close through Agentic Investigations reports its own `agentic_investigations_investigation_closed`.
+
+### `alertzero_worker_investigation_reopened`
+
+Emitted when the Hunt Worker reopens an Investigation a previous run closed, so a new run on the same threat report records into active work. Hunt's find-or-create route (`routes/hunt/find_or_create_investigation.ts`) reopens it in TypeScript, through Agent Builder's server-side conversation client, rather than from YAML, so the route reports it directly once the reopen has succeeded. It carries no run envelope: the route does not verify the run that called it, so it has no `run_id`. Only the Hunt Worker's find-or-create step calls the route, so the event is attributed to the Hunt Worker. Reporting never fails the find-or-create.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `worker_id` | keyword | yes | Catalog id of the Worker that reopened the Investigation (the Hunt Worker) |
+| `watch_tag` | keyword | yes | The Worker's catalog watch tag |
+| `is_default_space` | boolean | yes | Whether the Investigation is in the default space |
+| `investigation_id` | keyword | yes | The Investigation the Worker reopened. A Hunt Investigation id is a UUID v5 of the threat report id |
+
+The reopen keeps the Investigation's last `close_reason` (the template has no value meaning "not closed"), so a dashboard should read the reason only from close events.
 
 ## Worker settings events
 

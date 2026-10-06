@@ -20,7 +20,7 @@ Liquid renders a missing value as `''`, so every count and flag treats `''` and 
 
 ## Shipped callers
 
-The Attack Discovery Worker YAML in `@kbn/workflows/managed` (`definitions/alertzero/`) is the only caller. Each report step has `on-failure: continue` and `timeout: 30s`, and is a top-level step, except `report_investigation_closed_false_positive`, which sits in the verdict switch's `false_positive` arm (a switch arm, unlike a `parallel` branch, accepts both).
+Worker YAML in `@kbn/workflows/managed` (`definitions/alertzero/`) calls the step. Each report step has `on-failure: continue` and `timeout: 30s`. The Attack Discovery Worker's steps are top-level steps, except `report_investigation_closed_false_positive`, which sits in the verdict switch's `false_positive` arm (a switch arm, unlike a `parallel` branch, accepts both).
 
 | Workflow | Step | `event` | Placement |
 |---|---|---|---|
@@ -30,6 +30,17 @@ The Attack Discovery Worker YAML in `@kbn/workflows/managed` (`definitions/alert
 | `attack_discovery_review.yaml` | `report_investigation_closed_false_positive` | `worker_investigation_closed` | Right after `close_investigation_false_positive` in the `false_positive` arm, only when that close left no error and changed `status` |
 | `attack_discovery_review.yaml` | `report_handoff_resolved` | `ad_worker_handoff_resolved` | Right after `record_decision`, only when `resolve_escalation.output.escalate` is true |
 | `attack_discovery_review.yaml` | `report_investigation_closed_declined` | `worker_investigation_closed` | Right after `close_investigation_declined`, only when the escalation was declined and that close left no error and changed `status` |
+
+Every other Worker that closes its own Investigation reports the close the same way: right after each `ai.conversation.metadata.patch` step that writes `status: closed`, in the same step list, and only when that close left no error and its `changed_fields` contains `status`. The close reasons each Worker reports are listed in the [telemetry README](../../telemetry/README.md#alertzero_worker_investigation_closed). `worker_close_reports.test.ts` in `definitions/alertzero/` fails when an AlertZero close patch has no report after it.
+
+| Workflow | Steps |
+|---|---|
+| `floor_alert_triage.yaml` (Alert Triage) | `report_investigation_closed_review_limit`, `report_investigation_closed_no_fp` |
+| `floor_alert_triage_review.yaml` (Alert Triage) | `report_investigation_closed_after_approval`, `report_investigation_closed_after_dismissal`, `report_investigation_closed_after_expiry` |
+| `rule_tuning_review.yaml` (Rule Tuning) | `report_investigation_closed_declined`, `report_investigation_closed_applied`, `report_investigation_closed_dismissed` |
+| `coverage_review.yaml` (Rule Coverage) | `report_investigation_closed_resolved`, `report_investigation_closed_dismissed`, one in each arm of the `close_investigation` switch |
+| `hunt_package_report.yaml` (Hunt) | `report_investigation_closed_benign` |
+| `hunt_proposal_gate.yaml` (Hunt) | `report_investigation_closed_settled` |
 
 `shipped_yaml_contract.test.ts` renders each of these `with` blocks the way the engine does and validates it against the input schema, so a YAML edit that the schema would reject fails in CI instead of logging `invalid_input` at runtime.
 

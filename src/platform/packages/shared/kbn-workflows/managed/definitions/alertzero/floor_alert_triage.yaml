@@ -699,6 +699,23 @@ steps:
               updates:
                 status: closed
 
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The Worker writes no close reason here (the rule is at its limit of waiting
+          # closure proposals), so the close is reported as `other`.
+          - name: report_investigation_closed_review_limit
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_review_limit.error == blank and steps.close_investigation_review_limit.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: other
+
           - name: post_comment_review_limit
             type: ai.conversation.add_user_message
             on-failure:
@@ -776,6 +793,23 @@ steps:
               conversation_id: "{{ steps.create_investigation.output.conversation_id }}"
               updates:
                 status: closed
+
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The Worker writes no close reason here (no false positive met the confidence
+          # floor, so there was nothing to propose), so the close is reported as `other`.
+          - name: report_investigation_closed_no_fp
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_no_fp.error == blank and steps.close_no_fp.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: other
 
           - name: post_comment_outcome_no_fp
             type: ai.conversation.add_user_message

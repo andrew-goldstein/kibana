@@ -664,6 +664,25 @@ steps:
             on-failure:
               continue: true
 
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is read back from the close's own output, because the close
+          # computes it (`resolved`, or `other` when the analyst only acknowledged a
+          # report). A switch arm, unlike a `parallel` branch, accepts `timeout` and
+          # `on-failure`.
+          - name: report_investigation_closed_resolved
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_resolved.error == blank and steps.close_investigation_resolved.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: "{{ steps.close_investigation_resolved.output.metadata.close_reason }}"
+
       - match: dismissed
         steps:
           - name: close_investigation_dismissed
@@ -676,6 +695,22 @@ steps:
                 verdict: "Analyst dismissed the coverage proposal."
             on-failure:
               continue: true
+
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is the one the close above writes.
+          - name: report_investigation_closed_dismissed
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_dismissed.error == blank and steps.close_investigation_dismissed.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: other
 
   # Step 10 of 10: mark the indicator processed. This is the only write to the
   # indicator and the last step. It runs only after an applied decision. A check

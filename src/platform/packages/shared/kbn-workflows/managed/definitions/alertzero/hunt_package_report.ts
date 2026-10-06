@@ -26,12 +26,16 @@ export const ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID = 'system-security-hunt-p
  * own feature children. Owns no trigger of its own, so enablement is
  * `enforced` (a disabled child would silently break its parent) regardless
  * of the tags, matching `hunt.yaml` and `find_or_create_investigation.yaml`.
+ *
+ * Version 2 carries `report_investigation_closed_benign`, which reports the Worker's own
+ * Investigation close through `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible
+ * in `managedVersion`; the content hash alone would also apply it.
  */
 export const ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW = {
   billable: false,
   id: ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 1,
+  version: 2,
   yaml: HUNT_PACKAGE_REPORT_YAML,
 } as const satisfies ManagedWorkflowDefinition;

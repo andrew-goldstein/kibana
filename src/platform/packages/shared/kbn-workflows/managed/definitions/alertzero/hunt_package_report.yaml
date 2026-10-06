@@ -259,6 +259,22 @@ steps:
     on-failure:
       continue: true
 
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # The reason is the one the close above writes.
+  - name: report_investigation_closed_benign
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.dismiss_investigation_if_clean.error == blank and steps.dismiss_investigation_if_clean.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ inputs.investigationConversationId }}"
+      close_reason: benign
+
   - name: emit_result
     type: workflow.output
     status: completed
