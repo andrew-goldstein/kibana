@@ -14,4 +14,9 @@ export const registerAlertZeroPublicStepDefinitions = (
   workflowsExtensions.registerStepDefinition(() =>
     import('./report_worker_outcome_step').then((m) => m.reportWorkerOutcomePublicStepDefinition)
   );
+  workflowsExtensions.registerStepDefinition(() =>
+    import('./report_investigation_status_change_step').then(
+      (m) => m.reportInvestigationStatusChangePublicStepDefinition
+    )
+  );
 };

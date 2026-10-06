@@ -211,3 +211,33 @@ The allowlist, in payload order:
 | `securitySolution.attackDiscoveryWorkflowsEnabled` | Deployment-wide feature flag | The flag is on (it defaults to on). It has no per-space value, so its count is `space_count` or `0` |
 
 Attack Discovery Workflows are active in a space only when both of the last two are enabled there.
+
+## Investigation status listener
+
+`alertzero_worker_investigation_closed` counts only a Worker's own closes, and Agentic Investigations reports the changes made through its own API (the Investigation flyout and Escalations). Agents, custom workflows and direct Agent Builder API calls change Investigation status too, and nothing else reports those. AlertZero's managed workflow `system-alertzero-investigation-status-listener` (`@kbn/workflows/managed`, `definitions/alertzero/investigation_status_listener.yaml`) does. It is installed once, globally, with the other AlertZero managed workflows, and runs the `alertzero.reportInvestigationStatusChange` step (see the [step README](../step_types/report_investigation_status_change/README.md)).
+
+- **Trigger.** Agent Builder's `ai.conversation.updated`, with the condition `event.templateId: "investigation" and event.changedFields: "status" and not event.changeKinds: "created" and not event.source: "server_api"`: a status change to an existing Investigation, from anything but a server-side write.
+- **Concurrency.** The key the trigger documents, `{{ workflow.id }}:{{ event.conversationId }}`, with strategy `queue`, `max: 1` and `queue-size: 1`: one run at a time per Investigation, and one more waiting.
+- **What it sends.** The step reads the Investigation after the write and reports its status, its close reason when it is closed, and who wrote it. It never reports a value from the event, only the closed template values it reads.
+
+### Caveats
+
+- **The trigger is tech preview.** `ai.conversation.updated` is `tech_preview` in Agent Builder, so its payload or its behavior can change.
+- **The status is read after the write.** A second write that lands before the listener reads the Investigation is what gets reported, so a fast close and reopen can be reported as two `open` events. Concurrency also coalesces a burst: a third change that arrives while one run is going and another is waiting starts a run that the engine skips (`Queue full`). The waiting run still reads the latest status.
+- **There is no previous value.** The trigger never carries values, so the event says what the status is now, not what it was. A write that changes `status` always changes it, so `closed` means it was open before, and `open` means it was closed.
+- **Each status change starts one workflow run.** Those runs show in the Workflows engine's own run events (`workflows_execution_workflow_completed` and the others) under this workflow's id, in every space. They run on a cluster that has opted out of telemetry too, where the step reports nothing.
+- **Server-side writes are excluded.** The condition drops every `server_api` write, because Agentic Investigations writes that way and reports its own changes. Any other code that writes through Agent Builder's server-side client must report itself. The Hunt Worker's reopen is one: it reports itself as `alertzero_worker_investigation_reopened`, which a separate PR adds.
+- **Worker closes are counted twice, on purpose.** A Worker closes its Investigation from its workflow YAML, so the write's source is `workflow`, and the listener reports it as `writer: workflow` next to the Worker's own `alertzero_worker_investigation_closed`. The Worker's event carries the run and the reason the Worker wrote, and the listener's carries only what the Investigation says. A dashboard must not add the two: for Worker closes, use the Worker events, and treat `writer: workflow` as Workers plus custom workflows.
+- **Opt-in.** The step checks the telemetry opt-in before it reads anything. An opted-out cluster still starts the runs, which do nothing.
+
+### `alertzero_investigation_status_changed`
+
+Emitted by the Investigation status listener, once per run that reads a valid status.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `investigation_id` | keyword | yes | The Investigation whose status changed |
+| `status` | keyword | yes | The status read after the write: `open` or `closed` (an absent status reads as `open`) |
+| `close_reason` | keyword | no | When `closed`, the Investigation's close reason: `false_positive`, `benign`, `resolved`, `duplicate` or `other`. Absent when it is open, because a reopened Investigation keeps its last reason |
+| `writer` | keyword | yes | Who wrote the change: `agent` (an agent execution, including an analyst asking the Investigation's agent to close it), `workflow` (a workflow step, including a Worker's own closes) or `api` (the Agent Builder HTTP APIs) |
+| `is_default_space` | boolean | yes | Whether the Investigation is in the default space |

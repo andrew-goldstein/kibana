@@ -20,6 +20,7 @@ export const ALERTZERO_TELEMETRY_EVENTS = {
   WorkerActivated: `${ALERTZERO_TELEMETRY_PREFIX}_worker_activated`,
   AutonomySnapshot: `${ALERTZERO_TELEMETRY_PREFIX}_autonomy_snapshot`,
   FeatureFlagsSnapshot: `${ALERTZERO_TELEMETRY_PREFIX}_feature_flags_snapshot`,
+  InvestigationStatusChanged: `${ALERTZERO_TELEMETRY_PREFIX}_investigation_status_changed`,
 } as const;
 
 export type AlertZeroTelemetryEventType =

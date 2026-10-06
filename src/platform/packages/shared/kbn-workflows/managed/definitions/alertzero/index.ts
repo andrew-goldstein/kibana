@@ -38,6 +38,7 @@ import { ALERTZERO_HUNT_WORKFLOW_ID } from './hunt';
 import { ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW_ID } from './hunt_continuous_threat_hunt';
 import { ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW_ID } from './hunt_package_report';
 import { ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW_ID } from './hunt_proposal_gate';
+import { ALERTZERO_INVESTIGATION_STATUS_LISTENER_WORKFLOW_ID } from './investigation_status_listener';
 import { ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID } from './journal_note';
 import {
   ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
@@ -131,6 +132,10 @@ export {
   ALERTZERO_CREATE_PROPOSAL_WORKFLOW,
   ALERTZERO_CREATE_PROPOSAL_WORKFLOW_ID,
 } from './create_proposal';
+export {
+  ALERTZERO_INVESTIGATION_STATUS_LISTENER_WORKFLOW,
+  ALERTZERO_INVESTIGATION_STATUS_LISTENER_WORKFLOW_ID,
+} from './investigation_status_listener';
 export {
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW,
   ALERTZERO_WORKER_HUNT_CONTINUOUS_THREAT_HUNT_WORKFLOW_ID,
@@ -261,3 +266,11 @@ export const ALERTZERO_ACTION_WORKFLOW_IDS = [
  * globally because both the rule tuning and attack discovery reviews invoke it.
  */
 export const ALERTZERO_PROPOSAL_WORKFLOW_IDS = [ALERTZERO_CREATE_PROPOSAL_WORKFLOW_ID] as const;
+
+/**
+ * Product telemetry listeners, started by a registered trigger rather than a Worker. Installed
+ * globally: one copy serves every space, and each run is stamped with the space of its event.
+ */
+export const ALERTZERO_TELEMETRY_WORKFLOW_IDS = [
+  ALERTZERO_INVESTIGATION_STATUS_LISTENER_WORKFLOW_ID,
+] as const;

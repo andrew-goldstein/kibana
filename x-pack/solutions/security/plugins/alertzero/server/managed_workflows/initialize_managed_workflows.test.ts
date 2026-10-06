@@ -15,6 +15,7 @@ import {
   ALERTZERO_HUNT_CHILD_WORKFLOW_IDS,
   ALERTZERO_PROPOSAL_WORKFLOW_IDS,
   ALERTZERO_RULE_WORKFLOW_IDS,
+  ALERTZERO_TELEMETRY_WORKFLOW_IDS,
 } from '@kbn/workflows/managed';
 import { GLOBAL_WORKFLOW_SPACE_ID } from '@kbn/workflows/server';
 import type { WorkflowsExtensionsServerPluginStart } from '@kbn/workflows-extensions/server';
@@ -61,12 +62,23 @@ describe('initializeManagedWorkflows', () => {
       ...ALERTZERO_ALERT_TRIAGE_WORKFLOW_IDS,
       ...ALERTZERO_HUNT_CHILD_WORKFLOW_IDS,
       ...ALERTZERO_PROPOSAL_WORKFLOW_IDS,
+      ...ALERTZERO_TELEMETRY_WORKFLOW_IDS,
     ]);
     expect(client.install).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ workflowIdSuffix: expect.any(String) })
     );
     expect(client.ready).toHaveBeenCalledTimes(1);
+  });
+
+  it('installs the Investigation status listener globally', async () => {
+    const { client, workflowsExtensions, logger } = createDependencies();
+
+    await initializeManagedWorkflows({ workflowsExtensions, logger });
+
+    expect(client.install).toHaveBeenCalledWith('system-alertzero-investigation-status-listener', {
+      spaceId: GLOBAL_WORKFLOW_SPACE_ID,
+    });
   });
 
   it('does not reconcile when a required rule workflow install fails', async () => {

@@ -17,3 +17,11 @@ export type {
   ReportWorkerOutcomeEvent,
   ReportWorkerOutcomeStepInput,
 } from './report_worker_outcome_step';
+export {
+  INVESTIGATION_STATUS_CHANGE_TRIGGER_ID,
+  ReportInvestigationStatusChangeStepId,
+  reportInvestigationStatusChangeStepCommonDefinition,
+  reportInvestigationStatusChangeStepInputSchema,
+  reportInvestigationStatusChangeStepOutputSchema,
+} from './report_investigation_status_change_step';
+export type { ReportInvestigationStatusChangeStepInput } from './report_investigation_status_change_step';

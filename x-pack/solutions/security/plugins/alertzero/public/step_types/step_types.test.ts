@@ -6,7 +6,10 @@
  */
 
 import type { WorkflowsExtensionsPublicPluginSetup } from '@kbn/workflows-extensions/public';
-import { ReportWorkerOutcomeStepId } from '../../common/step_types';
+import {
+  ReportInvestigationStatusChangeStepId,
+  ReportWorkerOutcomeStepId,
+} from '../../common/step_types';
 import { registerAlertZeroPublicStepDefinitions } from '.';
 
 type Loader = () => Promise<{ icon?: unknown; id: string } | undefined>;
@@ -24,18 +27,21 @@ describe('AlertZero public step definitions', () => {
   it('registers every step as a loader, so none reaches the page-load bundle', () => {
     const registered = register();
 
-    expect(registered.map((definition) => typeof definition)).toEqual(['function']);
+    expect(registered.map((definition) => typeof definition)).toEqual(['function', 'function']);
   });
 
-  it('resolves to the reportWorkerOutcome step id', async () => {
+  it('resolves to the two AlertZero telemetry step ids', async () => {
     const resolved = await Promise.all(register().map((load) => load()));
 
-    expect(resolved.map((definition) => definition?.id)).toEqual([ReportWorkerOutcomeStepId]);
+    expect(resolved.map((definition) => definition?.id)).toEqual([
+      ReportWorkerOutcomeStepId,
+      ReportInvestigationStatusChangeStepId,
+    ]);
   });
 
-  it('gives the step an icon', async () => {
-    const [definition] = await Promise.all(register().map((load) => load()));
+  it('gives every step an icon', async () => {
+    const definitions = await Promise.all(register().map((load) => load()));
 
-    expect(definition).toHaveProperty('icon');
+    expect(definitions.every((definition) => definition && 'icon' in definition)).toBe(true);
   });
 });

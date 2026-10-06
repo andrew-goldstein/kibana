@@ -38,6 +38,7 @@ export type {
   AlertZeroEnvelope,
   AlertZeroFeatureFlagsSnapshotFlag,
   AlertZeroFeatureFlagsSnapshotPayload,
+  AlertZeroInvestigationStatusChangedPayload,
   AlertZeroTelemetryEventPayloads,
   AlertZeroWorkerActivatedPayload,
   AlertZeroWorkerInvestigationClosedPayload,

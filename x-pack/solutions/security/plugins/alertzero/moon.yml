@@ -83,6 +83,7 @@ dependsOn:
   - '@kbn/context-engine-plugin'
   - '@kbn/task-manager-plugin'
   - '@kbn/telemetry-plugin'
+  - '@kbn/eval-kql'
 tags:
   - plugin
   - prod

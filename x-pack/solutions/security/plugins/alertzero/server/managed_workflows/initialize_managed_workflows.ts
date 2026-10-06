@@ -14,6 +14,7 @@ import {
   ALERTZERO_HUNT_CHILD_WORKFLOW_IDS,
   ALERTZERO_PROPOSAL_WORKFLOW_IDS,
   ALERTZERO_RULE_WORKFLOW_IDS,
+  ALERTZERO_TELEMETRY_WORKFLOW_IDS,
 } from '@kbn/workflows/managed';
 import { GLOBAL_WORKFLOW_SPACE_ID } from '@kbn/workflows/server';
 import type { PluginScopedManagedWorkflowsApi } from '@kbn/workflows/server/types';
@@ -45,6 +46,9 @@ export const initializeManagedWorkflows = async ({
     ...ALERTZERO_ALERT_TRIAGE_WORKFLOW_IDS,
     ...ALERTZERO_HUNT_CHILD_WORKFLOW_IDS,
     ...ALERTZERO_PROPOSAL_WORKFLOW_IDS,
+    // Started by a registered trigger, so global like the rest: each run is stamped with the
+    // space of its event.
+    ...ALERTZERO_TELEMETRY_WORKFLOW_IDS,
   ] as const;
 
   const globalWorkflowInstalls = await Promise.allSettled(

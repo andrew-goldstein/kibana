@@ -1,0 +1,43 @@
+version: "1"
+name: AlertZero - Investigation status telemetry
+description: >
+  Reports AlertZero product telemetry when an agent, a workflow or the Agent
+  Builder API opens or closes an Investigation. Reads the Investigation just
+  after the change and sends only its status, its close reason and who made
+  the change. Sends nothing when telemetry is off.
+enabled: true
+tags:
+  - security
+  - alertzero
+settings:
+  # One run at a time per Investigation, with at most one waiting: a burst of
+  # writes to one Investigation is coalesced, because each run reads the
+  # current status anyway. The key is the recipe the trigger documents.
+  concurrency:
+    key: "{{ workflow.id }}:{{ event.conversationId }}"
+    strategy: queue
+    max: 1
+    queue-size: 1
+triggers:
+  # Status changes to an existing Investigation, from anything but a
+  # server-side write. Agentic Investigations writes through Agent Builder's
+  # server-side client and reports its own changes, and so does AlertZero's
+  # Hunt reopen. A create seeds `status`, so creates are excluded.
+  - type: ai.conversation.updated
+    on:
+      condition: >-
+        event.templateId: "investigation"
+        and event.changedFields: "status"
+        and not event.changeKinds: "created"
+        and not event.source: "server_api"
+steps:
+  # Product telemetry. The step checks the telemetry opt-in before it reads
+  # anything, never fails the run, and outputs only `reported`.
+  - name: report_status_change
+    type: alertzero.reportInvestigationStatusChange
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      investigation_id: "{{ event.conversationId }}"
+      source: "{{ event.source }}"

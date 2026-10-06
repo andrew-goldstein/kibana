@@ -97,6 +97,7 @@ This is optional. AlertZero's own Watch pages work without it; it only affects w
 | Managed workflow initialization | Not called |
 | Telemetry event types (`alertzero_*`, see [`server/telemetry/README.md`](server/telemetry/README.md)) | Not registered (`core.analytics.registerEventType` skipped) |
 | Workflow step `alertzero.reportWorkerOutcome`, the only emitter of the `alertzero_ad_worker_*` run events and the Worker Investigation-close event (see [`server/step_types/report_worker_outcome/README.md`](server/step_types/report_worker_outcome/README.md)) | Not registered, server or browser (`registerStepDefinition` skipped) |
+| Workflow step `alertzero.reportInvestigationStatusChange` and the Investigation status listener workflow that calls it (see [`server/telemetry/README.md`](server/telemetry/README.md#investigation-status-listener)) | Not registered, and the listener is not installed (managed workflow initialization is not called) |
 | Snapshot task type `alertzero:telemetry_snapshot` (see [`server/telemetry/README.md`](server/telemetry/README.md#daily-snapshots)) | Not registered; a previously scheduled task document is never claimed |
 | Leftover installed Worker documents | Global Workflows orphan cleanup removes docs whose owner is unregistered |
 

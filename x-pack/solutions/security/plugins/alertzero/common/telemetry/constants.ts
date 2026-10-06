@@ -56,3 +56,17 @@ export const INVESTIGATION_CLOSE_REASONS = [
 ] as const;
 
 export type InvestigationCloseReason = (typeof INVESTIGATION_CLOSE_REASONS)[number];
+
+/** The `investigation` conversation template's `status` values. An absent status reads as `open`. */
+export const INVESTIGATION_STATUSES = ['open', 'closed'] as const;
+
+export type InvestigationStatus = (typeof INVESTIGATION_STATUSES)[number];
+
+/**
+ * Who wrote an Investigation status change, from the `ai.conversation.updated` trigger's `source`:
+ * `agent` for an agent execution, `workflow` for an Agent Builder workflow step, and `api` for the
+ * Agent Builder HTTP APIs.
+ */
+export const INVESTIGATION_STATUS_WRITERS = ['agent', 'workflow', 'api'] as const;
+
+export type InvestigationStatusWriter = (typeof INVESTIGATION_STATUS_WRITERS)[number];

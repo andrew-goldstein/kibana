@@ -70,6 +70,7 @@ import {
 } from './telemetry';
 import {
   REPORT_STEP_OPT_IN_TIMEOUT_MS,
+  createInvestigationReader,
   registerAlertZeroStepDefinitions,
   registerStepDefinitions,
 } from './step_types';
@@ -197,6 +198,7 @@ export class AlertZeroPlugin
           });
         },
         logger: this.logger.get('telemetry'),
+        readInvestigation: createInvestigationReader(() => this.requireAgentBuilderConversations()),
         workflowsExtensions,
       });
       const assertAlertZeroAccess = createAssertAlertZeroAccess(async () => {

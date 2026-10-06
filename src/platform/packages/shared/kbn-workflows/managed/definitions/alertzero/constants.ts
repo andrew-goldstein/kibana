@@ -34,3 +34,14 @@ export const ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT = {
   lifecycle: 'static',
   versionStrategy: 'auto',
 } as const;
+
+/**
+ * Workflows AlertZero starts from a registered trigger, rather than a Worker. Enablement is
+ * enforced, so a listener cannot be left off by mistake; telemetry listeners send nothing when
+ * telemetry is off.
+ */
+export const ALERTZERO_LISTENER_WORKFLOW_MANAGEMENT = {
+  enablement: 'enforced',
+  lifecycle: 'static',
+  versionStrategy: 'auto',
+} as const;

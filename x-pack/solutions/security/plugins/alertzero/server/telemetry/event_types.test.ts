@@ -10,7 +10,11 @@ import { join } from 'path';
 import * as ts from 'typescript';
 import { createAnalytics } from '@elastic/ebt/client';
 import { loggerMock } from '@kbn/logging-mocks';
-import { INVESTIGATION_CLOSE_REASONS } from '../../common/telemetry/constants';
+import {
+  INVESTIGATION_CLOSE_REASONS,
+  INVESTIGATION_STATUSES,
+  INVESTIGATION_STATUS_WRITERS,
+} from '../../common/telemetry/constants';
 import {
   ALERTZERO_TELEMETRY_EVENTS,
   ALERTZERO_TELEMETRY_PREFIX,
@@ -22,6 +26,7 @@ import type { AlertZeroEnvelope, AlertZeroTelemetryEventPayloads } from './event
 import {
   ALERTZERO_AD_WORKER_RUN_COMPLETED_EVENT,
   ALERTZERO_FEATURE_FLAGS_SNAPSHOT_EVENT,
+  ALERTZERO_INVESTIGATION_STATUS_CHANGED_EVENT,
   ALERTZERO_TELEMETRY_EVENT_TYPES,
   ALERTZERO_WORKER_INVESTIGATION_CLOSED_EVENT,
   ALERTZERO_WORKER_SETTINGS_CHANGED_EVENT,
@@ -199,6 +204,13 @@ const FIXTURES: {
     snapshot_day: '2026-09-28',
     space_count: 3,
   },
+  [ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged]: {
+    close_reason: 'resolved',
+    investigation_id: '5f0c3c8e-2d51-4b8a-9e0f-7c1d2b3a4e5f',
+    is_default_space: true,
+    status: 'closed',
+    writer: 'agent',
+  },
 };
 
 const README_PATH = join(__dirname, 'README.md');
@@ -225,12 +237,12 @@ describe('AlertZero telemetry event types', () => {
     );
   });
 
-  it('registers no Investigation lifecycle event, which nothing in AlertZero emits', () => {
+  it("registers only the status listener's Investigation event", () => {
     expect(
       registeredEventNames.filter((eventName) =>
         eventName.startsWith(`${ALERTZERO_TELEMETRY_PREFIX}_investigation_`)
       )
-    ).toEqual([]);
+    ).toEqual([ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged]);
   });
 
   it('registers each event name once', () => {
@@ -467,6 +479,69 @@ describe('AlertZero telemetry event types', () => {
         ).toThrow();
       }
     );
+  });
+
+  describe('alertzero_investigation_status_changed', () => {
+    const { schema } = ALERTZERO_INVESTIGATION_STATUS_CHANGED_EVENT;
+
+    it('carries only the Investigation id, its status and close reason, the writer and the space flag', () => {
+      expect(Object.keys(schema).sort()).toEqual([
+        'close_reason',
+        'investigation_id',
+        'is_default_space',
+        'status',
+        'writer',
+      ]);
+    });
+
+    it('requires everything but the close reason', () => {
+      expect(
+        Object.fromEntries(
+          Object.entries(schema).map(([field, node]) => [
+            field,
+            (node as { _meta: { optional: boolean } })._meta.optional,
+          ])
+        )
+      ).toEqual({
+        close_reason: true,
+        investigation_id: false,
+        is_default_space: false,
+        status: false,
+        writer: false,
+      });
+    });
+
+    it.each([
+      ['status', INVESTIGATION_STATUSES],
+      ['writer', INVESTIGATION_STATUS_WRITERS],
+      ['close_reason', INVESTIGATION_CLOSE_REASONS],
+    ] as const)('documents every %s value in the schema and README', (field, values) => {
+      const description = String(
+        getDescription(schema[field] as unknown as Record<string, unknown>)
+      );
+      const section = readDocumentedEventSection(
+        ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged
+      );
+
+      expect({
+        readme: values.filter((value) => !section.includes(`\`${value}\``)),
+        schema: values.filter((value) => !description.includes(`\`${value}\``)),
+      }).toEqual({ readme: [], schema: [] });
+    });
+
+    it('accepts a reopen without a close reason in dev mode', () => {
+      const analytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+      registerAlertZeroTelemetryEvents(analytics);
+      const { close_reason: _omitted, ...payload } =
+        FIXTURES[ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged];
+
+      expect(() =>
+        analytics.reportEvent(ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged, {
+          ...payload,
+          status: 'open',
+        })
+      ).not.toThrow();
+    });
   });
 
   describe('audit separation', () => {

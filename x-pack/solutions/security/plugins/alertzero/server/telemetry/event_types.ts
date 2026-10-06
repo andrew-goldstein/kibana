@@ -12,12 +12,16 @@ import type {
   AdWorkerHandoffOutcome,
   AdWorkerRunOutcome,
   InvestigationCloseReason,
+  InvestigationStatus,
+  InvestigationStatusWriter,
 } from '../../common/telemetry/constants';
 import {
   AD_WORKER_ANALYSIS_VERDICTS,
   AD_WORKER_HANDOFF_OUTCOMES,
   AD_WORKER_RUN_OUTCOMES,
   INVESTIGATION_CLOSE_REASONS,
+  INVESTIGATION_STATUSES,
+  INVESTIGATION_STATUS_WRITERS,
 } from '../../common/telemetry/constants';
 import type {
   AlertZeroAutonomyLevel,
@@ -129,6 +133,14 @@ export interface AlertZeroFeatureFlagsSnapshotPayload {
   space_count: number;
 }
 
+export interface AlertZeroInvestigationStatusChangedPayload {
+  close_reason?: InvestigationCloseReason;
+  investigation_id: string;
+  is_default_space: boolean;
+  status: InvestigationStatus;
+  writer: InvestigationStatusWriter;
+}
+
 /** The payload each AlertZero event type carries. */
 export interface AlertZeroTelemetryEventPayloads {
   [ALERTZERO_TELEMETRY_EVENTS.AdWorkerRunCompleted]: AlertZeroAdWorkerRunCompletedPayload;
@@ -140,6 +152,7 @@ export interface AlertZeroTelemetryEventPayloads {
   [ALERTZERO_TELEMETRY_EVENTS.WorkerActivated]: AlertZeroWorkerActivatedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.AutonomySnapshot]: AlertZeroAutonomySnapshotPayload;
   [ALERTZERO_TELEMETRY_EVENTS.FeatureFlagsSnapshot]: AlertZeroFeatureFlagsSnapshotPayload;
+  [ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged]: AlertZeroInvestigationStatusChangedPayload;
 }
 
 const WORKER_ID_DESCRIPTION =
@@ -537,6 +550,51 @@ export const ALERTZERO_FEATURE_FLAGS_SNAPSHOT_EVENT: EventTypeOpts<AlertZeroFeat
     },
   };
 
+export const ALERTZERO_INVESTIGATION_STATUS_CHANGED_EVENT: EventTypeOpts<AlertZeroInvestigationStatusChangedPayload> =
+  {
+    eventType: ALERTZERO_TELEMETRY_EVENTS.InvestigationStatusChanged,
+    schema: {
+      close_reason: {
+        type: 'keyword',
+        _meta: {
+          description: `The Investigation's close reason when \`status\` is \`closed\`: ${formatVocabulary(
+            INVESTIGATION_CLOSE_REASONS
+          )}. Absent when the Investigation is open, or closed with no reason`,
+          optional: true,
+        },
+      },
+      investigation_id: {
+        type: 'keyword',
+        _meta: {
+          description: `The Investigation whose status changed. ${INVESTIGATION_ID_DESCRIPTION}`,
+          optional: false,
+        },
+      },
+      is_default_space: {
+        type: 'boolean',
+        _meta: { description: IS_DEFAULT_SPACE_DESCRIPTION, optional: false },
+      },
+      status: {
+        type: 'keyword',
+        _meta: {
+          description: `The Investigation's status read just after the write: ${formatVocabulary(
+            INVESTIGATION_STATUSES
+          )}. A later write can land first, so this is the status when the listener read it, and there is no previous value`,
+          optional: false,
+        },
+      },
+      writer: {
+        type: 'keyword',
+        _meta: {
+          description: `Who wrote the change, from the Agent Builder write source: ${formatVocabulary(
+            INVESTIGATION_STATUS_WRITERS
+          )} (\`agent\` for an agent execution, \`workflow\` for a workflow step, including a Worker's own closes, and \`api\` for the Agent Builder HTTP APIs). Server-side writes, including Agentic Investigations', are not reported here`,
+          optional: false,
+        },
+      },
+    },
+  };
+
 /** Every AlertZero event type, in registration order. */
 export const ALERTZERO_TELEMETRY_EVENT_TYPES = [
   ALERTZERO_AD_WORKER_RUN_COMPLETED_EVENT,
@@ -548,4 +606,5 @@ export const ALERTZERO_TELEMETRY_EVENT_TYPES = [
   ALERTZERO_WORKER_ACTIVATED_EVENT,
   ALERTZERO_AUTONOMY_SNAPSHOT_EVENT,
   ALERTZERO_FEATURE_FLAGS_SNAPSHOT_EVENT,
+  ALERTZERO_INVESTIGATION_STATUS_CHANGED_EVENT,
 ] as const;
