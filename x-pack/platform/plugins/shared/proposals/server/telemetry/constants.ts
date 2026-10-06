@@ -5,6 +5,7 @@
  * 2.0.
  */
 
+import type { ProposalStatus } from '@kbn/proposals-common';
 import { proposalDecisionSourceSchema, proposalSettledBySchema } from '@kbn/proposals-common';
 
 export const PROPOSALS_TELEMETRY_PREFIX = 'proposals';
@@ -18,6 +19,7 @@ export const PROPOSALS_TELEMETRY_EVENTS = {
   ProposalRevised: `${PROPOSALS_TELEMETRY_PREFIX}_proposal_revised`,
   ProposalRetried: `${PROPOSALS_TELEMETRY_PREFIX}_proposal_retried`,
   ProposalResumeRejected: `${PROPOSALS_TELEMETRY_PREFIX}_proposal_resume_rejected`,
+  Snapshot: `${PROPOSALS_TELEMETRY_PREFIX}_snapshot`,
 } as const;
 
 export type ProposalsTelemetryEventType =
@@ -49,7 +51,7 @@ export type ProposalReportedDecisionSource = (typeof DECISION_SOURCES)[number];
 
 /**
  * Why a proposal settled as `expired`, passed to the settle step by the gate workflow: the
- * `settledBy` step input's own vocabulary, since the reported value is that input as-is.
+ * stored `settledBy` vocabulary itself, since the stored value ships as-is.
  */
 export const EXPIRY_REASONS = proposalSettledBySchema.options;
 
@@ -102,3 +104,22 @@ export const KNOWN_CATEGORIES = ['configure', 'investigate', 'respond'] as const
 export const TELEMETRY_CATEGORIES = [...KNOWN_CATEGORIES, OTHER_CATEGORY] as const;
 
 export type ProposalTelemetryCategory = (typeof TELEMETRY_CATEGORIES)[number];
+
+/**
+ * Why a snapshot's settled proposal ended where it did: an expiry reason (for `expired`) or a
+ * failure source (for `failed`). Taken from those two vocabularies, so each has one source;
+ * `workflow_failure` belongs to both and is listed once.
+ */
+export type ProposalSettledReason = ProposalExpiryReason | ProposalFailureSource;
+
+export const SETTLED_REASONS: readonly ProposalSettledReason[] = [
+  ...new Set<ProposalSettledReason>([...EXPIRY_REASONS, ...FAILURE_SOURCES]),
+];
+
+/** The settled statuses a chain head can hold, in the order the snapshot lists them. */
+export const SETTLED_STATUSES = [
+  'succeeded',
+  'failed',
+  'expired',
+  'no_action',
+] as const satisfies ReadonlyArray<ProposalStatus>;
