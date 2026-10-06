@@ -16,7 +16,12 @@ import {
   type Worker,
 } from '@kbn/alertzero-common';
 import { queryKeys } from '../query_keys';
-import { notifyWorkerUpdateError, useUpdateWorker } from './use_workers_api';
+import {
+  notifyWorkerRulesLeftAttached,
+  notifyWorkerRulesSkipped,
+  notifyWorkerUpdateError,
+  useUpdateWorker,
+} from './use_workers_api';
 
 const TRIAGE = SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID;
 
@@ -75,6 +80,33 @@ describe('notifyWorkerUpdateError', () => {
     expect(toasts.addError).toHaveBeenCalledWith(error, { title: 'Unable to update the worker' });
     expect(toasts.addWarning).not.toHaveBeenCalled();
     expect(toasts.addDanger).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [409, 'conflict'],
+    [403, 'forbidden'],
+    [500, 'server'],
+  ] as const)('reports a %d toast once, as %s', (status, errorClass) => {
+    const reportShown = jest.fn();
+
+    notifyWorkerUpdateError(toasts, httpError(status), reportShown);
+
+    expect(reportShown.mock.calls).toEqual([[errorClass]]);
+  });
+});
+
+describe('notifyWorkerRulesSkipped and notifyWorkerRulesLeftAttached', () => {
+  const toasts = coreMock.createStart().notifications.toasts;
+
+  it.each([
+    ['skipped', notifyWorkerRulesSkipped],
+    ['left attached', notifyWorkerRulesLeftAttached],
+  ])('reports rules %s for lack of privileges as forbidden', (_label, notify) => {
+    const reportShown = jest.fn();
+
+    notify(toasts, 2, reportShown);
+
+    expect(reportShown.mock.calls).toEqual([['forbidden']]);
   });
 });
 

@@ -14,6 +14,7 @@ import { API_VERSIONS, buildWorkerUrl } from '@kbn/alertzero-common';
 import type { ListWorkersResponse } from '@kbn/alertzero-common';
 import { notifyWorkerUpdateError } from '../../hooks/use_workers_api';
 import { queryKeys } from '../../query_keys';
+import { useReportToastError } from '../../telemetry';
 
 const PARTIAL_SUCCESS_WARNING = i18n.translate('xpack.alertzero.onboarding.partialSuccessWarning', {
   defaultMessage:
@@ -32,6 +33,7 @@ export const useEnableWorkers = (
   const queryClient = useQueryClient();
   const { services } = useKibana<CoreStart>();
   const [isSaving, setIsSaving] = useState(false);
+  const reportShown = useReportToastError('onboarding');
 
   const handleEnableAndContinue = async () => {
     // Filter against the cached workers list so skill-gated workers absent from
@@ -77,7 +79,7 @@ export const useEnableWorkers = (
     results.forEach((result) => {
       if (result.status === 'rejected') {
         hadFailure = true;
-        notifyWorkerUpdateError(services.notifications!.toasts, result.reason);
+        notifyWorkerUpdateError(services.notifications!.toasts, result.reason, reportShown);
       } else {
         hadSuccess = true;
       }
@@ -99,6 +101,7 @@ export const useEnableWorkers = (
         // workers refetch with partially-committed state cannot transition to
         // ConversationsPage before the user has had a chance to retry or leave.
         services.notifications!.toasts.addWarning(PARTIAL_SUCCESS_WARNING);
+        reportShown('partial_failure');
       } else {
         // Total failure: nothing was committed server-side, so it is safe to release
         // the save lock and let a subsequent worker enable transition normally.

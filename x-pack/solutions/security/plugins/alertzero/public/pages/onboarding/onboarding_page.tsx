@@ -76,7 +76,7 @@ export const OnboardingPage: React.FC<Props> = ({ onSavingChange }) => {
   if (!canWrite) {
     return (
       <AlertZeroPageSection>
-        <ScanFailureCallout />
+        <ScanFailureCallout surface="onboarding" />
         <EuiEmptyPrompt
           iconType="watchesApp"
           title={<h2>{i18n.ONBOARDING_TITLE}</h2>}
@@ -119,7 +119,7 @@ export const OnboardingPage: React.FC<Props> = ({ onSavingChange }) => {
         />
         <EuiSpacer size="l" />
 
-        <ScanFailureCallout />
+        <ScanFailureCallout surface="onboarding" />
 
         {canModifyWorkers ? null : (
           <>

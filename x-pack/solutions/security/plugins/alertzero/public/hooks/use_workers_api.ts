@@ -19,6 +19,8 @@ import type {
 } from '@kbn/alertzero-common';
 import { retryOnTransientError } from './retry_on_transient_error';
 import { queryKeys } from '../query_keys';
+import type { ReportToastError } from '../telemetry';
+import { classifyError, useReportToastError } from '../telemetry';
 
 export const useWorkers = () => {
   const { services } = useKibana();
@@ -48,7 +50,13 @@ const WORKER_UPDATE_ERROR_TITLE = i18n.translate('xpack.alertzero.workerUpdateEr
   defaultMessage: 'Unable to update the worker',
 });
 
-export const notifyWorkerUpdateError = (toasts: IToasts, error: unknown): void => {
+/** Shows the toast for a failed Worker update, and reports it when given `reportShown`. */
+export const notifyWorkerUpdateError = (
+  toasts: IToasts,
+  error: unknown,
+  reportShown?: ReportToastError
+): void => {
+  reportShown?.(classifyError(error));
   const status = isHttpFetchError(error) ? error.response?.status : undefined;
   if (status === 409) {
     toasts.addWarning(WORKER_SETTINGS_CONFLICT_MESSAGE);
@@ -62,7 +70,13 @@ export const notifyWorkerUpdateError = (toasts: IToasts, error: unknown): void =
   toasts.addError(cause, { title: WORKER_UPDATE_ERROR_TITLE });
 };
 
-export const notifyWorkerRulesSkipped = (toasts: IToasts, skippedRuleCount: number): void => {
+export const notifyWorkerRulesSkipped = (
+  toasts: IToasts,
+  skippedRuleCount: number,
+  reportShown?: ReportToastError
+): void => {
+  // Skipped because the user lacks the machine learning privileges to edit those rules.
+  reportShown?.('forbidden');
   toasts.addWarning({
     title: i18n.translate('xpack.alertzero.workerRulesSkippedTitle', {
       defaultMessage: 'Some rules were not attached to the worker',
@@ -75,7 +89,13 @@ export const notifyWorkerRulesSkipped = (toasts: IToasts, skippedRuleCount: numb
   });
 };
 
-export const notifyWorkerRulesLeftAttached = (toasts: IToasts, skippedRuleCount: number): void => {
+export const notifyWorkerRulesLeftAttached = (
+  toasts: IToasts,
+  skippedRuleCount: number,
+  reportShown?: ReportToastError
+): void => {
+  // Left attached because the user lacks the machine learning privileges to edit those rules.
+  reportShown?.('forbidden');
   toasts.addWarning({
     title: i18n.translate('xpack.alertzero.workerRulesLeftAttachedTitle', {
       defaultMessage: 'Some rules still have the worker attached',
@@ -112,6 +132,8 @@ export const useUpdateWorker = () => {
   const { services } = useKibana();
   const queryClient = useQueryClient();
   const queryKey = queryKeys.workers.list();
+  // Only the Watch settings page updates Workers through this hook.
+  const reportShown = useReportToastError('watch_settings');
 
   return useMutation({
     mutationFn: ({
@@ -132,13 +154,21 @@ export const useUpdateWorker = () => {
         return;
       }
       if (patch.enabled === false) {
-        notifyWorkerRulesLeftAttached(services.notifications!.toasts, data.skippedRuleCount);
+        notifyWorkerRulesLeftAttached(
+          services.notifications!.toasts,
+          data.skippedRuleCount,
+          reportShown
+        );
       } else {
-        notifyWorkerRulesSkipped(services.notifications!.toasts, data.skippedRuleCount);
+        notifyWorkerRulesSkipped(
+          services.notifications!.toasts,
+          data.skippedRuleCount,
+          reportShown
+        );
       }
     },
     onError: (error) => {
-      notifyWorkerUpdateError(services.notifications!.toasts, error);
+      notifyWorkerUpdateError(services.notifications!.toasts, error, reportShown);
     },
     // Awaited so mutateAsync resolves after the reload attempt. A failed reload surfaces as the
     // workers query error, which the Watch page uses to block Save.
