@@ -28,7 +28,7 @@ import { reviseProposalTool } from './agent_builder/tools/revise_proposal_tool';
 import { createProposalManagementSkill } from './agent_builder/skills/proposal_management';
 import { registerStepDefinitions } from './step_types';
 import { createProposalsStorageClient } from './storage/proposals_storage';
-import { readTelemetryOptIn } from './telemetry';
+import { readTelemetryOptIn, registerProposalsTelemetryEvents } from './telemetry';
 import { createProposalTool } from './tools/create_proposal_tool';
 import type {
   ProposalsPluginSetup,
@@ -85,6 +85,10 @@ export class ProposalsPlugin
     agentBuilder.skills.register(
       createProposalManagementSkill((request) => privileges.canManage(request))
     );
+
+    // Setup-only, and registering a type twice throws. Emitters report through
+    // `createProposalsTelemetryReporter`, which never throws.
+    registerProposalsTelemetryEvents(coreSetup.analytics);
 
     // The service only exists from start() onwards, but `format()` is never
     // called before then, so it is resolved lazily rather than captured here.
