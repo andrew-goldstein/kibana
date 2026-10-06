@@ -15,7 +15,11 @@ import { useAssignInvestigation } from '../../../investigations/hooks/use_invest
 import { useUserProfiles, useSuggestUserProfiles } from '../../../user_profiles';
 import { useCanManageInvestigations } from '../../../investigations/hooks/use_can_manage_investigations';
 import { useCanManageEscalations } from '../../../escalations/hooks/use_escalation_privileges';
+import { useReportFlyoutInteraction } from '../../../telemetry/use_report_flyout_interaction';
 import { ConnectedAssignees } from './connected_assignees';
+
+jest.mock('../../../telemetry/use_report_flyout_interaction');
+const reportFlyoutInteraction = jest.fn();
 
 jest.mock('../../../investigations/hooks/use_can_manage_investigations');
 jest.mock('../../../escalations/hooks/use_escalation_privileges');
@@ -118,6 +122,7 @@ const renderPicker = (
 };
 
 beforeEach(() => {
+  (useReportFlyoutInteraction as jest.Mock).mockReturnValue(reportFlyoutInteraction);
   mockUseAssignEscalation.mockReturnValue({ mutateAsync: escalationMutate });
   mockUseAssignInvestigation.mockReturnValue({ mutateAsync: investigationMutate });
   mockUseUserProfiles.mockReturnValue({ data: [], isFetching: false });
@@ -155,6 +160,28 @@ describe('ConnectedAssignees', () => {
       )
     );
     expect(escalationMutate).not.toHaveBeenCalled();
+  });
+
+  it('reports assignee_edit with the template once the assignment lands', async () => {
+    renderPicker({ templateId: 'investigation' });
+
+    fireEvent.click(screen.getByTestId('assign-conv-1'));
+
+    await waitFor(() =>
+      expect(reportFlyoutInteraction).toHaveBeenCalledWith('assignee_edit', 'investigation')
+    );
+    expect(reportFlyoutInteraction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a failed assignment', async () => {
+    investigationMutate.mockRejectedValueOnce(new Error('forbidden'));
+    renderPicker({ templateId: 'investigation' });
+
+    fireEvent.click(screen.getByTestId('assign-conv-1'));
+
+    await waitFor(() => expect(investigationMutate).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('updating-conv-1')).toHaveTextContent('idle'));
+    expect(reportFlyoutInteraction).not.toHaveBeenCalled();
   });
 
   it('renders read-only for a closed escalation regardless of capability', () => {

@@ -28,6 +28,7 @@ import type {
 } from '../../../../common';
 import { useCanManageInvestigations } from '../../../investigations/hooks/use_can_manage_investigations';
 import { useCanManageEscalations } from '../../../escalations/hooks/use_escalation_privileges';
+import { useReportFlyoutInteraction } from '../../../telemetry/use_report_flyout_interaction';
 import { statusSignal } from './status_signal';
 import { useSettleDeclinedProposals } from './use_settle_declined_proposals';
 import { getCloseErrorCode, isKnownCloseError, isPartialCloseError } from './close_error_codes';
@@ -227,6 +228,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
   const queryClient = useQueryClient();
   const manageEscalations = useCanManageEscalations();
   const manageInvestigations = useCanManageInvestigations();
+  const reportFlyoutInteraction = useReportFlyoutInteraction();
 
   // Closing an escalation requires both manage-escalations and manage-investigations.
   const canToggle =
@@ -258,6 +260,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
         statusSignal.bump();
       }
       refetchConversation?.();
+      reportFlyoutInteraction('status_edit', templateId);
 
       const isClosing = status !== 'closed';
       const successMsg = isClosing
@@ -278,6 +281,7 @@ export const ConnectedStatusToggle: React.FC<ConnectedStatusToggleProps> = ({
       invalidateAll,
       queryClient,
       refetchConversation,
+      reportFlyoutInteraction,
       services,
       settleDeclinedProposals,
       status,

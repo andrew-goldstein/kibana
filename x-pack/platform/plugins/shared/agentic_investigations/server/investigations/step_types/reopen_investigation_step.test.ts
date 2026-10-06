@@ -12,6 +12,9 @@ import { getReopenInvestigationStepDefinition } from './reopen_investigation_ste
 
 const FAKE_REQUEST = { fake: true } as never;
 
+/** The telemetry options the step passes: its class and its own run's execution id. */
+const STEP_REOPEN_OPTIONS = { reopenedBy: 'workflow_step', workflowExecutionId: 'exec-1' };
+
 const createContext = (input: Record<string, unknown>): StepHandlerContext<never, never> =>
   ({
     input,
@@ -95,7 +98,12 @@ describe('investigations.reopen step', () => {
 
     const result = await definition.handler(createContext({ conversationId: 'conv-1' }));
 
-    expect(setStatusMock).toHaveBeenCalledWith(FAKE_REQUEST, 'conv-1', { status: 'open' });
+    expect(setStatusMock).toHaveBeenCalledWith(
+      FAKE_REQUEST,
+      'conv-1',
+      { status: 'open' },
+      STEP_REOPEN_OPTIONS
+    );
     expect(updateMock).toHaveBeenCalledWith({ id: 'conv-1', title: '[Reopen] My Investigation' });
     expect(result.output).toEqual({ reopened: true, title: '[Reopen] My Investigation' });
   });
@@ -122,7 +130,12 @@ describe('investigations.reopen step', () => {
     const result = await definition.handler(createContext({ conversationId: 'conv-1' }));
 
     expect(updateMock).not.toHaveBeenCalled();
-    expect(setStatusMock).toHaveBeenCalledWith(FAKE_REQUEST, 'conv-1', { status: 'open' });
+    expect(setStatusMock).toHaveBeenCalledWith(
+      FAKE_REQUEST,
+      'conv-1',
+      { status: 'open' },
+      STEP_REOPEN_OPTIONS
+    );
     expect(result.output).toEqual({ reopened: true, title: '[Reopen] My Investigation' });
   });
 
@@ -150,7 +163,12 @@ describe('investigations.reopen step', () => {
     const result = await definition.handler(createContext({ conversationId: 'conv-1' }));
 
     expect(updateMock).not.toHaveBeenCalled();
-    expect(setStatusMock).toHaveBeenCalledWith(FAKE_REQUEST, 'conv-1', { status: 'open' });
+    expect(setStatusMock).toHaveBeenCalledWith(
+      FAKE_REQUEST,
+      'conv-1',
+      { status: 'open' },
+      STEP_REOPEN_OPTIONS
+    );
     expect(result.output).toEqual({ reopened: true, title: '[Reopen] My Investigation' });
   });
 
