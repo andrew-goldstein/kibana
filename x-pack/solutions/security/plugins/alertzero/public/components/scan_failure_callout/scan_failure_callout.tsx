@@ -10,25 +10,35 @@ import { EuiCallOut } from '@elastic/eui';
 import { SYSTEM_SECURITY_WORKER_CATALOG } from '@kbn/alertzero-common';
 import { Link } from 'react-router-dom';
 import { useScanFailures } from '../../hooks/use_scan_failures';
+import type { UiErrorSurface } from '../../telemetry';
+import { useReportErrorShown } from '../../telemetry';
 import { SCAN_FAILURE_BODY, SCAN_FAILURE_TITLE, SCAN_FAILURE_UNKNOWN } from './translations';
 
 const WORKER_NAMES = new Map<string, string>(
   SYSTEM_SECURITY_WORKER_CATALOG.map((entry) => [entry.id, entry.name])
 );
 
-export const ScanFailureCallout: React.FC = () => {
+export interface ScanFailureCalloutProps {
+  /** The page the callout sits on, for telemetry. */
+  surface: Extract<UiErrorSurface, 'queue' | 'onboarding'>;
+}
+
+export const ScanFailureCallout: React.FC<ScanFailureCalloutProps> = ({ surface }) => {
   const { data, isLoading, error } = useScanFailures();
 
-  if (isLoading || error != null || data == null) {
-    return null;
-  }
+  const workers =
+    isLoading || error != null || data == null
+      ? []
+      : data.workers.flatMap((worker) => {
+          const name = WORKER_NAMES.get(worker.workerId);
+          return name == null ? [] : [{ ...worker, name }];
+        });
+  const isShown =
+    data != null && !isLoading && error == null && (workers.length > 0 || Boolean(data.unknown));
 
-  const workers = data.workers.flatMap((worker) => {
-    const name = WORKER_NAMES.get(worker.workerId);
-    return name == null ? [] : [{ ...worker, name }];
-  });
+  useReportErrorShown({ errorClass: 'worker_scan_failed', isShown, surface });
 
-  if (workers.length === 0 && !data.unknown) {
+  if (!isShown || data == null) {
     return null;
   }
 

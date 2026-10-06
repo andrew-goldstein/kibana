@@ -42,10 +42,12 @@ jest.mock('../../hooks/use_can_write_alertzero', () => ({
 }));
 jest.mock('../../hooks/use_watches_api');
 jest.mock('../../hooks/use_workers_api');
+const mockReportEvent = jest.fn();
 jest.mock('@kbn/kibana-react-plugin/public', () => ({
   ...jest.requireActual('@kbn/kibana-react-plugin/public'),
   useKibana: () => ({
     services: {
+      analytics: { reportEvent: mockReportEvent },
       http: { get: jest.fn().mockResolvedValue(undefined) },
       application: { getUrlForApp: jest.fn(() => '/app/workflows') },
     },
@@ -500,6 +502,54 @@ describe('WatchDetailPage', () => {
         `alertZeroWatchWorkerSection-${SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID}`
       )
     ).not.toBeInTheDocument();
+    expect(mockReportEvent.mock.calls).toEqual([
+      ['alertzero_ui_error_shown', { error_class: 'unknown', surface: 'watch_detail' }],
+    ]);
+  });
+
+  it('reports a Watch that does not exist as a not-found error, once', () => {
+    mockUseWatch.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: Object.assign(new Error('Not Found'), {
+        name: 'Error',
+        request: {},
+        response: { status: 404 },
+      }),
+      refetch: jest.fn(),
+    } as never);
+    mockUseWorkers.mockReturnValue({
+      data: { workers: [] },
+      isLoading: false,
+      error: null,
+      refetch: jest.fn(),
+    } as never);
+    mockUseUpdateWorker.mockReturnValue({ mutate: jest.fn(), mutateAsync: jest.fn() } as never);
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/watches/missing-watch']}>
+        <Route path="/watches/:watchId">
+          <WatchDetailPage />
+        </Route>
+      </MemoryRouter>
+    );
+    rerender(
+      <MemoryRouter initialEntries={['/watches/missing-watch']}>
+        <Route path="/watches/:watchId">
+          <WatchDetailPage />
+        </Route>
+      </MemoryRouter>
+    );
+
+    expect(mockReportEvent.mock.calls).toEqual([
+      ['alertzero_ui_error_shown', { error_class: 'not_found', surface: 'watch_detail' }],
+    ]);
+  });
+
+  it('reports no error for a Watch that loaded', () => {
+    renderWatch(SYSTEM_SECURITY_WATCH_FLOOR_ID, floorWorkers);
+
+    expect(mockReportEvent).not.toHaveBeenCalled();
   });
 
   it('shows Officer as an empty grouping without a load error', () => {
