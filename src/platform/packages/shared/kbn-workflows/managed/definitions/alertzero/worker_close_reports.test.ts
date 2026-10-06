@@ -31,9 +31,8 @@ import { createWorkflowLiquidEngine } from '../../../common/utils';
 /**
  * Every Worker that closes its own Investigation reports the close through
  * `alertzero.reportWorkerOutcome`, right after the `ai.conversation.metadata.patch` step that
- * writes `status: closed`, and only when that patch changed `status`. The Alert Triage and Hunt
- * Workers' closes are wired in their own changes, so they are listed in `CLOSES_REPORTED_LATER`
- * until then.
+ * writes `status: closed`, and only when that patch changed `status`. The Hunt Worker's closes
+ * are wired in its own change, so they are listed in `CLOSES_REPORTED_LATER` until then.
  */
 
 interface YamlStep {
@@ -161,6 +160,36 @@ const EXPECTED_CLOSE_REPORTS: Array<{
   },
   {
     closeReason: 'other',
+    closeStep: 'close_investigation_review_limit',
+    definition: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW,
+    reportStep: 'report_investigation_closed_review_limit',
+  },
+  {
+    closeReason: 'other',
+    closeStep: 'close_no_fp',
+    definition: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW,
+    reportStep: 'report_investigation_closed_no_fp',
+  },
+  {
+    closeReason: 'false_positive',
+    closeStep: 'close_investigation_after_approval',
+    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
+    reportStep: 'report_investigation_closed_after_approval',
+  },
+  {
+    closeReason: 'other',
+    closeStep: 'close_investigation_after_dismissal',
+    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
+    reportStep: 'report_investigation_closed_after_dismissal',
+  },
+  {
+    closeReason: 'other',
+    closeStep: 'close_investigation_after_expiry',
+    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
+    reportStep: 'report_investigation_closed_after_expiry',
+  },
+  {
+    closeReason: 'other',
     closeStep: 'close_investigation_declined',
     definition: ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW,
     reportStep: 'report_investigation_closed_declined',
@@ -199,23 +228,6 @@ const EXPECTED_CLOSE_REPORTS: Array<{
 
 /** Closes whose Worker reports them in its own, later change. */
 const CLOSES_REPORTED_LATER: Array<{ closeStep: string; definition: ManagedWorkflowDefinition }> = [
-  {
-    closeStep: 'close_investigation_review_limit',
-    definition: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW,
-  },
-  { closeStep: 'close_no_fp', definition: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW },
-  {
-    closeStep: 'close_investigation_after_approval',
-    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
-  },
-  {
-    closeStep: 'close_investigation_after_dismissal',
-    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
-  },
-  {
-    closeStep: 'close_investigation_after_expiry',
-    definition: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
-  },
   {
     closeStep: 'dismiss_investigation_if_clean',
     definition: ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW,
@@ -319,6 +331,16 @@ describe('Worker Investigation close reports', () => {
 
   describe('managed versions', () => {
     it.each([
+      [
+        ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW.id,
+        ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW.version,
+        13,
+      ],
+      [
+        ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW.id,
+        ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW.version,
+        4,
+      ],
       [ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW.id, ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW.version, 29],
       [ALERTZERO_COVERAGE_REVIEW_WORKFLOW.id, ALERTZERO_COVERAGE_REVIEW_WORKFLOW.version, 7],
     ])('bumps %s to the version that carries its close reports', (_id, version, expected) => {

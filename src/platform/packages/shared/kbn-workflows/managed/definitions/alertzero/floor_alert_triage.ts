@@ -17,12 +17,19 @@ import type { ManagedWorkflowDefinition } from '../../types';
 
 export const ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID = 'system-security-floor-alert-triage';
 
+/**
+ * Version 13 carries `report_investigation_closed_review_limit` and
+ * `report_investigation_closed_no_fp`, which report the Worker's own Investigation closes, and
+ * `report_batch_classified` and `report_worker_run_completed`, which report the batch and the run,
+ * through `alertzero.reportWorkerOutcome`. The YAML is imported, so the bump is what delivers it to
+ * spaces that already installed the Worker.
+ */
 export const ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW = {
   billable: false,
   id: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
   management: ALERTZERO_WORKER_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 12,
+  version: 13,
   yamlTemplate: (values: AlertTriageWorkerTemplateValues): string =>
     renderAlertTriageWorkerYaml(FLOOR_ALERT_TRIAGE_YAML, values),
 } as const satisfies ManagedWorkflowDefinition<AlertTriageWorkerTemplateValues>;

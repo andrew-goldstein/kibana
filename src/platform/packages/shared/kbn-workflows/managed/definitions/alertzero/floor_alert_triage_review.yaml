@@ -232,6 +232,22 @@ steps:
             status: closed
             close_reason: false_positive
 
+      # Product telemetry: the Worker reports its own Investigation close. Like every
+      # report step it never fails the run. It runs only when the close above left no
+      # error and changed `status`, so a close that finds the Investigation already
+      # closed (by an analyst, or by an earlier close) is not counted again.
+      # The reason is the one the close above writes.
+      - name: report_investigation_closed_after_approval
+        type: alertzero.reportWorkerOutcome
+        if: "${{ steps.close_investigation_after_approval.error == blank and steps.close_investigation_after_approval.output.changed_fields contains 'status' }}"
+        timeout: 30s
+        on-failure:
+          continue: true
+        with:
+          event: worker_investigation_closed
+          investigation_id: "{{ inputs.conversation_id }}"
+          close_reason: false_positive
+
       - name: post_comment_outcome_approved
         type: ai.conversation.add_user_message
         on-failure:
@@ -331,6 +347,22 @@ steps:
                 status: closed
                 close_reason: other
 
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is the one the close above writes.
+          - name: report_investigation_closed_after_dismissal
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_after_dismissal.error == blank and steps.close_investigation_after_dismissal.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ inputs.conversation_id }}"
+              close_reason: other
+
           - name: post_comment_outcome_dismissed
             type: ai.conversation.add_user_message
             on-failure:
@@ -378,6 +410,22 @@ steps:
             status: closed
             close_reason: other
 
+      # Product telemetry: the Worker reports its own Investigation close. Like every
+      # report step it never fails the run. It runs only when the close above left no
+      # error and changed `status`, so a close that finds the Investigation already
+      # closed (by an analyst, or by an earlier close) is not counted again.
+      # The reason is the one the close above writes.
+      - name: report_investigation_closed_after_expiry
+        type: alertzero.reportWorkerOutcome
+        if: "${{ steps.close_investigation_after_expiry.error == blank and steps.close_investigation_after_expiry.output.changed_fields contains 'status' }}"
+        timeout: 30s
+        on-failure:
+          continue: true
+        with:
+          event: worker_investigation_closed
+          investigation_id: "{{ inputs.conversation_id }}"
+          close_reason: other
+
       - name: post_comment_outcome_expired
         type: ai.conversation.add_user_message
         on-failure:
@@ -410,3 +458,28 @@ steps:
           # wrong) closed/open count.
           message: >-
             ⚠️ The closure proposal ended in an unexpected state (status: "{{ steps.create_fp_proposal.output.status | default: 'unknown' }}"). Some of the {{ variables.fp_candidate_count }} candidate alert{% if variables.fp_candidate_count != 1 %}s{% endif %} may already be closed if a closure attempt partially succeeded before this outcome — check each alert's workflow_status rather than assuming all remain open and tagged az:false_positive. This Investigation stays open for review.
+
+  # Product telemetry: how the closure proposal settled
+  # (`alertzero_alert_triage_closure_resolved`), after its outcome has been applied, so a
+  # dismissal's re-tag shortfall is known. Counts, flags, the closed outcome and the
+  # Investigation id only. Like every report step it never fails the run:
+  # `on-failure: continue` and a short timeout. A proposal workflow that fails fails this
+  # run before it gets here; the engine reports that.
+  - name: report_closure_resolved
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: alert_triage_closure_resolved
+      outcome: |-
+        {%- if variables.proposal_outcome == 'approved' or variables.proposal_outcome == 'dismissed' or variables.proposal_outcome == 'expired' -%}
+        {{ variables.proposal_outcome }}
+        {%- else -%}
+        unknown
+        {%- endif -%}
+      alerts_proposed: "${{ variables.fp_candidate_count | default: 0 }}"
+      alerts_retag_failed: "${{ variables.failed_retag_count | default: 0 }}"
+      auto_approve_requested: "${{ inputs.autonomy == 'supervised' }}"
+      proposal_read_failed: "${{ steps.get_proposal.error != blank }}"
+      investigation_id: "{{ inputs.conversation_id }}"

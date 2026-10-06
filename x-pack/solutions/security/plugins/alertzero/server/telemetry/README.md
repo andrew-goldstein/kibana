@@ -154,6 +154,10 @@ Every other Worker that closes its own Investigation reports it the same way, wi
 |---|---|---|
 | Attack Discovery | Review, false-positive verdict | `false_positive` |
 | Attack Discovery | Review, escalation declined | `other` |
+| Alert Triage | Worker, rule at its limit of waiting closure proposals (writes no reason) | `other` |
+| Alert Triage | Worker, no false positive met the confidence floor (writes no reason) | `other` |
+| Alert Triage | Closure review, proposal approved | `false_positive` |
+| Alert Triage | Closure review, proposal dismissed or expired | `other` |
 | Rule Tuning | Review, entry gate declined | `other` |
 | Rule Tuning | Review, tuning proposal approved | `resolved` |
 | Rule Tuning | Review, tuning proposal dismissed | `other` |
@@ -189,10 +193,11 @@ What each Worker reports, and from where:
 | Worker | Reported by | `candidates_found` | `items_dispatched` | `items_failed` | `items_in_flight` | `source_read_failed` / `lookup_failed` |
 |---|---|---|---|---|---|---|
 | Attack Discovery | The runner, after `report_run_completed` | Alerts analyzed | Generation batches attempted | Generation batches that failed | Attacks handed to reviews | Not reported |
+| Alert Triage | The Worker, as its last step | Alerts in the batch | Alerts classified | Alerts without a verdict | False-positive candidates handed to the closure review | Not reported |
 | Rule Tuning | The global sweep, before `emit_result` | Rules over the false-positive thresholds | Reviews requested | Not reported | Reviews earlier sweeps still have in flight | The harvest query / the in-flight review lookup |
 | Rule Coverage | The global sweep, before `emit_result` | Pending gap indicators in the lookback window | Reviews started | Not reported | Reviews in flight: earlier ones plus the ones started | The indicator search / the active-review lookup |
 
-The Rule Tuning sweep is `failed_source_unavailable` when its harvest fails, `produced` when it requested a review, and `empty_nothing_found` otherwise. It reads only what it knows before its reviews settle, so it does not report review decisions: each review reports its own. The Rule Coverage sweep is `failed_source_unavailable` when its search fails, `empty_nothing_pending` with no pending indicator, `empty_at_capacity` when indicators are pending but no review slot is free (degraded, `capacity`), and `produced` otherwise. A failed lookup either sweep carries on without makes the run degraded with `dependency_unavailable`.
+The Alert Triage Worker is `empty_nothing_pending` for an empty batch, `failed_all_items` when the classification returned no verdict at all (degraded, `dependency_unavailable`: no model connector, or the analysis skipped the batch), `degraded_partial` when some alerts have no verdict (`missing_data`) or the per-rule limit held the closure proposal back (`capacity`), and `produced` otherwise. A run that fails (Alert Analysis turned off, a failed classification, a closure review that ended without a decision) sends nothing. The Rule Tuning sweep is `failed_source_unavailable` when its harvest fails, `produced` when it requested a review, and `empty_nothing_found` otherwise. It reads only what it knows before its reviews settle, so it does not report review decisions: each review reports its own. The Rule Coverage sweep is `failed_source_unavailable` when its search fails, `empty_nothing_pending` with no pending indicator, `empty_at_capacity` when indicators are pending but no review slot is free (degraded, `capacity`), and `produced` otherwise. A failed lookup either sweep carries on without makes the run degraded with `dependency_unavailable`.
 
 The Attack Discovery runner maps its own `run_outcome` to the shared one: `produced` to `produced`, `empty_no_alerts` to `empty_nothing_pending`, `empty_no_attacks` and `empty_all_duplicates` to `empty_nothing_found`, `degraded_partial` to `degraded_partial`, and `failed_all_batches` to `failed_all_items`. A failed batch makes the run degraded, with `degraded_reason: dependency_unavailable`.
 

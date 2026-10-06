@@ -14,13 +14,17 @@ import {
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
   ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID,
+  ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
   ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
   ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID,
+  ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
   getManagedWorkflowDefinition,
 } from '@kbn/workflows/managed';
+import type { ManagedWorkflowTemplateValuesById } from '@kbn/workflows/managed';
 import {
   SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID,
   SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID,
+  SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID,
   SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID,
 } from '@kbn/alertzero-common';
 import {
@@ -65,12 +69,25 @@ const flatten = (steps: YamlStep[]): YamlStep[] =>
     ...flatten(step['on-failure']?.fallback ?? []),
   ]);
 
+/** Representative values for the Worker definitions rendered from a YAML template. */
+const TEMPLATE_VALUES: Partial<ManagedWorkflowTemplateValuesById> = {
+  [ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID]: {
+    autonomyLevel: 'manual',
+    extras: { autoCloseConfidenceScoreMinThreshold: 0.85 },
+    settingsVersion: 1,
+  },
+};
+
 const getManagedYaml = (workflowId: string): string => {
   const definition = getManagedWorkflowDefinition(workflowId);
-  if (!definition || !('yaml' in definition) || !definition.yaml) {
-    throw new Error(`Managed workflow "${workflowId}" has no fixed YAML`);
+  if (definition && 'yaml' in definition && definition.yaml) {
+    return definition.yaml;
   }
-  return definition.yaml;
+  const values = (TEMPLATE_VALUES as Record<string, unknown>)[workflowId];
+  if (!definition || !definition.yamlTemplate || !values) {
+    throw new Error(`Managed workflow "${workflowId}" has no YAML to render`);
+  }
+  return definition.yamlTemplate(values as never);
 };
 
 const reportStepsOf = (workflowId: string): YamlStep[] =>
@@ -537,6 +554,55 @@ describe('shipped Worker reports and the reportWorkerOutcome schema', () => {
       workerId: SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID,
       workflowId: ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
     },
+    {
+      contexts: [
+        {
+          steps: {
+            classify_alerts: {
+              output: { false_positive_count: 3, inconclusive_count: 1, true_positive_count: 2 },
+            },
+            close_investigation_review_limit: { output: changedStatus },
+            create_investigation: investigation,
+          },
+          variables: {
+            alert_count: 6,
+            fp_candidate_count: 3,
+            review_dispatch: 'limit',
+            verdict_count: 6,
+          },
+        },
+        {
+          steps: {
+            classify_alerts: {
+              output: { false_positive_count: 0, inconclusive_count: 0, true_positive_count: 4 },
+            },
+            close_no_fp: { output: changedStatus },
+            create_investigation: investigation,
+          },
+          variables: { alert_count: 5, fp_candidate_count: 0, verdict_count: 4 },
+        },
+        {
+          steps: { create_investigation: investigation },
+          variables: { alert_count: 3, fp_candidate_count: 0, verdict_count: 0 },
+        },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID,
+      workflowId: ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID,
+    },
+    {
+      contexts: ['approved', 'dismissed', 'expired', 'unknown'].map((outcome) => ({
+        inputs: { autonomy: 'supervised', conversation_id: INVESTIGATION_ID },
+        steps: {
+          close_investigation_after_approval: { output: changedStatus },
+          close_investigation_after_dismissal: { output: changedStatus },
+          close_investigation_after_expiry: { output: changedStatus },
+          get_proposal: { output: {} },
+        },
+        variables: { failed_retag_count: 1, fp_candidate_count: 9, proposal_outcome: outcome },
+      })),
+      workerId: SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID,
+      workflowId: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
+    },
   ];
 
   const guardPasses = (step: YamlStep, context: Record<string, unknown>): boolean =>
@@ -683,6 +749,78 @@ describe('shipped Worker reports as the debug log prints them', () => {
         entry_gate: 'skipped',
         investigation_id: INVESTIGATION_ID,
         rule_unavailable: false,
+      },
+    });
+  });
+
+  it('reports an Alert Triage batch with false-positive candidates', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID),
+          'report_batch_classified'
+        ),
+        {
+          steps: {
+            classify_alerts: {
+              output: { false_positive_count: 23, inconclusive_count: 5, true_positive_count: 10 },
+            },
+            create_investigation: { output: { conversation_id: INVESTIGATION_ID } },
+          },
+          variables: { alert_count: 40, fp_candidate_count: 20, verdict_count: 38 },
+        },
+        SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_alert_triage_batch_classified',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-floor',
+        worker_id: 'system-security-floor-alert-triage',
+        alerts_total: 40,
+        alerts_without_verdict: 2,
+        fp_below_floor: 3,
+        fp_candidates: 20,
+        investigation_id: INVESTIGATION_ID,
+        verdicts_false_positive: 23,
+        verdicts_inconclusive: 5,
+        verdicts_true_positive: 10,
+      },
+    });
+  });
+
+  it('reports an Alert Triage run that handed its candidates to the closure review', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW_ID),
+          'report_worker_run_completed'
+        ),
+        {
+          variables: {
+            alert_count: 40,
+            fp_candidate_count: 20,
+            review_dispatch: 'started',
+            verdict_count: 38,
+          },
+        },
+        SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_worker_run_completed',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-floor',
+        worker_id: 'system-security-floor-alert-triage',
+        candidates_found: 40,
+        degraded: true,
+        degraded_reason: 'missing_data',
+        items_dispatched: 38,
+        items_failed: 2,
+        items_in_flight: 20,
+        lookup_failed: false,
+        run_outcome: 'degraded_partial',
+        source_read_failed: false,
       },
     });
   });

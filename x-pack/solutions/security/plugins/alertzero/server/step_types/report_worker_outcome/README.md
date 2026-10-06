@@ -43,6 +43,11 @@ Every other Worker that closes its own Investigation reports the close the same 
 
 | Workflow | Step | `event` | Placement |
 |---|---|---|---|
+| `floor_alert_triage.yaml` (Alert Triage) | `report_batch_classified` | `alert_triage_batch_classified` | Right after `post_comment_classification_results` |
+| `floor_alert_triage.yaml` (Alert Triage) | `report_investigation_closed_review_limit`, `report_investigation_closed_no_fp` | `worker_investigation_closed` | Right after each close |
+| `floor_alert_triage.yaml` (Alert Triage) | `report_worker_run_completed` | `worker_run_completed` | The last step |
+| `floor_alert_triage_review.yaml` (Alert Triage) | `report_investigation_closed_after_approval`, `report_investigation_closed_after_dismissal`, `report_investigation_closed_after_expiry` | `worker_investigation_closed` | Right after each close |
+| `floor_alert_triage_review.yaml` (Alert Triage) | `report_closure_resolved` | `alert_triage_closure_resolved` | The last step, after every outcome branch |
 | `rule_tuning_worker.yaml` (Rule Tuning sweep) | `report_worker_run_completed` | `worker_run_completed` | Right before `emit_result` |
 | `rule_tuning_review.yaml` (Rule Tuning) | `report_investigation_closed_declined`, `report_investigation_closed_applied`, `report_investigation_closed_dismissed` | `worker_investigation_closed` | Right after each close |
 | `rule_tuning_review.yaml` (Rule Tuning) | `report_review_completed_declined` | `rule_tuning_review_completed` | Right before `stop_declined`, in the entry gate's `dismissed` arm |

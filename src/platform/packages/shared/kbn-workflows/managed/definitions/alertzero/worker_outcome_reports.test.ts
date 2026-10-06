@@ -11,8 +11,10 @@ import { parse } from 'yaml';
 import {
   ALERTZERO_COVERAGE_REVIEW_WORKFLOW,
   ALERTZERO_COVERAGE_WORKER_WORKFLOW,
+  ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW,
   ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW,
   ALERTZERO_RULE_TUNING_WORKER_WORKFLOW,
+  ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW,
 } from '.';
 import { createWorkflowLiquidEngine } from '../../../common/utils';
 
@@ -728,6 +730,286 @@ describe('Rule Coverage outcome reports', () => {
       expect(JSON.stringify(report.with)).not.toMatch(
         /check_error|creation_error|rule_name|rationale|\{\{ steps\.run_rule_creation\.output\.skip_reason \}\}/
       );
+    });
+  });
+});
+
+describe('Alert Triage outcome reports', () => {
+  describe('the Worker (floor_alert_triage.yaml)', () => {
+    const steps = topLevelSteps(
+      ALERTZERO_WORKER_FLOOR_ALERT_TRIAGE_WORKFLOW.yamlTemplate({
+        autonomyLevel: 'manual',
+        extras: { autoCloseConfidenceScoreMinThreshold: 0.85 },
+        settingsVersion: 1,
+      })
+    );
+    const names = steps.map(({ name }) => name);
+    const batchReport = stepNamed(steps, 'report_batch_classified');
+    const runReport = stepNamed(steps, 'report_worker_run_completed');
+
+    describeReportStep(
+      steps,
+      'report_batch_classified',
+      'alert_triage_batch_classified',
+      'attach_impact_gate'
+    );
+
+    it('reports the batch once its counts and false-positive candidates are known', () => {
+      expect(names.indexOf('report_batch_classified')).toBeGreaterThan(
+        names.indexOf('compute_classification_guard_counts')
+      );
+    });
+
+    it('reports the run as the last step', () => {
+      expect({
+        continue: runReport['on-failure']?.continue,
+        event: runReport.with?.event,
+        last: names[names.length - 1],
+        timeout: runReport.timeout,
+      }).toEqual({
+        continue: true,
+        event: 'worker_run_completed',
+        last: 'report_worker_run_completed',
+        timeout: '30s',
+      });
+    });
+
+    const batchContext = ({
+      alerts,
+      fpCandidates = 0,
+      reviewDispatch,
+      verdicts,
+    }: {
+      alerts: number;
+      fpCandidates?: number;
+      reviewDispatch?: 'started' | 'limit';
+      verdicts: { fp: number; inconclusive: number; tp: number };
+    }): Record<string, unknown> => ({
+      steps: {
+        classify_alerts: {
+          output: {
+            false_positive_count: verdicts.fp,
+            inconclusive_count: verdicts.inconclusive,
+            true_positive_count: verdicts.tp,
+          },
+        },
+        create_investigation: { output: { conversation_id: INVESTIGATION_ID } },
+      },
+      variables: {
+        alert_count: alerts,
+        fp_candidate_count: fpCandidates,
+        verdict_count: verdicts.fp + verdicts.inconclusive + verdicts.tp,
+        ...(reviewDispatch ? { review_dispatch: reviewDispatch } : {}),
+      },
+    });
+
+    it('renders a classified batch', () => {
+      expect(
+        renderReport(
+          batchReport,
+          batchContext({
+            alerts: 40,
+            fpCandidates: 20,
+            verdicts: { fp: 23, inconclusive: 5, tp: 10 },
+          })
+        )
+      ).toEqual({
+        alerts_total: 40,
+        alerts_without_verdict: 2,
+        fp_below_floor: 3,
+        fp_candidates: 20,
+        investigation_id: INVESTIGATION_ID,
+        verdicts_false_positive: 23,
+        verdicts_inconclusive: 5,
+        verdicts_true_positive: 10,
+      });
+    });
+
+    it('counts every alert of a batch that came back without verdicts', () => {
+      expect(
+        renderReport(batchReport, {
+          steps: { classify_alerts: { output: { verdicts: [] } } },
+          variables: { alert_count: 7, fp_candidate_count: 0, verdict_count: 0 },
+        })
+      ).toEqual(
+        expect.objectContaining({
+          alerts_total: 7,
+          alerts_without_verdict: 7,
+          fp_below_floor: 0,
+          verdicts_false_positive: 0,
+        })
+      );
+    });
+
+    it.each([
+      [
+        'a batch handed to the closure review',
+        {
+          alerts: 40,
+          fpCandidates: 20,
+          reviewDispatch: 'started' as const,
+          verdicts: { fp: 20, inconclusive: 10, tp: 10 },
+        },
+        {
+          candidates_found: 40,
+          degraded: 'false',
+          degraded_reason: 'none',
+          items_dispatched: 40,
+          items_failed: 0,
+          items_in_flight: '20',
+          run_outcome: 'produced',
+        },
+      ],
+      [
+        'a batch with no false-positive candidate',
+        { alerts: 5, verdicts: { fp: 1, inconclusive: 0, tp: 4 } },
+        {
+          candidates_found: 5,
+          degraded: 'false',
+          degraded_reason: 'none',
+          items_dispatched: 5,
+          items_failed: 0,
+          items_in_flight: '0',
+          run_outcome: 'produced',
+        },
+      ],
+      [
+        'a batch whose closure proposal the per-rule limit held back',
+        {
+          alerts: 4,
+          fpCandidates: 4,
+          reviewDispatch: 'limit' as const,
+          verdicts: { fp: 4, inconclusive: 0, tp: 0 },
+        },
+        {
+          candidates_found: 4,
+          degraded: 'true',
+          degraded_reason: 'capacity',
+          items_dispatched: 4,
+          items_failed: 0,
+          items_in_flight: '0',
+          run_outcome: 'degraded_partial',
+        },
+      ],
+      [
+        'a batch with some alerts missing a verdict',
+        { alerts: 10, verdicts: { fp: 0, inconclusive: 2, tp: 6 } },
+        {
+          candidates_found: 10,
+          degraded: 'true',
+          degraded_reason: 'missing_data',
+          items_dispatched: 8,
+          items_failed: 2,
+          items_in_flight: '0',
+          run_outcome: 'degraded_partial',
+        },
+      ],
+      [
+        'a batch that came back without any verdict',
+        { alerts: 10, verdicts: { fp: 0, inconclusive: 0, tp: 0 } },
+        {
+          candidates_found: 10,
+          degraded: 'true',
+          degraded_reason: 'dependency_unavailable',
+          items_dispatched: 0,
+          items_failed: 10,
+          items_in_flight: '0',
+          run_outcome: 'failed_all_items',
+        },
+      ],
+      [
+        'an empty batch',
+        { alerts: 0, verdicts: { fp: 0, inconclusive: 0, tp: 0 } },
+        {
+          candidates_found: 0,
+          degraded: 'false',
+          degraded_reason: 'none',
+          items_dispatched: 0,
+          items_failed: 0,
+          items_in_flight: '0',
+          run_outcome: 'empty_nothing_pending',
+        },
+      ],
+    ])('renders the run for %s', (_scenario, scenario, expected) => {
+      expect(renderReport(runReport, batchContext(scenario))).toEqual(expected);
+    });
+
+    it('sends no alert content', () => {
+      expect(JSON.stringify([batchReport.with, runReport.with])).not.toMatch(
+        /rationale|rule\.name|event\.alerts\[|verdicts \|/
+      );
+    });
+  });
+
+  describe('the closure review (floor_alert_triage_review.yaml)', () => {
+    const steps = topLevelSteps(ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW.yaml);
+    const names = steps.map(({ name }) => name);
+    const report = stepNamed(steps, 'report_closure_resolved');
+
+    it('reports the settled closure as the last step, after every outcome branch', () => {
+      expect({
+        continue: report['on-failure']?.continue,
+        event: report.with?.event,
+        last: names[names.length - 1],
+        timeout: report.timeout,
+      }).toEqual({
+        continue: true,
+        event: 'alert_triage_closure_resolved',
+        last: 'report_closure_resolved',
+        timeout: '30s',
+      });
+    });
+
+    const reviewContext = ({
+      autonomy = 'manual',
+      failedRetag,
+      outcome,
+      readFailed = false,
+    }: {
+      autonomy?: string;
+      failedRetag?: number;
+      outcome: string;
+      readFailed?: boolean;
+    }): Record<string, unknown> => ({
+      inputs: { autonomy, conversation_id: INVESTIGATION_ID },
+      steps: {
+        get_proposal: readFailed ? { error: { message: 'HTTP 503' } } : { output: {} },
+      },
+      variables: {
+        fp_candidate_count: 12,
+        proposal_outcome: outcome,
+        ...(failedRetag === undefined ? {} : { failed_retag_count: failedRetag }),
+      },
+    });
+
+    it.each([
+      [
+        'an auto-approved closure',
+        { autonomy: 'supervised', outcome: 'approved' },
+        { auto_approve_requested: true, outcome: 'approved' },
+      ],
+      [
+        'a dismissal whose re-tag partly failed',
+        { failedRetag: 3, outcome: 'dismissed' },
+        { alerts_retag_failed: 3, outcome: 'dismissed' },
+      ],
+      [
+        'a dismissal whose proposal could not be read back',
+        { outcome: 'dismissed', readFailed: true },
+        { outcome: 'dismissed', proposal_read_failed: true },
+      ],
+      ['an expired proposal', { outcome: 'expired' }, { outcome: 'expired' }],
+      ['an unknown gate state', { outcome: 'unknown' }, { outcome: 'unknown' }],
+      ['a value outside the vocabulary', { outcome: 'failed' }, { outcome: 'unknown' }],
+    ])('renders %s', (_scenario, scenario, expected) => {
+      expect(renderReport(report, reviewContext(scenario))).toEqual({
+        alerts_proposed: 12,
+        alerts_retag_failed: 0,
+        auto_approve_requested: false,
+        investigation_id: INVESTIGATION_ID,
+        proposal_read_failed: false,
+        ...expected,
+      });
     });
   });
 });

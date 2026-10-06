@@ -21,12 +21,17 @@ export const ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID =
  * The closure proposal of one Alert Triage batch and the handling of its outcome, installed once
  * globally and started per batch by the per-space Alert Triage Worker. The number that may wait for
  * a decision per rule is `settings.concurrency.max` in the YAML.
+ *
+ * Version 4 carries the three `report_investigation_closed_after_*` steps, which report the
+ * Worker's own Investigation closes, and `report_closure_resolved`, which reports how the closure
+ * proposal settled, through `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible in
+ * `managedVersion`; the content hash alone would also apply it.
  */
 export const ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_FLOOR_ALERT_TRIAGE_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 3,
+  version: 4,
   yaml: FLOOR_ALERT_TRIAGE_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
