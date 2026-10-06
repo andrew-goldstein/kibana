@@ -148,6 +148,21 @@ For the Attack Discovery Worker it is the review: on a false-positive verdict (`
 | `investigation_id` | keyword | yes | The Investigation the Worker closed. For the Attack Discovery Worker it joins to `alertzero_ad_worker_review_started` |
 | `close_reason` | keyword | yes | The Investigation template's close reason the Worker wrote, or the class its close maps to: `false_positive`, `benign`, `resolved`, `duplicate` or `other` |
 
+Every other Worker that closes its own Investigation reports it the same way, with the same guard: right after the close, only when the close left no error and changed `status`. The reason is the one the close writes. A close that writes no reason is reported as `other`.
+
+| Worker | Workflow and close | `close_reason` |
+|---|---|---|
+| Attack Discovery | Review, false-positive verdict | `false_positive` |
+| Attack Discovery | Review, escalation declined | `other` |
+| Rule Tuning | Review, entry gate declined | `other` |
+| Rule Tuning | Review, tuning proposal approved | `resolved` |
+| Rule Tuning | Review, tuning proposal dismissed | `other` |
+| Rule Coverage | Review, decision applied: read back from the close, which writes `resolved`, or `other` when the analyst only acknowledged a report | `resolved` or `other` |
+| Rule Coverage | Review, proposal dismissed | `other` |
+| Rule Coverage | Review, entry gate declined | `other` |
+
+A Worker's run that never reaches its close (a gate that expires where the Worker leaves the Investigation open, a failed run) sends nothing.
+
 Only a Worker's own closes are measured, and only for a Worker whose YAML calls the step. A close by an Agent Builder agent (`set_conversation_metadata`), a custom workflow or a direct Agent Builder API call sends nothing here. A human close through Agentic Investigations reports its own `agentic_investigations_investigation_closed`.
 
 ### `alertzero_worker_run_completed`
@@ -174,6 +189,10 @@ What each Worker reports, and from where:
 | Worker | Reported by | `candidates_found` | `items_dispatched` | `items_failed` | `items_in_flight` | `source_read_failed` / `lookup_failed` |
 |---|---|---|---|---|---|---|
 | Attack Discovery | The runner, after `report_run_completed` | Alerts analyzed | Generation batches attempted | Generation batches that failed | Attacks handed to reviews | Not reported |
+| Rule Tuning | The global sweep, before `emit_result` | Rules over the false-positive thresholds | Reviews requested | Not reported | Reviews earlier sweeps still have in flight | The harvest query / the in-flight review lookup |
+| Rule Coverage | The global sweep, before `emit_result` | Pending gap indicators in the lookback window | Reviews started | Not reported | Reviews in flight: earlier ones plus the ones started | The indicator search / the active-review lookup |
+
+The Rule Tuning sweep is `failed_source_unavailable` when its harvest fails, `produced` when it requested a review, and `empty_nothing_found` otherwise. It reads only what it knows before its reviews settle, so it does not report review decisions: each review reports its own. The Rule Coverage sweep is `failed_source_unavailable` when its search fails, `empty_nothing_pending` with no pending indicator, `empty_at_capacity` when indicators are pending but no review slot is free (degraded, `capacity`), and `produced` otherwise. A failed lookup either sweep carries on without makes the run degraded with `dependency_unavailable`.
 
 The Attack Discovery runner maps its own `run_outcome` to the shared one: `produced` to `produced`, `empty_no_alerts` to `empty_nothing_pending`, `empty_no_attacks` and `empty_all_duplicates` to `empty_nothing_found`, `degraded_partial` to `degraded_partial`, and `failed_all_batches` to `failed_all_items`. A failed batch makes the run degraded, with `degraded_reason: dependency_unavailable`.
 
@@ -209,12 +228,12 @@ Emitted by the Alert Triage closure review once its proposal has settled and the
 
 ### `alertzero_rule_tuning_review_completed`
 
-Emitted by a Rule Tuning review for one rule, when it ends: after the manual entry gate is declined, or after the tuning proposal is decided.
+Emitted by a Rule Tuning review for one rule, when it ends: when the manual entry gate is declined or nobody answers it (each ends the run in its own arm, which reports it), or after the tuning proposal is decided.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | envelope | | | See above |
-| `entry_gate` | keyword | yes | `skipped` (no entry gate ran: assisted autonomy, or a rule that could not be read), `approved`, `declined` or `undecided` (nobody answered it) |
+| `entry_gate` | keyword | yes | `skipped` (no entry gate ran: assisted autonomy, or a rule that could not be read), `approved`, `declined` or `undecided` (nobody answered it, which ends the review) |
 | `change_type` | keyword | yes | The tuning change proposed: `query`, `risk_score`, `exception`, `threshold`, `schedule`, `manual` (the action-less arm, which also takes any type the other arms do not name) or `none` |
 | `confidence` | keyword | yes | The diagnosis's stated confidence: `low`, `medium`, `high` or `none` |
 | `decision` | keyword | yes | `approved`, `dismissed`, `undecided` (a proposal nobody decided) or `none` (no proposal) |
@@ -226,7 +245,7 @@ Emitted by a Rule Tuning review for one rule, when it ends: after the manual ent
 
 ### `alertzero_rule_coverage_review_completed`
 
-Emitted by a Rule Coverage review for one detection gap (a knowledge indicator), when it ends.
+Emitted by a Rule Coverage review for one detection gap (a knowledge indicator), when it ends. A review that stops at the manual entry gate (declined or unanswered) ends before this report and sends none. A declined entry gate still reports its Investigation close.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

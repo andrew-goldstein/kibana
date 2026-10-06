@@ -26,21 +26,34 @@ export const ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID = 'system-security-rule-tu
 export const ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID = 'system-security-rule-tuning-review';
 export const ALERTZERO_RULE_CREATION_WORKFLOW_ID = 'system-security-rule-creation';
 
+/**
+ * Version 7 carries `report_investigation_closed_resolved` and
+ * `report_investigation_closed_dismissed`, which report the Worker's own Investigation closes,
+ * and `report_review_completed`, which reports the review's outcome, through
+ * `alertzero.reportWorkerOutcome`. Main is at 5 and the Attack Discovery Worker telemetry change
+ * takes it to 6. The bump makes the upgrade visible in `managedVersion`; the content hash alone
+ * would also apply it.
+ */
 export const ALERTZERO_COVERAGE_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 6,
+  version: 7,
   yaml: COVERAGE_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
+/**
+ * Version 5 carries `report_worker_run_completed`, which reports the sweep's outcome through
+ * `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible in `managedVersion`; the
+ * content hash alone would also apply it.
+ */
 export const ALERTZERO_COVERAGE_WORKER_WORKFLOW = {
   billable: false,
   id: ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 4,
+  version: 5,
   yaml: COVERAGE_WORKER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
@@ -53,21 +66,33 @@ export const ALERTZERO_RULE_PREVIEW_WORKFLOW = {
   yaml: RULE_PREVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
+/**
+ * Version 28 carries `report_worker_run_completed`, which reports the sweep's outcome through
+ * `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible in `managedVersion`; the
+ * content hash alone would also apply it.
+ */
 export const ALERTZERO_RULE_TUNING_WORKER_WORKFLOW = {
   billable: false,
   id: ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 27,
+  version: 28,
   yaml: RULE_TUNING_WORKER_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
+/**
+ * Version 29 carries `report_investigation_closed_declined`, `report_investigation_closed_applied`
+ * and `report_investigation_closed_dismissed`, which report the Worker's own Investigation closes,
+ * and `report_review_completed_declined` and `report_review_completed`, which report the review's
+ * outcome, through `alertzero.reportWorkerOutcome`. The bump makes the upgrade visible in
+ * `managedVersion`; the content hash alone would also apply it.
+ */
 export const ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW = {
   billable: false,
   id: ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
   management: ALERTZERO_RULE_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 28,
+  version: 29,
   yaml: RULE_TUNING_REVIEW_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 

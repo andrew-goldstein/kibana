@@ -274,6 +274,45 @@ steps:
                 on-failure:
                   continue: true
 
+              # Product telemetry: the Worker reports its own Investigation close. Like
+              # every report step it never fails the run. It runs only when the close
+              # above left no error and changed `status`, so a close that finds the
+              # Investigation already closed (by an analyst, or by an earlier close) is
+              # not counted again. The reason is the one the close above writes. It must
+              # run before `stop_declined`, which ends the run.
+              - name: report_investigation_closed_declined
+                type: alertzero.reportWorkerOutcome
+                if: "${{ steps.close_investigation_declined.error == blank and steps.close_investigation_declined.output.changed_fields contains 'status' }}"
+                timeout: 30s
+                on-failure:
+                  continue: true
+                with:
+                  event: worker_investigation_closed
+                  investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+                  close_reason: other
+
+              # Product telemetry: the review's outcome when the analyst declined it at
+              # the entry gate. Never fails the run (`on-failure: continue`, short
+              # timeout). It must run before `stop_declined`, which ends the run;
+              # `report_review_completed_undecided` and `report_review_completed` below
+              # cover every other way the review ends.
+              - name: report_review_completed_declined
+                type: alertzero.reportWorkerOutcome
+                timeout: 30s
+                on-failure:
+                  continue: true
+                with:
+                  event: rule_tuning_review_completed
+                  entry_gate: declined
+                  change_type: none
+                  confidence: none
+                  decision: none
+                  applied: false
+                  backtest_ran: false
+                  backtest_reduced_alerts: false
+                  rule_unavailable: false
+                  investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+
               # workflow.output terminates the run, so no later step needs to check
               # the entry decision.
               - name: stop_declined
@@ -288,6 +327,26 @@ steps:
           # stays open, so the next sweep asks again.
           - match: expired
             steps:
+              # Product telemetry: the review's outcome when nobody answered the entry
+              # gate. Never fails the run (`on-failure: continue`, short timeout). It
+              # must run before `stop_expired`, which ends the run.
+              - name: report_review_completed_undecided
+                type: alertzero.reportWorkerOutcome
+                timeout: 30s
+                on-failure:
+                  continue: true
+                with:
+                  event: rule_tuning_review_completed
+                  entry_gate: undecided
+                  change_type: none
+                  confidence: none
+                  decision: none
+                  applied: false
+                  backtest_ran: false
+                  backtest_reduced_alerts: false
+                  rule_unavailable: false
+                  investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+
               - name: stop_expired
                 type: workflow.output
                 status: completed
@@ -1192,6 +1251,23 @@ steps:
     on-failure:
       continue: true
 
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # Guarded like the close, on the approved tuning proposal. The reason is the
+  # one the close above writes.
+  - name: report_investigation_closed_applied
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_proposal_action_decision.output.approved == true and steps.close_investigation_applied.error == blank and steps.close_investigation_applied.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+      close_reason: resolved
+
   - name: close_investigation_dismissed
     type: ai.conversation.metadata.patch
     if: >-
@@ -1205,6 +1281,75 @@ steps:
         verdict: "The tuning proposal was dismissed."
     on-failure:
       continue: true
+
+  # Product telemetry: the Worker reports its own Investigation close. Like every
+  # report step it never fails the run. It runs only when the close above left no
+  # error and changed `status`, so a close that finds the Investigation already
+  # closed (by an analyst, or by an earlier close) is not counted again.
+  # Guarded like the close, on the dismissed tuning proposal. The reason is the
+  # one the close above writes.
+  - name: report_investigation_closed_dismissed
+    type: alertzero.reportWorkerOutcome
+    if: "${{ steps.record_proposal_action_decision.output.dismissed == true and steps.close_investigation_dismissed.error == blank and steps.close_investigation_dismissed.output.changed_fields contains 'status' }}"
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_investigation_closed
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+      close_reason: other
+
+  # Product telemetry: the review's outcome (`alertzero_rule_tuning_review_completed`).
+  # Never fails the run (`on-failure: continue`, short timeout). Every value is a
+  # closed vocabulary, a flag or the Investigation id; nothing the model wrote is
+  # sent. `change_type` and `confidence` name only the values the arms above
+  # recognise, so anything else is `manual` (the default arm ran) or `none`.
+  - name: report_review_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: rule_tuning_review_completed
+      # A declined or unanswered entry gate ends the run in its own arm, which reports it,
+      # so only an approved gate, or none, reaches this step.
+      entry_gate: |-
+        {%- if steps.propose_entry.output.decision == 'approved' -%}
+        approved
+        {%- else -%}
+        skipped
+        {%- endif -%}
+      change_type: |-
+        {%- assign change_type = steps.diagnose_rule.output.structured_output.change_type -%}
+        {%- if change_type == 'query' or change_type == 'risk_score' or change_type == 'exception' or change_type == 'threshold' or change_type == 'schedule' -%}
+        {{ change_type }}
+        {%- elsif steps.propose_manual.output.status != blank -%}
+        manual
+        {%- else -%}
+        none
+        {%- endif -%}
+      confidence: |-
+        {%- assign confidence = steps.diagnose_rule.output.structured_output.confidence -%}
+        {%- if confidence == 'low' or confidence == 'medium' or confidence == 'high' -%}
+        {{ confidence }}
+        {%- else -%}
+        none
+        {%- endif -%}
+      decision: |-
+        {%- if steps.record_proposal_action_decision.output.approved == true -%}
+        approved
+        {%- elsif steps.record_proposal_action_decision.output.dismissed == true -%}
+        dismissed
+        {%- elsif steps.propose_query.output.status != blank or steps.propose_risk_score.output.status != blank or steps.propose_exception.output.status != blank or steps.propose_threshold.output.status != blank or steps.propose_schedule.output.status != blank or steps.propose_manual.output.status != blank -%}
+        undecided
+        {%- else -%}
+        none
+        {%- endif -%}
+      applied: "${{ steps.record_proposal_action_decision.output.applied == true }}"
+      backtest_ran: "${{ steps.record_preview_outcome.output.current_succeeded == true and steps.record_preview_outcome.output.proposed_succeeded == true }}"
+      backtest_reduced_alerts: "${{ steps.record_preview_outcome.output.current_succeeded == true and steps.record_preview_outcome.output.proposed_succeeded == true and steps.record_preview_outcome.output.proposed_alert_count < steps.record_preview_outcome.output.current_alert_count }}"
+      rule_unavailable: "${{ steps.fetch_rule.error != null or steps.fetch_rule.output.enabled != true }}"
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
 
   - name: emit_result
     type: workflow.output

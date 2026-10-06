@@ -283,6 +283,38 @@ steps:
       reviews_approved: "${{ steps.run_reviews.output.results | map: 'output' | where: 'approved' | size | default: 0 }}"
       rules_applied: "${{ steps.run_reviews.output.results | map: 'output' | where: 'applied' | size | default: 0 }}"
 
+  # Product telemetry for the sweep, in the vocabulary every Worker shares
+  # (`alertzero_worker_run_completed`). Like every report step it never fails the
+  # run: `on-failure: continue` and a short timeout. Top level on purpose: a step
+  # with `timeout` or `on-failure` cannot sit inside a `parallel` branch. It reads
+  # only what the sweep knows before its reviews settle (the candidate count, the
+  # reviews requested, the reviews earlier sweeps still have in flight, and whether
+  # the harvest or the in-flight lookup failed), not the review decisions, which
+  # each review reports itself.
+  - name: report_worker_run_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_run_completed
+      candidates_found: "${{ steps.collect_candidates.output.count | default: 0 }}"
+      items_dispatched: "${{ steps.resolve_fanout_rows.output.rows | default: consts.no_rows | size }}"
+      items_in_flight: "${{ steps.collect_active_rules.output.expected | default: 0 }}"
+      source_read_failed: "${{ steps.harvest_fp_alerts_by_rule.error != null }}"
+      lookup_failed: "${{ steps.list_active_reviews.error != null }}"
+      degraded: "${{ steps.harvest_fp_alerts_by_rule.error != null or steps.list_active_reviews.error != null }}"
+      degraded_reason: "{% if steps.harvest_fp_alerts_by_rule.error != null or steps.list_active_reviews.error != null %}dependency_unavailable{% else %}none{% endif %}"
+      run_outcome: |-
+        {%- assign requested = steps.resolve_fanout_rows.output.rows | default: consts.no_rows | size -%}
+        {%- if steps.harvest_fp_alerts_by_rule.error != null -%}
+        failed_source_unavailable
+        {%- elsif requested > 0 -%}
+        produced
+        {%- else -%}
+        empty_nothing_found
+        {%- endif -%}
+
   - name: emit_result
     type: workflow.output
     status: completed

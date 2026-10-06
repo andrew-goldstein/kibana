@@ -217,6 +217,23 @@ steps:
                 on-failure:
                   continue: true
 
+              # Product telemetry: the Worker reports its own Investigation close. Like
+              # every report step it never fails the run. It runs only when the close
+              # above left no error and changed `status`, so a close that finds the
+              # Investigation already closed (by an analyst, or by an earlier close) is
+              # not counted again. The reason is the one the close above writes. It must
+              # run before `stop_declined`, which ends the run.
+              - name: report_investigation_closed_declined
+                type: alertzero.reportWorkerOutcome
+                if: "${{ steps.close_investigation_declined.error == blank and steps.close_investigation_declined.output.changed_fields contains 'status' }}"
+                timeout: 30s
+                on-failure:
+                  continue: true
+                with:
+                  event: worker_investigation_closed
+                  investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+                  close_reason: other
+
               # workflow.output ends the run.
               - name: stop_declined
                 type: workflow.output
@@ -789,6 +806,25 @@ steps:
             on-failure:
               continue: true
 
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is read back from the close's own output, because the close
+          # computes it (`resolved`, or `other` when the analyst only acknowledged a
+          # report). A switch arm, unlike a `parallel` branch, accepts `timeout` and
+          # `on-failure`.
+          - name: report_investigation_closed_resolved
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_resolved.error == blank and steps.close_investigation_resolved.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: "{{ steps.close_investigation_resolved.output.metadata.close_reason }}"
+
       - match: dismissed
         steps:
           - name: close_investigation_dismissed
@@ -801,6 +837,22 @@ steps:
                 verdict: "Analyst dismissed the coverage proposal."
             on-failure:
               continue: true
+
+          # Product telemetry: the Worker reports its own Investigation close. Like every
+          # report step it never fails the run. It runs only when the close above left no
+          # error and changed `status`, so a close that finds the Investigation already
+          # closed (by an analyst, or by an earlier close) is not counted again.
+          # The reason is the one the close above writes.
+          - name: report_investigation_closed_dismissed
+            type: alertzero.reportWorkerOutcome
+            if: "${{ steps.close_investigation_dismissed.error == blank and steps.close_investigation_dismissed.output.changed_fields contains 'status' }}"
+            timeout: 30s
+            on-failure:
+              continue: true
+            with:
+              event: worker_investigation_closed
+              investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
+              close_reason: other
 
   # Step 10 of 10: mark the indicator processed. Except for a declined entry gate,
   # this is the only write to the indicator. It runs only after an applied decision.
@@ -834,6 +886,62 @@ steps:
       ki:
         attributes:
           status: processed
+
+  # Product telemetry: the review's outcome (`alertzero_rule_coverage_review_completed`).
+  # Never fails the run (`on-failure: continue`, short timeout). Every value is a
+  # closed vocabulary, a flag or the Investigation id: the free-text outputs below
+  # (`check_error`, `creation_error`, `creation_skip_reason`, rule names) are sent
+  # only as flags. A proposal step that ran has a `status`; one that was skipped
+  # has no output. The rule-creation run raised its proposal when it neither failed
+  # nor reported a reason for skipping.
+  - name: report_review_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: rule_coverage_review_completed
+      verdict: |-
+        {%- assign verdict = steps.coverage_check.output.structured_output.verdict -%}
+        {%- if verdict == 'covered_enabled' or verdict == 'covered_disabled' or verdict == 'prebuilt_available' or verdict == 'no_coverage' -%}
+        {{ verdict }}
+        {%- else -%}
+        none
+        {%- endif -%}
+      proposal_kind: |-
+        {%- if steps.propose_enable.output.status != blank -%}
+        enable_rule
+        {%- elsif steps.propose_install.output.status != blank -%}
+        install_prebuilt_rule
+        {%- elsif steps.propose_confirm.output.status != blank -%}
+        confirm_coverage
+        {%- elsif steps.report_unresolved_rule.output.status != blank or steps.report_missing_version.output.status != blank or steps.report_unconfirmed_rule.output.status != blank or steps.report_unknown_verdict.output.status != blank -%}
+        manual_follow_up
+        {%- elsif steps.coverage_check.output.structured_output.verdict == 'no_coverage' and steps.run_rule_creation.error == null and steps.run_rule_creation.output.skip_reason == blank -%}
+        create_rule
+        {%- else -%}
+        none
+        {%- endif -%}
+      decision: |-
+        {%- if steps.record_decision.output.approved == true -%}
+        approved
+        {%- elsif steps.record_decision.output.dismissed == true -%}
+        dismissed
+        {%- elsif steps.propose_enable.output.status != blank or steps.propose_install.output.status != blank or steps.propose_confirm.output.status != blank or steps.report_unresolved_rule.output.status != blank or steps.report_missing_version.output.status != blank or steps.report_unconfirmed_rule.output.status != blank or steps.report_unknown_verdict.output.status != blank -%}
+        undecided
+        {%- elsif steps.coverage_check.output.structured_output.verdict == 'no_coverage' and steps.run_rule_creation.error == null and steps.run_rule_creation.output.skip_reason == blank -%}
+        undecided
+        {%- else -%}
+        none
+        {%- endif -%}
+      applied: "${{ steps.record_decision.output.applied == true and steps.refetch_rule.error == null and steps.refetch_rule.output.enabled == true }}"
+      approved_not_applied: "${{ steps.resolve_outcome.output.enable_approved_not_applied == true or steps.resolve_outcome.output.install_approved_not_applied == true }}"
+      rule_created: "${{ steps.run_rule_creation.output.created == true }}"
+      creation_skipped: "${{ steps.run_rule_creation.output.skip_reason != blank }}"
+      creation_failed: "${{ steps.run_rule_creation.error != null }}"
+      check_failed: "${{ steps.coverage_check.output.structured_output.verdict == null or steps.coverage_check.output.structured_output.verdict == '' }}"
+      ki_processed: "${{ steps.mark_processed.output.result != null }}"
+      investigation_id: "{{ steps.create_investigation.output.conversation_id }}"
 
   - name: emit_result
     type: workflow.output

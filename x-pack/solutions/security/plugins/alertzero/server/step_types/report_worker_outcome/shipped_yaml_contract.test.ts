@@ -12,9 +12,17 @@ import { createWorkflowLiquidEngine } from '@kbn/workflows';
 import {
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
+  ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
+  ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID,
+  ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
+  ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID,
   getManagedWorkflowDefinition,
 } from '@kbn/workflows/managed';
-import { SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID } from '@kbn/alertzero-common';
+import {
+  SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID,
+  SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID,
+  SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID,
+} from '@kbn/alertzero-common';
 import {
   REPORT_WORKER_OUTCOME_EVENTS,
   ReportWorkerOutcomeStepId,
@@ -30,14 +38,15 @@ import { EVENT_WORKER_IDS, isEventFromItsWorker } from './event_worker_ids';
 import { reportOutcome } from './report_outcome';
 
 /**
- * The contract between the shipped Attack Discovery Worker YAML and the report step's input
- * schema. `@kbn/workflows` cannot import this plugin, so this is where each shipped `with` block
- * is rendered the way the engine renders it and validated against the real schema.
+ * The contract between the shipped Worker YAML and the report step's input schema.
+ * `@kbn/workflows` cannot import this plugin, so this is where each shipped `with` block is
+ * rendered the way the engine renders it and validated against the real schema.
  */
 
 interface YamlStep {
   name: string;
   type: string;
+  if?: string;
   with?: Record<string, unknown>;
   steps?: YamlStep[];
   else?: YamlStep[];
@@ -377,6 +386,304 @@ describe('shipped Attack Discovery Worker YAML and the reportWorkerOutcome schem
         },
         success: true,
       });
+    });
+  });
+});
+
+describe('shipped Worker reports and the reportWorkerOutcome schema', () => {
+  // Runs where every report step's guard passes, the way the engine would have them.
+  const changedStatus = { changed_fields: ['status'], metadata: { close_reason: 'resolved' } };
+  const investigation = { output: { conversation_id: INVESTIGATION_ID } };
+
+  /** For each Worker workflow: the Worker that owns it, and runs that exercise its reports. */
+  const WORKER_WORKFLOWS: Array<{
+    contexts: Array<Record<string, unknown>>;
+    workerId: string;
+    workflowId: string;
+  }> = [
+    {
+      contexts: [
+        {
+          consts: { no_rows: [] },
+          steps: {
+            collect_active_rules: { output: { expected: 1 } },
+            collect_candidates: { output: { count: 3 } },
+            harvest_fp_alerts_by_rule: { output: { values: [] } },
+            list_active_reviews: { output: { results: [] } },
+            resolve_fanout_rows: { output: { rows: [['rule-1'], ['rule-2']] } },
+          },
+        },
+        {
+          consts: { no_rows: [] },
+          steps: {
+            harvest_fp_alerts_by_rule: { error: { message: 'search failed' } },
+            list_active_reviews: { error: { message: 'HTTP 500' } },
+          },
+        },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID,
+      workflowId: ALERTZERO_RULE_TUNING_WORKER_WORKFLOW_ID,
+    },
+    {
+      contexts: [
+        {
+          steps: {
+            close_investigation_declined: { output: changedStatus },
+            create_investigation: investigation,
+          },
+        },
+        {
+          steps: {
+            close_investigation_applied: { output: changedStatus },
+            create_investigation: investigation,
+            diagnose_rule: {
+              output: { structured_output: { change_type: 'query', confidence: 'low' } },
+            },
+            fetch_rule: { output: { enabled: true } },
+            propose_query: { output: { decision: 'approved', status: 'succeeded' } },
+            record_preview_outcome: {
+              output: {
+                current_alert_count: 4,
+                current_succeeded: true,
+                proposed_alert_count: 1,
+                proposed_succeeded: true,
+              },
+            },
+            record_proposal_action_decision: {
+              output: { applied: true, approved: true, dismissed: false },
+            },
+          },
+        },
+        {
+          steps: {
+            close_investigation_dismissed: { output: changedStatus },
+            create_investigation: investigation,
+            diagnose_rule: { output: { structured_output: { change_type: 'other' } } },
+            fetch_rule: { output: { enabled: true } },
+            propose_manual: { output: { decision: 'dismissed', status: 'no_action' } },
+            record_proposal_action_decision: {
+              output: { applied: false, approved: false, dismissed: true },
+            },
+          },
+        },
+        { steps: { fetch_rule: { error: { message: 'HTTP 404: not found' } } } },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID,
+      workflowId: ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID,
+    },
+    {
+      contexts: [
+        {
+          consts: { no_rows: [] },
+          steps: {
+            collect_active_indicators: { output: { count: 2 } },
+            list_active_reviews: { output: { results: [] } },
+            resolve_dispatch_batch: { output: { indicators: [{ _id: 'ki-1' }] } },
+            search_pending_indicators: { output: { hits: { total: { value: 6 } } } },
+          },
+        },
+        {
+          consts: { no_rows: [] },
+          steps: {
+            collect_active_indicators: { output: { count: 100 } },
+            resolve_dispatch_batch: { output: { indicators: [] } },
+            search_pending_indicators: { output: { hits: { total: { value: 6 } } } },
+          },
+        },
+        {
+          consts: { no_rows: [] },
+          steps: { search_pending_indicators: { error: { message: 'search failed' } } },
+        },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID,
+      workflowId: ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID,
+    },
+    {
+      contexts: [
+        {
+          steps: {
+            close_investigation_resolved: { output: changedStatus },
+            coverage_check: { output: { structured_output: { verdict: 'covered_disabled' } } },
+            create_investigation: investigation,
+            mark_processed: { output: { result: 'updated' } },
+            propose_enable: { output: { decision: 'approved', status: 'succeeded' } },
+            record_decision: { output: { applied: true, approved: true, dismissed: false } },
+            refetch_rule: { output: { enabled: true } },
+            resolve_outcome: {
+              output: { enable_approved_not_applied: false, install_approved_not_applied: false },
+            },
+          },
+        },
+        {
+          steps: {
+            close_investigation_dismissed: { output: changedStatus },
+            coverage_check: { output: { structured_output: { verdict: 'no_coverage' } } },
+            create_investigation: investigation,
+            record_decision: { output: { applied: false, approved: false, dismissed: true } },
+            run_rule_creation: {
+              output: { created: false, decision: 'dismissed', skip_reason: '' },
+            },
+          },
+        },
+        { steps: { read_ki: { output: { hits: { total: { value: 0 } } } } } },
+        {
+          steps: {
+            close_investigation_declined: { output: changedStatus },
+            create_investigation: investigation,
+            propose_entry: { output: { decision: 'dismissed', status: 'no_action' } },
+          },
+        },
+      ],
+      workerId: SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID,
+      workflowId: ALERTZERO_COVERAGE_REVIEW_WORKFLOW_ID,
+    },
+  ];
+
+  const guardPasses = (step: YamlStep, context: Record<string, unknown>): boolean =>
+    !step.if || liquid.evalValueSync(step.if.trim().slice(3, -2).trim(), context) === true;
+
+  describe.each(WORKER_WORKFLOWS)('$workflowId', ({ contexts, workerId, workflowId }) => {
+    const reports = reportStepsOf(workflowId);
+
+    it('has report steps', () => {
+      expect(reports.length).toBeGreaterThan(0);
+    });
+
+    it.each(reports.map((step) => [step.name, step] as const))(
+      '%s reports an event its own Worker may send',
+      (_name, step) => {
+        expect(
+          isEventFromItsWorker(
+            step.with?.event as (typeof REPORT_WORKER_OUTCOME_EVENTS)[number],
+            workerId
+          )
+        ).toBe(true);
+      }
+    );
+
+    it.each(reports.map((step) => [step.name, step] as const))(
+      '%s renders a valid input in every run where it reports, and reports in at least one',
+      (_name, step) => {
+        const results = contexts
+          .filter((context) => guardPasses(step, context))
+          .map((context) => {
+            const result = parseRendered(step, context);
+            return result.success ? result.data.event : result.error.issues;
+          });
+
+        expect({ events: results, reported: results.length > 0 }).toEqual({
+          events: results.map(() => step.with?.event),
+          reported: true,
+        });
+      }
+    );
+
+    it.each(reports.map((step) => [step.name, step] as const))(
+      '%s reports a payload the registered schema accepts in every run where it reports',
+      (_name, step) => {
+        const reported = contexts
+          .filter((context) => guardPasses(step, context))
+          .map((context) => reportOnDevModeClient(step, context, workerId)?.eventType);
+
+        expect(reported).toEqual(reported.map(() => `alertzero_${step.with?.event}`));
+      }
+    );
+  });
+});
+
+describe('shipped Worker reports as the debug log prints them', () => {
+  const ENVELOPE_FIELDS = {
+    autonomy_level: 'manual',
+    autonomy_mode: 'gated',
+    execution_id: 'c5d0e2a9-3b7e-4c61-8f2d-6a9b0e4d7f21',
+    is_default_space: true,
+    run_id: '0b6a1f4e-8c43-4a39-9a4e-1f7f5f3f9c10',
+    trigger_type: 'scheduled',
+  };
+
+  it('reports a Rule Coverage sweep that started reviews', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_COVERAGE_WORKER_WORKFLOW_ID),
+          'report_worker_run_completed'
+        ),
+        {
+          consts: { no_rows: [] },
+          steps: {
+            collect_active_indicators: { output: { count: 2 } },
+            list_active_reviews: { output: { results: [] } },
+            resolve_dispatch_batch: { output: { indicators: [{ _id: 'ki-1' }, { _id: 'ki-2' }] } },
+            search_pending_indicators: { output: { hits: { total: { value: 6 } } } },
+          },
+        },
+        SYSTEM_SECURITY_WORKER_DETECTION_RULE_COVERAGE_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_worker_run_completed',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-detection',
+        worker_id: 'system-security-detection-rule-coverage',
+        candidates_found: 6,
+        degraded: false,
+        degraded_reason: 'none',
+        items_dispatched: 2,
+        items_failed: 0,
+        items_in_flight: 4,
+        lookup_failed: false,
+        run_outcome: 'produced',
+        source_read_failed: false,
+      },
+    });
+  });
+
+  it('reports a Rule Tuning review whose approved query change was applied', () => {
+    expect(
+      reportOnDevModeClient(
+        reportNamed(
+          reportStepsOf(ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW_ID),
+          'report_review_completed'
+        ),
+        {
+          steps: {
+            create_investigation: { output: { conversation_id: INVESTIGATION_ID } },
+            diagnose_rule: {
+              output: { structured_output: { change_type: 'query', confidence: 'high' } },
+            },
+            fetch_rule: { output: { enabled: true } },
+            propose_query: { output: { decision: 'approved', status: 'succeeded' } },
+            record_preview_outcome: {
+              output: {
+                current_alert_count: 12,
+                current_succeeded: true,
+                proposed_alert_count: 3,
+                proposed_succeeded: true,
+              },
+            },
+            record_proposal_action_decision: {
+              output: { applied: true, approved: true, dismissed: false },
+            },
+          },
+        },
+        SYSTEM_SECURITY_WORKER_DETECTION_RULE_TUNING_ID
+      )
+    ).toEqual({
+      eventType: 'alertzero_rule_tuning_review_completed',
+      payload: {
+        ...ENVELOPE_FIELDS,
+        watch_tag: 'watch-detection',
+        worker_id: 'system-security-detection-rule-tuning',
+        applied: true,
+        backtest_ran: true,
+        backtest_reduced_alerts: true,
+        change_type: 'query',
+        confidence: 'high',
+        decision: 'approved',
+        entry_gate: 'skipped',
+        investigation_id: INVESTIGATION_ID,
+        rule_unavailable: false,
+      },
     });
   });
 });
