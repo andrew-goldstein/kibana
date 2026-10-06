@@ -109,6 +109,8 @@ export {
   getProposalStepCommonDefinition,
   getProposalStepInputSchema,
   getProposalStepOutputSchema,
+  proposalDecisionSourceSchema,
+  proposalSettledBySchema,
   SettleIncompleteProposalStepId,
   settleIncompleteProposalStepCommonDefinition,
   settleIncompleteProposalStepInputSchema,
@@ -119,3 +121,4 @@ export {
   updateProposalStepInputSchema,
   updateProposalStepOutputSchema,
 } from './src/step_types';
+export type { ProposalDecisionSource, ProposalSettledBy } from './src/step_types';

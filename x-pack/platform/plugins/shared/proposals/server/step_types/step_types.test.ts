@@ -7,7 +7,10 @@
 
 import type { StepHandlerContext } from '@kbn/workflows-extensions/server';
 import { z } from '@kbn/zod/v4';
-import { createProposalStepInputSchema } from '@kbn/proposals-common';
+import {
+  createProposalStepInputSchema,
+  settleIncompleteProposalStepInputSchema,
+} from '@kbn/proposals-common';
 import { updateProposalStepInputSchema } from '@kbn/proposals-common';
 import type { ProposalsService } from '../services/proposals_service';
 import type { ProposalPrivilegesChecker } from '../services/check_proposal_privileges';
@@ -117,6 +120,32 @@ describe('proposals.createProposal input schema', () => {
     ).toBe(false);
   });
 
+  it.each(['', null])('should treat %p as absent for autoApprove', (blank) => {
+    const parsed = createProposalStepInputSchema.parse({
+      conversationId: 'conv-1',
+      comment: 'Tune the noisy rule',
+      origin: 'alertzero',
+      autoApprove: blank,
+    });
+
+    expect(parsed).toEqual({
+      conversationId: 'conv-1',
+      comment: 'Tune the noisy rule',
+      origin: 'alertzero',
+    });
+  });
+
+  it('should pass autoApprove through as a boolean', () => {
+    const parsed = createProposalStepInputSchema.parse({
+      conversationId: 'conv-1',
+      comment: 'Tune the noisy rule',
+      origin: 'alertzero',
+      autoApprove: true,
+    });
+
+    expect(parsed.autoApprove).toBe(true);
+  });
+
   it('should still reject a value the optional input does not allow', () => {
     expect(
       createProposalStepInputSchema.safeParse({
@@ -181,6 +210,7 @@ describe('proposals.updateProposal input schema', () => {
       dismissReason: blank,
       rationale: blank,
       executionError: blank,
+      decisionSource: blank,
     });
 
     // Every field is optional, so a call that only annotates is valid.
@@ -216,6 +246,51 @@ describe('proposals.updateProposal input schema', () => {
     expect(
       updateProposalStepInputSchema.safeParse({ proposalId: 'proposal-1', decision: 'maybe' })
         .success
+    ).toBe(false);
+  });
+
+  it.each(['human', 'autonomy'])('should accept %s as a decision source', (decisionSource) => {
+    expect(
+      updateProposalStepInputSchema.parse({ proposalId: 'proposal-1', decisionSource })
+        .decisionSource
+    ).toBe(decisionSource);
+  });
+
+  it('should refuse a decision source outside the vocabulary', () => {
+    expect(
+      updateProposalStepInputSchema.safeParse({ proposalId: 'proposal-1', decisionSource: 'agent' })
+        .success
+    ).toBe(false);
+  });
+});
+
+describe('proposals.settleIncompleteProposal input schema', () => {
+  it.each(['', null])('should treat %p as absent for settledBy', (blank) => {
+    // A gate parked under an earlier definition never passes it.
+    const parsed = settleIncompleteProposalStepInputSchema.parse({
+      proposalId: 'proposal-1',
+      settledBy: blank,
+    });
+
+    expect(parsed).toEqual({ proposalId: 'proposal-1' });
+  });
+
+  it.each(['deadline', 'iteration_limit', 'workflow_failure'])(
+    'should accept %s as the settle path',
+    (settledBy) => {
+      expect(
+        settleIncompleteProposalStepInputSchema.parse({ proposalId: 'proposal-1', settledBy })
+          .settledBy
+      ).toBe(settledBy);
+    }
+  );
+
+  it('should refuse a settle path outside the vocabulary', () => {
+    expect(
+      settleIncompleteProposalStepInputSchema.safeParse({
+        proposalId: 'proposal-1',
+        settledBy: 'human',
+      }).success
     ).toBe(false);
   });
 });
@@ -257,7 +332,12 @@ describe('proposals.createProposal step', () => {
 
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ workflowExecutionId: EXECUTION_ID }),
-      { spaceId: SPACE_ID, user: resolvedUser, request: FAKE_REQUEST }
+      {
+        autoApproveRequested: undefined,
+        spaceId: SPACE_ID,
+        user: resolvedUser,
+        request: FAKE_REQUEST,
+      }
     );
     // Identity comes from the execution's credentials, not from `executedBy`.
     expect(resolveUser).toHaveBeenCalledWith(FAKE_REQUEST);
@@ -422,6 +502,25 @@ describe('proposals.createProposal step', () => {
     );
   });
 
+  it('should pass autoApprove through for reporting', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 'p', status: 'pending' });
+    const { definition } = createDefinition(create);
+
+    await definition.handler(
+      createContext({
+        conversationId: 'conv-1',
+        origin: 'alertzero',
+        comment: 'Tune',
+        autoApprove: true,
+      })
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ autoApproveRequested: true })
+    );
+  });
+
   it('should assert manage before writing anything', async () => {
     const create = jest.fn();
     const privileges = allowAll();
@@ -549,6 +648,24 @@ describe('proposals.updateProposal step', () => {
     );
 
     expect(result.output?.decision).toBe('dismissed');
+  });
+
+  it('should pass the decision source through with the decision', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'no_action' });
+
+    await updateDefinition(update).handler(
+      createContext({
+        proposalId: 'proposal-1',
+        decision: 'dismissed',
+        decisionSource: 'human',
+        status: 'no_action',
+      })
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'dismissed', decisionSource: 'human' }),
+      SPACE_ID
+    );
   });
 
   it('should pass the failure detail through', async () => {
@@ -893,6 +1010,23 @@ describe('proposals.settleIncompleteProposal step', () => {
 
     expect(service.update).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed' }),
+      SPACE_ID
+    );
+  });
+
+  it('should pass the settle path through', async () => {
+    const service = {
+      getLatestRevision: jest.fn().mockResolvedValue({ proposalId: 'proposal-1', revision: 1 }),
+      get: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'pending' }),
+      update: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'expired' }),
+    };
+
+    await settleDefinition(service).handler(
+      createContext({ proposalId: 'proposal-1', settledBy: 'iteration_limit', status: 'expired' })
+    );
+
+    expect(service.update).toHaveBeenCalledWith(
+      expect.objectContaining({ settledBy: 'iteration_limit' }),
       SPACE_ID
     );
   });

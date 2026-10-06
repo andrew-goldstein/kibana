@@ -36,7 +36,9 @@ import type {
   ProposalChartsSummaryQuery,
   ProposalChartsSummaryResponse,
   ProposalDecision,
+  ProposalDecisionSource,
   ProposalFilters,
+  ProposalSettledBy,
   ProposalStatus,
   ProposalUser,
   ProposalWithMetadata,
@@ -90,6 +92,10 @@ export interface UpdateProposalParams {
   dismissReason?: DismissReason;
   rationale?: string;
   executionError?: string;
+  /** Who made the decision, for reporting only. Not stored: nothing reads it back. */
+  decisionSource?: ProposalDecisionSource;
+  /** The settle path, for reporting only. */
+  settledBy?: ProposalSettledBy;
 }
 
 export interface ProposalsServiceDeps {
@@ -120,7 +126,20 @@ export class ProposalsService {
    */
   async create(
     params: CreateProposalRequest,
-    { spaceId, user, request }: { spaceId: string; user?: ProposalUser; request: KibanaRequest }
+    {
+      spaceId,
+      user,
+      request,
+    }: {
+      /**
+       * Whether the caller asked the gate to auto-approve, which the caller
+       * asserts. For reporting only, and not stored.
+       */
+      autoApproveRequested?: boolean;
+      spaceId: string;
+      user?: ProposalUser;
+      request: KibanaRequest;
+    }
   ): Promise<ProposalWithMetadata> {
     const id = uuidv4();
     // Workflow callers reach us through Liquid templates, which render an

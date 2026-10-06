@@ -54,6 +54,7 @@ export const getUpdateProposalStepDefinition = ({
             dismissReason: input.dismissReason,
             rationale: input.rationale,
             executionError: input.executionError,
+            decisionSource: input.decisionSource,
           },
           spaceId
         );

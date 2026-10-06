@@ -51,6 +51,9 @@ export const createProposalStepInputSchema = z.object({
   expiresIn: optionalStepInput(z.string()).describe(
     'How long the analyst has to decide, as a duration like `24h`. Resolved to an absolute deadline at creation.'
   ),
+  autoApprove: optionalStepInput(z.boolean()).describe(
+    'Whether the caller asked for auto-approval. For reporting only; the gating workflow decides whether to gate.'
+  ),
 });
 
 export const createProposalStepOutputSchema = z.object({

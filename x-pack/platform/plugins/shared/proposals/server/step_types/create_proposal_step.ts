@@ -62,6 +62,7 @@ export const getCreateProposalStepDefinition = ({
             workflowExecutionId,
           },
           {
+            autoApproveRequested: input.autoApprove,
             spaceId,
             request,
             // `execution.executedBy` is only ever a username, so it is the last
