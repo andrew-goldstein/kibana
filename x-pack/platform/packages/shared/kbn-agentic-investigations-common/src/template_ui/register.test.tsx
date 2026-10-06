@@ -362,6 +362,20 @@ describe('registerAgenticInvestigationTemplateUI', () => {
     });
   });
 
+  it('calls onOpenChat before opening the chat from the footer slot', async () => {
+    const { contract, openFullscreenConversation } = createFakeService();
+    const calls: string[] = [];
+    openFullscreenConversation.mockImplementation(() => calls.push('open'));
+    register(contract, { onOpenChat: () => calls.push('onOpenChat') });
+    const Footer = getSlot(contract, 'investigation', 'footer');
+
+    renderWithKibanaRenderContext(<Footer conversation={conversation} isOpenedFromChat={false} />);
+
+    fireEvent.click(await screen.findByTestId('investigationFlyoutOpenChat'));
+
+    expect(calls).toEqual(['onOpenChat', 'open']);
+  });
+
   it('hides the footer slot Open in chat when the flyout was opened from within chat', async () => {
     const { contract } = createFakeService();
     // The escalation button loads on the same lazy chunk as Open in chat; wiring one in gives a

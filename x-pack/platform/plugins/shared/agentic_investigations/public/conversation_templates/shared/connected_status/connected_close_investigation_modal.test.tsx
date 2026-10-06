@@ -18,7 +18,11 @@ const mockAddSuccess = jest.fn();
 
 jest.mock('@kbn/kibana-react-plugin/public', () => ({
   useKibana: () => ({
-    services: { notifications: { toasts: { addSuccess: mockAddSuccess, addWarning: jest.fn() } } },
+    services: {
+      notifications: {
+        toasts: { addDanger: jest.fn(), addSuccess: mockAddSuccess, addWarning: jest.fn() },
+      },
+    },
   }),
 }));
 
@@ -101,5 +105,47 @@ describe('ConnectedCloseInvestigationModal', () => {
     await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
     expect(mockSettleDeclinedProposals).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectedCloseInvestigationModal onClosed', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('is called once the close lands, before the modal closes', async () => {
+    mockMutateAsync.mockResolvedValue({ failed_proposal_ids: [], dismissed_proposal_ids: [] });
+    const calls: string[] = [];
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ConnectedCloseInvestigationModal
+          investigation={investigation}
+          onClose={() => calls.push('close')}
+          onClosed={() => calls.push('closed')}
+        />
+      </QueryClientProvider>
+    );
+    fireEvent.click(screen.getByText('confirm close'));
+
+    await waitFor(() => expect(calls).toEqual(['closed', 'close']));
+  });
+
+  it('is not called when the close fails', async () => {
+    mockMutateAsync.mockRejectedValue(new Error('internal error'));
+    const onClose = jest.fn();
+    const onClosed = jest.fn();
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ConnectedCloseInvestigationModal
+          investigation={investigation}
+          onClose={onClose}
+          onClosed={onClosed}
+        />
+      </QueryClientProvider>
+    );
+    fireEvent.click(screen.getByText('confirm close'));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onClosed).not.toHaveBeenCalled();
   });
 });

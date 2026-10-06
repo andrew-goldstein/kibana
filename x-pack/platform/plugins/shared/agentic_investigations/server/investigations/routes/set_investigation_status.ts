@@ -12,6 +12,8 @@ import { setInvestigationStatusRequestSchema } from '../../../common/investigati
 import { assignConversationRequestParamsSchema } from '../../../common/assignments/assignment';
 import { INVESTIGATIONS_API_PRIVILEGE_MANAGE } from '../constants';
 import type { InvestigationRouteDependencies } from '../types';
+import { getWorkflowRequestExecutionId } from '../helpers/get_workflow_request_execution_id';
+import type { SetInvestigationStatusOptions } from '../services/investigation_status_service';
 import { handleInvestigationRouteError } from './handle_route_error';
 
 export const registerSetInvestigationStatusRoute = ({
@@ -38,10 +40,20 @@ export const registerSetInvestigationStatusRoute = ({
       },
       async (_context, request, response) => {
         try {
+          const workflowOrigin = getWorkflowRequestExecutionId(request);
+          // Telemetry labels only: the headers behind them can be set by any caller.
+          const options: SetInvestigationStatusOptions = workflowOrigin
+            ? {
+                closedBy: 'workflow_request',
+                reopenedBy: 'workflow_request',
+                workflowExecutionId: workflowOrigin.workflowExecutionId,
+              }
+            : {};
           const result = await getInvestigationStatusService!().setStatus(
             request,
             request.params.id,
-            request.body
+            request.body,
+            options
           );
           return response.ok({ body: result });
         } catch (error) {

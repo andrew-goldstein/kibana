@@ -123,6 +123,11 @@ export interface RegisterAgenticInvestigationTemplateUIOptions {
    * caller only reports a failure.
    */
   onCopyLink: (url: string) => boolean;
+  /**
+   * Called when the footer's "Open chat" button is clicked, before the chat opens. Lets the
+   * caller count it, for example in telemetry.
+   */
+  onOpenChat?: () => void;
 }
 
 /**
@@ -150,6 +155,7 @@ export const registerAgenticInvestigationTemplateUI = ({
   renderTitle,
   briefCard,
   onCopyLink,
+  onOpenChat,
 }: RegisterAgenticInvestigationTemplateUIOptions): void => {
   const [overviewTabId] = getInvestigationTabIds(templateId);
 
@@ -223,14 +229,15 @@ export const registerAgenticInvestigationTemplateUI = ({
                 // Full screen rather than the sidebar: the chat is the investigation's own record,
                 // so it gets the whole page instead of a panel beside the flyout that opened it.
                 // The conversation list is collapsed so the investigation's chat gets the width.
-                onOpenChat={() =>
+                onOpenChat={() => {
+                  onOpenChat?.();
                   openFullscreenConversation({
                     conversationId: conversation.id,
                     agentId: conversation.agent_id,
                     openDetails: true,
                     collapseSidebar: true,
-                  })
-                }
+                  });
+                }}
                 onOpenEscalation={renderEscalationModal}
                 wrapEscalationButton={wrapEscalationButton}
                 onCloseInvestigation={renderCloseInvestigationModal}
