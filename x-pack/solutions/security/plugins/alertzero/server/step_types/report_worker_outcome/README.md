@@ -39,7 +39,7 @@ Worker YAML in `@kbn/workflows/managed` (`definitions/alertzero/`) calls the ste
 | `attack_discovery_review.yaml` | `report_handoff_resolved` | `ad_worker_handoff_resolved` | Right after `record_decision`, only when `resolve_escalation.output.escalate` is true |
 | `attack_discovery_review.yaml` | `report_investigation_closed_declined` | `worker_investigation_closed` | Right after `close_investigation_declined`, only when the escalation was declined and that close left no error and changed `status` |
 
-Every other Worker that closes its own Investigation reports the close the same way: right after each `ai.conversation.metadata.patch` step that writes `status: closed`, in the same step list, and only when that close left no error and its `changed_fields` contains `status`. The close reasons each Worker reports are listed in the [telemetry README](../../telemetry/README.md#alertzero_worker_investigation_closed). `worker_close_reports.test.ts` in `definitions/alertzero/` fails when an AlertZero close patch has no report after it (the Workers not wired yet are listed there).
+Every other Worker that closes its own Investigation reports the close the same way: right after each `ai.conversation.metadata.patch` step that writes `status: closed`, in the same step list, and only when that close left no error and its `changed_fields` contains `status`. The close reasons each Worker reports are listed in the [telemetry README](../../telemetry/README.md#alertzero_worker_investigation_closed). `worker_close_reports.test.ts` in `definitions/alertzero/` fails when an AlertZero close patch has no report after it.
 
 | Workflow | Step | `event` | Placement |
 |---|---|---|---|
@@ -48,6 +48,10 @@ Every other Worker that closes its own Investigation reports the close the same 
 | `floor_alert_triage.yaml` (Alert Triage) | `report_worker_run_completed` | `worker_run_completed` | The last step |
 | `floor_alert_triage_review.yaml` (Alert Triage) | `report_investigation_closed_after_approval`, `report_investigation_closed_after_dismissal`, `report_investigation_closed_after_expiry` | `worker_investigation_closed` | Right after each close |
 | `floor_alert_triage_review.yaml` (Alert Triage) | `report_closure_resolved` | `alert_triage_closure_resolved` | The last step, after every outcome branch |
+| `hunt_continuous_threat_hunt.yaml` (Continuous Threat Hunt) | `report_worker_run_completed` | `worker_run_completed` | The last step, after `report_fan_out`. Each branch ends in `record_report_outcome` (a `data.set`), so the report counts outcomes across branches |
+| `hunt_package_report.yaml` (Continuous Threat Hunt) | `report_investigation_closed_benign` | `worker_investigation_closed` | Right after `dismiss_investigation_if_clean` |
+| `hunt_package_report.yaml` (Continuous Threat Hunt) | `report_report_completed` | `hunt_report_completed` | Right before `emit_result` |
+| `hunt_proposal_gate.yaml` (Continuous Threat Hunt) | `report_investigation_closed_settled` | `worker_investigation_closed` | Right after `close_if_settled` |
 | `rule_tuning_worker.yaml` (Rule Tuning sweep) | `report_worker_run_completed` | `worker_run_completed` | Right before `emit_result` |
 | `rule_tuning_review.yaml` (Rule Tuning) | `report_investigation_closed_declined`, `report_investigation_closed_applied`, `report_investigation_closed_dismissed` | `worker_investigation_closed` | Right after each close |
 | `rule_tuning_review.yaml` (Rule Tuning) | `report_review_completed_declined` | `rule_tuning_review_completed` | Right before `stop_declined`, in the entry gate's `dismissed` arm |

@@ -291,6 +291,10 @@ export class AlertZeroPlugin
       getAgentBuilderConversations: () => this.requireAgentBuilderConversations(),
       getHuntServices: () => this.requireHuntServices(),
       getScanFailuresService: () => this.requireScanFailuresService(),
+      reportTelemetryEvent: createAlertZeroTelemetryReporter({
+        analytics: coreSetup.analytics,
+        logger: this.logger.get('telemetry'),
+      }),
     });
 
     return { isEnabled: true, setServerlessTierAvailable: this.setServerlessTierAvailable };

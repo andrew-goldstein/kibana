@@ -278,6 +278,12 @@ const FIXTURES: {
     watch_tag: 'watch-forensics',
     worker_id: 'system-security-forensics-endpoint-analysis',
   },
+  [ALERTZERO_TELEMETRY_EVENTS.WorkerInvestigationReopened]: {
+    investigation_id: '3f1c2b4a-5d6e-5f70-8a9b-0c1d2e3f4a5b',
+    is_default_space: false,
+    watch_tag: 'watch-hunt',
+    worker_id: 'system-security-hunt-continuous-threat-hunt',
+  },
   [ALERTZERO_TELEMETRY_EVENTS.WorkerSettingsChanged]: {
     bulk_write: true,
     is_default_space: false,

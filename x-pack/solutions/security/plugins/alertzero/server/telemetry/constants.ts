@@ -23,6 +23,7 @@ export const ALERTZERO_TELEMETRY_EVENTS = {
   RuleCoverageReviewCompleted: `${ALERTZERO_TELEMETRY_PREFIX}_rule_coverage_review_completed`,
   HuntReportCompleted: `${ALERTZERO_TELEMETRY_PREFIX}_hunt_report_completed`,
   EndpointAnalysisCompleted: `${ALERTZERO_TELEMETRY_PREFIX}_endpoint_analysis_completed`,
+  WorkerInvestigationReopened: `${ALERTZERO_TELEMETRY_PREFIX}_worker_investigation_reopened`,
   WorkerSettingsChanged: `${ALERTZERO_TELEMETRY_PREFIX}_worker_settings_changed`,
   WorkerActivated: `${ALERTZERO_TELEMETRY_PREFIX}_worker_activated`,
   AutonomySnapshot: `${ALERTZERO_TELEMETRY_PREFIX}_autonomy_snapshot`,

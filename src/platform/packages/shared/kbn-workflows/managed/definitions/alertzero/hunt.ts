@@ -24,12 +24,16 @@ export const ALERTZERO_HUNT_WORKFLOW_ID = 'system-security-hunt-execute';
  * hunt-results message, and writes the per-space
  * `evidence[]` element. Owns no trigger of its own, so enablement is
  * `enforced` (a disabled child would silently break its parent).
+ *
+ * Version 2 adds the `tier2_invoked` output, which the Worker passes to packaging for its
+ * outcome telemetry. The bump makes the upgrade visible in `managedVersion`; the content hash
+ * alone would also apply it.
  */
 export const ALERTZERO_HUNT_WORKFLOW = {
   billable: false,
   id: ALERTZERO_HUNT_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 1,
+  version: 2,
   yaml: HUNT_YAML,
 } as const satisfies ManagedWorkflowDefinition;

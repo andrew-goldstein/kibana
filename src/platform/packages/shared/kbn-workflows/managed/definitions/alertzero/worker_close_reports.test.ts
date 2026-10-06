@@ -31,8 +31,7 @@ import { createWorkflowLiquidEngine } from '../../../common/utils';
 /**
  * Every Worker that closes its own Investigation reports the close through
  * `alertzero.reportWorkerOutcome`, right after the `ai.conversation.metadata.patch` step that
- * writes `status: closed`, and only when that patch changed `status`. The Hunt Worker's closes
- * are wired in its own change, so they are listed in `CLOSES_REPORTED_LATER` until then.
+ * writes `status: closed`, and only when that patch changed `status`.
  */
 
 interface YamlStep {
@@ -207,6 +206,18 @@ const EXPECTED_CLOSE_REPORTS: Array<{
     reportStep: 'report_investigation_closed_dismissed',
   },
   {
+    closeReason: 'benign',
+    closeStep: 'dismiss_investigation_if_clean',
+    definition: ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW,
+    reportStep: 'report_investigation_closed_benign',
+  },
+  {
+    closeReason: 'resolved',
+    closeStep: 'close_if_settled',
+    definition: ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW,
+    reportStep: 'report_investigation_closed_settled',
+  },
+  {
     closeReason: '{{ steps.close_investigation_resolved.output.metadata.close_reason }}',
     closeStep: 'close_investigation_resolved',
     definition: ALERTZERO_COVERAGE_REVIEW_WORKFLOW,
@@ -226,15 +237,6 @@ const EXPECTED_CLOSE_REPORTS: Array<{
   },
 ];
 
-/** Closes whose Worker reports them in its own, later change. */
-const CLOSES_REPORTED_LATER: Array<{ closeStep: string; definition: ManagedWorkflowDefinition }> = [
-  {
-    closeStep: 'dismiss_investigation_if_clean',
-    definition: ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW,
-  },
-  { closeStep: 'close_if_settled', definition: ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW },
-];
-
 const closeLabel = ({
   closeStep,
   definition,
@@ -248,12 +250,10 @@ const findClose = (definition: ManagedWorkflowDefinition, closeStep: string) =>
 
 describe('Worker Investigation close reports', () => {
   it('follows every AlertZero close patch with a close report', () => {
-    const later = CLOSES_REPORTED_LATER.map(closeLabel);
     const unreported = alertZeroDefinitions.flatMap((definition) =>
       closesWithNextStep(stepsOf(definition))
         .filter(({ next }) => next?.type !== REPORT_STEP_TYPE || next.with?.event !== CLOSE_EVENT)
         .map(({ close }) => `${definition.id}: ${close.name}`)
-        .filter((label) => !later.includes(label))
     );
 
     expect(unreported).toEqual([]);
@@ -264,9 +264,7 @@ describe('Worker Investigation close reports', () => {
       closesWithNextStep(stepsOf(definition)).map(({ close }) => `${definition.id}: ${close.name}`)
     );
 
-    expect(found.sort()).toEqual(
-      [...EXPECTED_CLOSE_REPORTS, ...CLOSES_REPORTED_LATER].map(closeLabel).sort()
-    );
+    expect(found.sort()).toEqual(EXPECTED_CLOSE_REPORTS.map(closeLabel).sort());
   });
 
   describe.each(EXPECTED_CLOSE_REPORTS)(
@@ -343,6 +341,12 @@ describe('Worker Investigation close reports', () => {
       ],
       [ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW.id, ALERTZERO_RULE_TUNING_REVIEW_WORKFLOW.version, 29],
       [ALERTZERO_COVERAGE_REVIEW_WORKFLOW.id, ALERTZERO_COVERAGE_REVIEW_WORKFLOW.version, 7],
+      [
+        ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW.id,
+        ALERTZERO_HUNT_PACKAGE_REPORT_WORKFLOW.version,
+        2,
+      ],
+      [ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW.id, ALERTZERO_HUNT_PROPOSAL_GATE_WORKFLOW.version, 2],
     ])('bumps %s to the version that carries its close reports', (_id, version, expected) => {
       expect(version).toBe(expected);
     });

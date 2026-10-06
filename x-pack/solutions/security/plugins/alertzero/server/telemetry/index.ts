@@ -47,6 +47,7 @@ export type {
   AlertZeroTelemetryEventPayloads,
   AlertZeroWorkerActivatedPayload,
   AlertZeroWorkerInvestigationClosedPayload,
+  AlertZeroWorkerInvestigationReopenedPayload,
   AlertZeroWorkerRunCompletedPayload,
   AlertZeroWorkerSettingsChangedPayload,
 } from './event_types';
@@ -74,6 +75,8 @@ export type { BuildWorkerActivatedPayloadParams } from './worker_settings/build_
 export { buildWorkerSettingsChangedPayloads } from './worker_settings/build_worker_settings_changed_payloads';
 export type { BuildWorkerSettingsChangedPayloadsParams } from './worker_settings/build_worker_settings_changed_payloads';
 export { resolveWorkerSetting } from './worker_settings/resolve_worker_setting';
+export { buildWorkerInvestigationReopenedPayload } from './worker_investigation/build_worker_investigation_reopened_payload';
+export type { BuildWorkerInvestigationReopenedPayloadParams } from './worker_investigation/build_worker_investigation_reopened_payload';
 export {
   ATTACK_DISCOVERY_WORKFLOWS_FEATURE_FLAG,
   ATTACK_DISCOVERY_WORKFLOWS_SETTING_ID,

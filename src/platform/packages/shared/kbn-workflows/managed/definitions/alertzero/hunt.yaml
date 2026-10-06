@@ -61,6 +61,10 @@ outputs:
     type: boolean
   - name: sse_count
     type: number
+  # Whether the coordinator ran Tier 2 (`tier1_and_tier2`), for the packaging
+  # child's outcome telemetry. Absent when the coordinator call failed.
+  - name: tier2_invoked
+    type: boolean
 steps:
   # The coordinator's request body is snake_case (report_id, run_id, trigger)
   # and does not know about Investigations; this step is the camelCase ->
@@ -304,6 +308,7 @@ steps:
       # native number; a `{% if %}` text block would render it as a string and
       # fail the `sse_count: number` output validation.
       result_sse_count: "${{ steps.run_hunt_coordinator.output.sse | size }}"
+      result_tier2_invoked: "${{ steps.run_hunt_coordinator.output.status == 'tier1_and_tier2' }}"
 
   - name: emit_result
     type: workflow.output
@@ -315,3 +320,4 @@ steps:
       headline: "{{ variables.result_headline }}"
       hit: "${{ variables.result_hit }}"
       sse_count: "${{ variables.result_sse_count }}"
+      tier2_invoked: "${{ variables.result_tier2_invoked }}"

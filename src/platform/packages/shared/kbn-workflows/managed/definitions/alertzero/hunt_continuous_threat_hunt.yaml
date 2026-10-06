@@ -168,6 +168,9 @@ steps:
             # missing hunt output (the step errored outright) has nothing to compare, so this
             # defaults to 0 -- same as a hunt that genuinely confirmed nothing.
             expectedSseCount: "${{ steps.hunt.output.sse_count | default: 0 }}"
+            # Whether the hunt ran Tier 2, for packaging's outcome telemetry only. A
+            # missing hunt output is `false`.
+            tier2Invoked: "${{ steps.hunt.output.tier2_invoked == true }}"
 
       # Outcome derivation: find_or_create failing means no Investigation ever
       # existed, so no conclusion is possible (handled by
@@ -239,3 +242,82 @@ steps:
               - **What this means:** no findings or hunt evidence were recorded, so the report stays eligible for the next scheduled sweep or a manual rerun.
               {% endif -%}
               - **Run:** `{{ execution.id }}` ([full per-stage detail]({{ execution.url }}))
+
+      # The branch's output is its last step's output, so the report's outcome is
+      # recorded last for `report_worker_run_completed` to count across branches.
+      # Atomic, like every step in the branch body.
+      - name: record_report_outcome
+        type: data.set
+        with:
+          outcome: "{{ steps.resolve_run_outcome.output.outcome }}"
+
+  # Product telemetry for the sweep, in the vocabulary every Worker shares
+  # (`alertzero_worker_run_completed`). Top level and after the fan-out, so it runs
+  # whether or not the fan-out ran. Like every report step it never fails the run:
+  # `on-failure: continue` and a short timeout. The items are the selected threat
+  # reports, counted from each branch's `record_report_outcome`: a report whose hunt
+  # failed, or whose branch itself failed, is a failed item. A blocked index scope
+  # is `blocked_precondition`, a failed candidate selection
+  # `failed_source_unavailable`, an empty selection `empty_nothing_pending`. Per-report
+  # detail (Tier 2, findings, coverage written) is in each packaging run's
+  # `alertzero_hunt_report_completed`, which sums by `run_id`.
+  - name: report_worker_run_completed
+    type: alertzero.reportWorkerOutcome
+    timeout: 30s
+    on-failure:
+      continue: true
+    with:
+      event: worker_run_completed
+      candidates_found: "${{ steps.select_candidate_reports.output.ids | size }}"
+      items_dispatched: "${{ steps.report_fan_out.output.results | size }}"
+      items_failed: |-
+        {%- assign failed_hunts = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'failed' | size -%}
+        {{ steps.report_fan_out.output.failed | default: 0 | plus: failed_hunts }}
+      source_read_failed: "${{ steps.select_candidate_reports.error != null }}"
+      lookup_failed: "${{ steps.check_index_scope.error != null }}"
+      degraded: |-
+        {%- assign reports = steps.report_fan_out.output.results | size -%}
+        {%- assign completed = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'completed' | size -%}
+        {%- if steps.resolve_index_scope_gate.output.index_scope_blocked == true -%}
+        true
+        {%- elsif steps.select_candidate_reports.output.ids == nil -%}
+        true
+        {%- elsif completed < reports -%}
+        true
+        {%- else -%}
+        false
+        {%- endif -%}
+      degraded_reason: |-
+        {%- assign reports = steps.report_fan_out.output.results | size -%}
+        {%- assign completed = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'completed' | size -%}
+        {%- assign finished = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'partial' | size | plus: completed -%}
+        {%- if steps.check_index_scope.output.status == 'blocked' -%}
+        missing_data
+        {%- elsif steps.resolve_index_scope_gate.output.index_scope_blocked == true -%}
+        dependency_unavailable
+        {%- elsif steps.select_candidate_reports.output.ids == nil -%}
+        dependency_unavailable
+        {%- elsif finished < reports -%}
+        dependency_unavailable
+        {%- elsif completed < reports -%}
+        other
+        {%- else -%}
+        none
+        {%- endif -%}
+      run_outcome: |-
+        {%- assign reports = steps.report_fan_out.output.results | size -%}
+        {%- assign completed = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'completed' | size -%}
+        {%- assign partial = steps.report_fan_out.output.results | map: 'output' | where: 'outcome', 'partial' | size -%}
+        {%- if steps.resolve_index_scope_gate.output.index_scope_blocked == true -%}
+        blocked_precondition
+        {%- elsif steps.select_candidate_reports.output.ids == nil -%}
+        failed_source_unavailable
+        {%- elsif reports == 0 -%}
+        empty_nothing_pending
+        {%- elsif completed == reports -%}
+        produced
+        {%- elsif completed == 0 and partial == 0 -%}
+        failed_all_items
+        {%- else -%}
+        degraded_partial
+        {%- endif -%}

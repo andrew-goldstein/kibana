@@ -192,6 +192,13 @@ export interface AlertZeroEndpointAnalysisCompletedPayload extends AlertZeroEnve
   timeline_found: boolean;
 }
 
+export interface AlertZeroWorkerInvestigationReopenedPayload {
+  investigation_id: string;
+  is_default_space: boolean;
+  watch_tag: AlertZeroWatchTag;
+  worker_id: AlertZeroWorkerId;
+}
+
 export interface AlertZeroWorkerSettingsChangedPayload {
   bulk_write: boolean;
   is_default_space: boolean;
@@ -258,6 +265,7 @@ export interface AlertZeroTelemetryEventPayloads {
   [ALERTZERO_TELEMETRY_EVENTS.RuleCoverageReviewCompleted]: AlertZeroRuleCoverageReviewCompletedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.HuntReportCompleted]: AlertZeroHuntReportCompletedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.EndpointAnalysisCompleted]: AlertZeroEndpointAnalysisCompletedPayload;
+  [ALERTZERO_TELEMETRY_EVENTS.WorkerInvestigationReopened]: AlertZeroWorkerInvestigationReopenedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.WorkerSettingsChanged]: AlertZeroWorkerSettingsChangedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.WorkerActivated]: AlertZeroWorkerActivatedPayload;
   [ALERTZERO_TELEMETRY_EVENTS.AutonomySnapshot]: AlertZeroAutonomySnapshotPayload;
@@ -706,6 +714,35 @@ export const ALERTZERO_ENDPOINT_ANALYSIS_COMPLETED_EVENT: EventTypeOpts<AlertZer
     },
   };
 
+export const ALERTZERO_WORKER_INVESTIGATION_REOPENED_EVENT: EventTypeOpts<AlertZeroWorkerInvestigationReopenedPayload> =
+  {
+    eventType: ALERTZERO_TELEMETRY_EVENTS.WorkerInvestigationReopened,
+    schema: {
+      investigation_id: {
+        type: 'keyword',
+        _meta: {
+          description: `The Investigation the Worker reopened, so a new run records into active work. ${INVESTIGATION_ID_DESCRIPTION}`,
+          optional: false,
+        },
+      },
+      is_default_space: {
+        type: 'boolean',
+        _meta: { description: IS_DEFAULT_SPACE_DESCRIPTION, optional: false },
+      },
+      watch_tag: {
+        type: 'keyword',
+        _meta: { description: WATCH_TAG_DESCRIPTION, optional: false },
+      },
+      worker_id: {
+        type: 'keyword',
+        _meta: {
+          description: `${WORKER_ID_DESCRIPTION}. Only the Hunt Worker reopens its own Investigations today`,
+          optional: false,
+        },
+      },
+    },
+  };
+
 export const ALERTZERO_WORKER_SETTINGS_CHANGED_EVENT: EventTypeOpts<AlertZeroWorkerSettingsChangedPayload> =
   {
     eventType: ALERTZERO_TELEMETRY_EVENTS.WorkerSettingsChanged,
@@ -918,6 +955,7 @@ export const ALERTZERO_TELEMETRY_EVENT_TYPES = [
   ALERTZERO_RULE_COVERAGE_REVIEW_COMPLETED_EVENT,
   ALERTZERO_HUNT_REPORT_COMPLETED_EVENT,
   ALERTZERO_ENDPOINT_ANALYSIS_COMPLETED_EVENT,
+  ALERTZERO_WORKER_INVESTIGATION_REOPENED_EVENT,
   ALERTZERO_WORKER_SETTINGS_CHANGED_EVENT,
   ALERTZERO_WORKER_ACTIVATED_EVENT,
   ALERTZERO_AUTONOMY_SNAPSHOT_EVENT,

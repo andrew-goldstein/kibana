@@ -36,6 +36,7 @@ The schema tests (`event_types.test.ts`) enforce the following:
 | `safe_report_event.ts` | `safeReportEvent` and `createAlertZeroTelemetryReporter`, the never-throw reporters; both return whether the event was reported |
 | `envelope/` | `buildAlertZeroEnvelope` and its resolvers |
 | `worker_settings/` | `buildWorkerSettingsChangedPayloads`, `buildWorkerActivatedPayload`, `bucketScheduleInterval` and `resolveWorkerSetting`, used by `WorkersService` |
+| `worker_investigation/` | `buildWorkerInvestigationReopenedPayload`, used by Hunt's find-or-create route |
 | `snapshot/` | `buildAutonomySnapshotPayload`, `buildFeatureFlagsSnapshotPayload`, `toSnapshotDay` and the `SNAPSHOT_FLAGS` allowlist, used by the snapshot task |
 | `../tasks/telemetry_snapshot/` | The daily `alertzero:telemetry_snapshot` Task Manager task that reads every space and reports the two snapshots |
 | `../../common/telemetry/constants.ts` | The Worker outcome vocabularies (the Attack Discovery Worker's, the shared run outcome, and each Worker's item events) and the Investigation close reasons any Worker reports, which the report step's input schema shares |
@@ -158,6 +159,8 @@ Every other Worker that closes its own Investigation reports it the same way, wi
 | Alert Triage | Worker, no false positive met the confidence floor (writes no reason) | `other` |
 | Alert Triage | Closure review, proposal approved | `false_positive` |
 | Alert Triage | Closure review, proposal dismissed or expired | `other` |
+| Hunt | Packaging, clean run with no confirmed hits | `benign` |
+| Hunt | Proposal gate, every Proposal of the Investigation settled | `resolved` |
 | Rule Tuning | Review, entry gate declined | `other` |
 | Rule Tuning | Review, tuning proposal approved | `resolved` |
 | Rule Tuning | Review, tuning proposal dismissed | `other` |
@@ -168,6 +171,19 @@ Every other Worker that closes its own Investigation reports it the same way, wi
 A Worker's run that never reaches its close (a gate that expires where the Worker leaves the Investigation open, a failed run) sends nothing.
 
 Only a Worker's own closes are measured, and only for a Worker whose YAML calls the step. A close by an Agent Builder agent (`set_conversation_metadata`), a custom workflow or a direct Agent Builder API call sends nothing here. A human close through Agentic Investigations reports its own `agentic_investigations_investigation_closed`.
+
+### `alertzero_worker_investigation_reopened`
+
+Emitted when the Hunt Worker reopens an Investigation a previous run closed, so a new run on the same threat report records into active work. Hunt's find-or-create route (`routes/hunt/find_or_create_investigation.ts`) reopens it in TypeScript, through Agent Builder's server-side conversation client, rather than from YAML, so the route reports it directly once the reopen has succeeded. It carries no run envelope: the route does not verify the run that called it, so it has no `run_id`. Only the Hunt Worker's find-or-create step calls the route, so the event is attributed to the Hunt Worker. Reporting never fails the find-or-create.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `worker_id` | keyword | yes | Catalog id of the Worker that reopened the Investigation (the Hunt Worker) |
+| `watch_tag` | keyword | yes | The Worker's catalog watch tag |
+| `is_default_space` | boolean | yes | Whether the Investigation is in the default space |
+| `investigation_id` | keyword | yes | The Investigation the Worker reopened. A Hunt Investigation id is a UUID v5 of the threat report id |
+
+The reopen keeps the Investigation's last `close_reason` (the template has no value meaning "not closed"), so a dashboard should read the reason only from close events.
 
 ### `alertzero_worker_run_completed`
 
@@ -194,10 +210,11 @@ What each Worker reports, and from where:
 |---|---|---|---|---|---|---|
 | Attack Discovery | The runner, after `report_run_completed` | Alerts analyzed | Generation batches attempted | Generation batches that failed | Attacks handed to reviews | Not reported |
 | Alert Triage | The Worker, as its last step | Alerts in the batch | Alerts classified | Alerts without a verdict | False-positive candidates handed to the closure review | Not reported |
+| Continuous Threat Hunt | The Worker, as its last step after the fan-out | Threat reports selected | Report branches run | Reports whose hunt failed, plus branches that failed | Not reported | The candidate selection / the index scope check |
 | Rule Tuning | The global sweep, before `emit_result` | Rules over the false-positive thresholds | Reviews requested | Not reported | Reviews earlier sweeps still have in flight | The harvest query / the in-flight review lookup |
 | Rule Coverage | The global sweep, before `emit_result` | Pending gap indicators in the lookback window | Reviews started | Not reported | Reviews in flight: earlier ones plus the ones started | The indicator search / the active-review lookup |
 
-The Alert Triage Worker is `empty_nothing_pending` for an empty batch, `failed_all_items` when the classification returned no verdict at all (degraded, `dependency_unavailable`: no model connector, or the analysis skipped the batch), `degraded_partial` when some alerts have no verdict (`missing_data`) or the per-rule limit held the closure proposal back (`capacity`), and `produced` otherwise. A run that fails (Alert Analysis turned off, a failed classification, a closure review that ended without a decision) sends nothing. The Rule Tuning sweep is `failed_source_unavailable` when its harvest fails, `produced` when it requested a review, and `empty_nothing_found` otherwise. It reads only what it knows before its reviews settle, so it does not report review decisions: each review reports its own. The Rule Coverage sweep is `failed_source_unavailable` when its search fails, `empty_nothing_pending` with no pending indicator, `empty_at_capacity` when indicators are pending but no review slot is free (degraded, `capacity`), and `produced` otherwise. A failed lookup either sweep carries on without makes the run degraded with `dependency_unavailable`.
+The Alert Triage Worker is `empty_nothing_pending` for an empty batch, `failed_all_items` when the classification returned no verdict at all (degraded, `dependency_unavailable`: no model connector, or the analysis skipped the batch), `degraded_partial` when some alerts have no verdict (`missing_data`) or the per-rule limit held the closure proposal back (`capacity`), and `produced` otherwise. A run that fails (Alert Analysis turned off, a failed classification, a closure review that ended without a decision) sends nothing. The Continuous Threat Hunt Worker is `blocked_precondition` when its index scope is blocked (degraded: `missing_data` when nothing is visible, `dependency_unavailable` when the scope check failed), `failed_source_unavailable` when the candidate selection fails, `empty_nothing_pending` for an empty selection, `produced` when every report completed, `failed_all_items` when no report completed or was partial, and `degraded_partial` otherwise (`dependency_unavailable` with a failed report, `other` with only partial ones). The Rule Tuning sweep is `failed_source_unavailable` when its harvest fails, `produced` when it requested a review, and `empty_nothing_found` otherwise. It reads only what it knows before its reviews settle, so it does not report review decisions: each review reports its own. The Rule Coverage sweep is `failed_source_unavailable` when its search fails, `empty_nothing_pending` with no pending indicator, `empty_at_capacity` when indicators are pending but no review slot is free (degraded, `capacity`), and `produced` otherwise. A failed lookup either sweep carries on without makes the run degraded with `dependency_unavailable`.
 
 The Attack Discovery runner maps its own `run_outcome` to the shared one: `produced` to `produced`, `empty_no_alerts` to `empty_nothing_pending`, `empty_no_attacks` and `empty_all_duplicates` to `empty_nothing_found`, `degraded_partial` to `degraded_partial`, and `failed_all_batches` to `failed_all_items`. A failed batch makes the run degraded, with `degraded_reason: dependency_unavailable`.
 
