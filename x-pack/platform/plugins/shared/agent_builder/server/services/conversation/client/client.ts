@@ -54,6 +54,7 @@ import type {
   SerializedMetadataValue,
   MetadataFieldValue,
 } from '@kbn/agent-builder-common';
+import type { ReportConversationStatusChangedParams } from '@kbn/agent-builder-common/telemetry/agent_builder_events';
 import type {
   ConversationWithPermissions,
   ConversationWithoutRoundsWithPermissions,
@@ -119,6 +120,7 @@ import {
   describeConversationWrite,
   diffMetadata,
 } from '../../../workflows/triggers/describe_conversation_write';
+import { describeConversationStatusChange } from '../../../telemetry/describe_conversation_status_change';
 import type { ConversationEventsServiceStart } from '../../conversation_events';
 import {
   materializeConversationEvents,
@@ -269,6 +271,7 @@ export const createClient = ({
   agentRegistry,
   conversationEvents,
   eventEmitter,
+  reportStatusChange,
 }: {
   space: string;
   logger: Logger;
@@ -277,6 +280,7 @@ export const createClient = ({
   agentRegistry: AgentRegistry;
   conversationEvents: ConversationEventsServiceStart;
   eventEmitter?: ScopedConversationEventEmitter;
+  reportStatusChange?: ConversationStatusChangeReporter;
 }): ConversationClient => {
   const storage = createStorage({ logger, esClient });
   return new ConversationClientImpl({
@@ -288,8 +292,14 @@ export const createClient = ({
     conversationEvents,
     logger,
     eventEmitter,
+    reportStatusChange,
   });
 };
+
+/** Receives a description of each write that changed a conversation's template-defined status. */
+export type ConversationStatusChangeReporter = (
+  params: ReportConversationStatusChangedParams
+) => void;
 
 /**
  * Thrown from inside an OCC `fields` callback to turn the write into a no-op: the stored document
@@ -322,6 +332,7 @@ class ConversationClientImpl implements ConversationClient {
   private readonly conversationEvents: ConversationEventsServiceStart;
   private readonly logger: Logger;
   private readonly eventEmitter?: ScopedConversationEventEmitter;
+  private readonly reportStatusChange?: ConversationStatusChangeReporter;
 
   constructor({
     storage,
@@ -332,6 +343,7 @@ class ConversationClientImpl implements ConversationClient {
     conversationEvents,
     logger,
     eventEmitter,
+    reportStatusChange,
   }: {
     storage: ConversationStorage;
     esClient: ElasticsearchClient;
@@ -341,6 +353,7 @@ class ConversationClientImpl implements ConversationClient {
     conversationEvents: ConversationEventsServiceStart;
     logger: Logger;
     eventEmitter?: ScopedConversationEventEmitter;
+    reportStatusChange?: ConversationStatusChangeReporter;
   }) {
     this.storage = storage;
     this.esClient = esClient;
@@ -350,6 +363,7 @@ class ConversationClientImpl implements ConversationClient {
     this.conversationEvents = conversationEvents;
     this.logger = logger;
     this.eventEmitter = eventEmitter;
+    this.reportStatusChange = reportStatusChange;
   }
 
   /**
@@ -410,6 +424,30 @@ class ConversationClientImpl implements ConversationClient {
     } catch (error) {
       this.logger.warn(
         `Failed to notify metadata patched for conversation "${payload.conversationId}": ${error}`
+      );
+    }
+  }
+
+  /**
+   * Reports a change to a template-defined `status` after a successful write.
+   * Best-effort: the change is described lazily inside the guard, so failures are logged and
+   * never fail the (already persisted) write.
+   */
+  private notifyStatusChanged(
+    conversationId: string,
+    describe: () => ReportConversationStatusChangedParams | undefined
+  ): void {
+    if (!this.reportStatusChange) {
+      return;
+    }
+    try {
+      const params = describe();
+      if (params) {
+        this.reportStatusChange(params);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to report status change for conversation "${conversationId}": ${error}`
       );
     }
   }
@@ -760,13 +798,19 @@ class ConversationClientImpl implements ConversationClient {
     this.notifyAttachmentEvents(id, conversation.events ?? []);
     const seqNo = indexed._seq_no;
     const primaryTerm = indexed._primary_term;
+    const readCreated = () =>
+      fromEs(
+        { _id: id, _source: attributes, _seq_no: seqNo, _primary_term: primaryTerm },
+        this.getUser()
+      );
     this.notifyConversationUpdated(id, () =>
-      describeConversationWrite({
-        after: fromEs(
-          { _id: id, _source: attributes, _seq_no: seqNo, _primary_term: primaryTerm },
-          this.getUser()
-        ),
+      describeConversationWrite({ after: readCreated(), source })
+    );
+    this.notifyStatusChanged(id, () =>
+      describeConversationStatusChange({
+        after: readCreated(),
         source,
+        resolveTemplate: getTemplate,
       })
     );
 
@@ -1481,6 +1525,14 @@ class ConversationClientImpl implements ConversationClient {
         const { source } = emission;
         this.notifyConversationUpdated(conversationId, () =>
           describeConversationWrite({ before: previous, after: document, source })
+        );
+        this.notifyStatusChanged(conversationId, () =>
+          describeConversationStatusChange({
+            before: previous,
+            after: document,
+            source,
+            resolveTemplate: getTemplate,
+          })
         );
       }
       return toConversationResponse({ conversation: document, resolveTemplate: getTemplate });

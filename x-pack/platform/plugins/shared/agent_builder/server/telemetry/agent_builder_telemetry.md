@@ -347,6 +347,31 @@ Fired when a tool call fails.
 | `error_message` | keyword | yes | Error message (truncated to 500 chars). |
 | `duration_ms` | integer | yes | Tool execution time in milliseconds. |
 
+### `agent_builder_conversation_status_changed`
+
+Fired once per **write that changes a conversation's `status`**, when the conversation's template
+defines `status` as a select field (for example, the `investigation` and `escalation` templates).
+It is sent from the conversation client after the write has landed, for every writer: an agent
+through its tools, a workflow step, an HTTP route, or another plugin through the server API. A
+failure to describe or report the change is logged and never fails the write.
+
+Templates are registered by plugins in code, so the template id and the status and close reason
+values are fixed options, never customer content. A stored value that isn't one of the template's
+options is reported as `unrecognized` (not `other`, which templates use as a real option).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `conversation_id` | keyword | yes | The conversation whose status changed. Usually a random UUID, but a caller may supply its own. |
+| `template_id` | keyword | yes | The template that defines the status field. |
+| `previous_status` | keyword | no | Status before the write. Absent for a create, or when the write applied the template. |
+| `next_status` | keyword | yes | Status after the write. |
+| `close_reason` | keyword | no | The close reason, sent only when the write closed the conversation, the template has a `close_reason` select field and it is set. A reopened conversation keeps its last close reason, so it isn't sent with a reopen. |
+| `source` | keyword | yes | `execution`, `workflow`, `http_api` or `server_api`: the same value the `ai.conversation.updated` workflow trigger reports. |
+| `change_kind` | keyword | yes | `created` when the write created the conversation, otherwise `updated`. |
+
+What it doesn't report: who made the change (only how it reached storage), other metadata
+values, and a status written with the same value it already had.
+
 ### Conversation origin
 
 `agent_builder_round_complete`, `agent_builder_round_error`, `agent_builder_tool_call_success`

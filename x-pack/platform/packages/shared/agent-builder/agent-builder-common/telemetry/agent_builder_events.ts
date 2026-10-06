@@ -7,6 +7,7 @@
 
 import type { EventTypeOpts } from '@kbn/core/public';
 import type { ConversationOriginType } from '../chat/conversation';
+import type { ConversationWriteSource } from '../triggers';
 
 /**
  * Event type constants for Agent Builder telemetry events.
@@ -41,6 +42,7 @@ export const AGENT_BUILDER_EVENT_TYPES = {
   HitlQuestionAnswered: `${TELEMETRY_PREFIX}_hitl_question_answered`,
   FeedbackSubmitted: `${TELEMETRY_PREFIX}_feedback_submitted`,
   FeedbackRetracted: `${TELEMETRY_PREFIX}_feedback_retracted`,
+  ConversationStatusChanged: `${TELEMETRY_PREFIX}_conversation_status_changed`,
 } as const;
 
 export type OptInSource =
@@ -186,6 +188,16 @@ export interface ReportRoundErrorParams {
   agent_id: string;
   round_id?: string;
   workflow_execution_id?: string;
+}
+
+export interface ReportConversationStatusChangedParams {
+  conversation_id: string;
+  template_id: string;
+  previous_status?: string;
+  next_status: string;
+  close_reason?: string;
+  source: ConversationWriteSource;
+  change_kind: 'created' | 'updated';
 }
 
 export interface ReportAgentCreatedParams {
@@ -462,6 +474,8 @@ export interface AgentBuilderTelemetryEventsMap {
   [AGENT_BUILDER_EVENT_TYPES.HitlQuestionAnswered]: ReportHitlQuestionAnsweredParams;
   [AGENT_BUILDER_EVENT_TYPES.FeedbackSubmitted]: ReportFeedbackSubmittedParams;
   [AGENT_BUILDER_EVENT_TYPES.FeedbackRetracted]: ReportFeedbackRetractedParams;
+  /** Fired when a write changes the `status` of a conversation whose template defines one. */
+  [AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged]: ReportConversationStatusChangedParams;
 }
 
 export type AgentBuilderTelemetryEvent =
@@ -482,6 +496,7 @@ export type AgentBuilderTelemetryEvent =
   | EventTypeOpts<ReportRoundCompleteParams>
   | EventTypeOpts<ReportExecutionCompleteParams>
   | EventTypeOpts<ReportRoundErrorParams>
+  | EventTypeOpts<ReportConversationStatusChangedParams>
   | EventTypeOpts<ReportToolCallSuccessParams>
   | EventTypeOpts<ReportToolCallErrorParams>
   | EventTypeOpts<ReportManageEntityListViewParams>
@@ -512,6 +527,7 @@ export type AgentBuilderEventTypes =
   | typeof AGENT_BUILDER_EVENT_TYPES.RoundComplete
   | typeof AGENT_BUILDER_EVENT_TYPES.ExecutionComplete
   | typeof AGENT_BUILDER_EVENT_TYPES.RoundError
+  | typeof AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged
   | typeof AGENT_BUILDER_EVENT_TYPES.ToolCallSuccess
   | typeof AGENT_BUILDER_EVENT_TYPES.ToolCallError
   | typeof AGENT_BUILDER_EVENT_TYPES.ManageEntityListView
@@ -1421,6 +1437,67 @@ const ROUND_ERROR_EVENT: AgentBuilderTelemetryEvent = {
   schema: ROUND_ERROR_SCHEMA,
 };
 
+const CONVERSATION_STATUS_CHANGED_EVENT: AgentBuilderTelemetryEvent = {
+  eventType: AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged,
+  schema: {
+    conversation_id: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'ID of the conversation whose status changed. Usually a random UUID, but a caller may supply its own (for example, an id derived from one of its records).',
+        optional: false,
+      },
+    },
+    template_id: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'ID of the conversation template that defines the status field (a built-in template, such as "investigation" or "escalation")',
+        optional: false,
+      },
+    },
+    previous_status: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'Status before the write: one of the options the template defines, or unrecognized. Absent when the conversation was created by this write.',
+        optional: true,
+      },
+    },
+    next_status: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'Status after the write: one of the options the template defines, or unrecognized',
+        optional: false,
+      },
+    },
+    close_reason: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'The close reason, sent only when the write closed the conversation and the template has a close_reason select field: one of its options, or unrecognized',
+        optional: true,
+      },
+    },
+    source: {
+      type: 'keyword',
+      _meta: {
+        description:
+          'How the write reached storage: execution (an agent, through its tools), workflow (a workflow step), http_api (an HTTP route) or server_api (another plugin, through the server API)',
+        optional: false,
+      },
+    },
+    change_kind: {
+      type: 'keyword',
+      _meta: {
+        description: 'created when the write created the conversation, otherwise updated',
+        optional: false,
+      },
+    },
+  },
+};
+
 const TOOL_CALL_SUCCESS_EVENT: AgentBuilderTelemetryEvent = {
   eventType: AGENT_BUILDER_EVENT_TYPES.ToolCallSuccess,
   schema: {
@@ -1923,4 +2000,5 @@ export const agentBuilderServerEbtEvents: Array<EventTypeOpts<Record<string, unk
   ROUND_ERROR_EVENT,
   TOOL_CALL_SUCCESS_EVENT,
   TOOL_CALL_ERROR_EVENT,
+  CONVERSATION_STATUS_CHANGED_EVENT,
 ];

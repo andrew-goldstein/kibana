@@ -5,6 +5,7 @@
  * 2.0.
  */
 
+import { createAnalytics } from '@elastic/ebt/client';
 import type { AnalyticsServiceSetup } from '@kbn/core/server';
 import type { MockedLogger } from '@kbn/logging-mocks';
 import { loggerMock } from '@kbn/logging-mocks';
@@ -51,6 +52,78 @@ describe('AnalyticsService', () => {
     describe.each(agentBuilderServerEbtEvents)('eventType: $eventType', (eventConfig) => {
       it('registers the event type', () => {
         expect(analytics.registerEventType).toHaveBeenCalledWith(eventConfig);
+      });
+    });
+  });
+
+  describe('reportConversationStatusChanged', () => {
+    const params = {
+      conversation_id: 'conversation-1',
+      template_id: 'investigation',
+      previous_status: 'open',
+      next_status: 'closed',
+      close_reason: 'benign',
+      source: 'execution' as const,
+      change_kind: 'updated' as const,
+    };
+
+    it('reports the event as given', () => {
+      service.reportConversationStatusChanged(params);
+
+      expect(analytics.reportEvent).toHaveBeenCalledWith(
+        AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged,
+        params
+      );
+    });
+
+    it('never throws when reporting fails', () => {
+      analytics.reportEvent.mockImplementation(() => {
+        throw new Error('analytics down');
+      });
+
+      expect(() => service.reportConversationStatusChanged(params)).not.toThrow();
+      expect(logger.debug).toHaveBeenCalled();
+    });
+
+    describe('against the registered schema, in dev mode', () => {
+      const devAnalytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+
+      beforeAll(() => {
+        new AnalyticsService(
+          devAnalytics as unknown as AnalyticsServiceSetup,
+          loggerMock.create()
+        ).registerAgentBuilderEventTypes();
+      });
+
+      afterAll(() => {
+        devAnalytics.shutdown();
+      });
+
+      it('accepts a full payload', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged, params)
+        ).not.toThrow();
+      });
+
+      it('accepts a create, with no previous status or close reason', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged, {
+            conversation_id: 'conversation-1',
+            template_id: 'investigation',
+            next_status: 'open',
+            source: 'workflow',
+            change_kind: 'created',
+          })
+        ).not.toThrow();
+      });
+
+      it('rejects a field the schema does not declare', () => {
+        expect(() =>
+          devAnalytics.reportEvent(AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged, {
+            ...params,
+            verdict: 'free text',
+          })
+        ).toThrow(/verdict/);
       });
     });
   });

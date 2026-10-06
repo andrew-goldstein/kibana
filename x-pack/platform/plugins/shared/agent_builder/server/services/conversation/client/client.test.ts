@@ -2607,6 +2607,162 @@ describe('ConversationClient', () => {
     });
   });
 
+  describe('status change telemetry', () => {
+    const template = makeTemplate('tmpl-status', {
+      status: {
+        input_type: 'SELECT',
+        description: 'Status',
+        default_value: 'open',
+        options: ['open', 'closed'],
+      },
+      close_reason: {
+        input_type: 'SELECT',
+        description: 'Close reason',
+        options: ['benign', 'other'],
+      },
+      severity: { input_type: 'SELECT', description: 'Sev', options: ['low', 'high'] },
+    });
+
+    const createClientWithReporter = (
+      reportStatusChange: jest.Mock,
+      logger = loggerMock.create()
+    ) =>
+      createClient({
+        space: testSpace,
+        logger,
+        esClient: mockRawEsClient as unknown as ElasticsearchClient,
+        agentRegistry: agentRegistry as unknown as AgentRegistry,
+        conversationEvents: mockConversationEvents,
+        user: { id: 'user-1', username: 'test-user', isAdmin: false },
+        reportStatusChange,
+      });
+
+    beforeEach(() => {
+      getTemplateMock.mockReturnValue(template);
+      mockEsClient.index.mockResolvedValue({ _seq_no: 2, _primary_term: 1 });
+    });
+
+    it('reports a close with its writer once the write has landed', async () => {
+      const reportStatusChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await createClientWithReporter(reportStatusChange).patchMetadata(
+        'conversation-1',
+        { status: 'closed', close_reason: 'benign' },
+        { source: 'execution' }
+      );
+
+      expect(reportStatusChange).toHaveBeenCalledTimes(1);
+      expect(reportStatusChange).toHaveBeenCalledWith({
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-status',
+        previous_status: 'open',
+        next_status: 'closed',
+        close_reason: 'benign',
+        source: 'execution',
+        change_kind: 'updated',
+      });
+    });
+
+    it('does not report a write that leaves the status as it was', async () => {
+      const reportStatusChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await createClientWithReporter(reportStatusChange).patchMetadata(
+        'conversation-1',
+        { severity: 'high' },
+        { source: 'workflow' }
+      );
+
+      expect(reportStatusChange).not.toHaveBeenCalled();
+    });
+
+    it('does not report when the write fails', async () => {
+      const reportStatusChange = jest.fn();
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+      mockEsClient.index.mockRejectedValue(new Error('disk full'));
+
+      await expect(
+        createClientWithReporter(reportStatusChange).patchMetadata(
+          'conversation-1',
+          { status: 'closed' },
+          { source: 'http_api' }
+        )
+      ).rejects.toThrow('disk full');
+
+      expect(reportStatusChange).not.toHaveBeenCalled();
+    });
+
+    it('a throwing reporter does not fail the write', async () => {
+      const logger = loggerMock.create();
+      const reportStatusChange = jest.fn(() => {
+        throw new Error('reporter exploded');
+      });
+      mockGetDocumentResponse(
+        createConversationDocumentWithTemplate({
+          templateId: template.id,
+          metadata: { status: 'open' },
+        })
+      );
+
+      await expect(
+        createClientWithReporter(reportStatusChange, logger).patchMetadata(
+          'conversation-1',
+          { status: 'closed' },
+          { source: 'http_api' }
+        )
+      ).resolves.toEqual({
+        conversation: expect.objectContaining({ id: 'conversation-1' }),
+        changedFields: ['status'],
+      });
+
+      expect(mockEsClient.index).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to report status change for conversation "conversation-1": Error: reporter exploded'
+      );
+    });
+
+    it('reports the status a create seeds, as created', async () => {
+      const reportStatusChange = jest.fn();
+      mockEsClient.index.mockResolvedValue({ result: 'created', _seq_no: 0, _primary_term: 1 });
+      mockGetReturnsIndexedDocument();
+
+      await createClientWithReporter(reportStatusChange).create(
+        {
+          id: 'conversation-1',
+          title: 'Conversation 1',
+          agent_id: 'agent-1',
+          rounds: [],
+          template_id: 'tmpl-status',
+        },
+        { source: 'server_api' }
+      );
+
+      expect(reportStatusChange).toHaveBeenCalledWith({
+        conversation_id: 'conversation-1',
+        template_id: 'tmpl-status',
+        next_status: 'open',
+        source: 'server_api',
+        change_kind: 'created',
+      });
+    });
+  });
+
   describe('create with template', () => {
     beforeEach(() => {
       jest.clearAllMocks();

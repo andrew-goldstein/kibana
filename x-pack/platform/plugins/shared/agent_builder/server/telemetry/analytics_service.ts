@@ -21,6 +21,7 @@ import {
 import type {
   ReportAgentCreatedParams,
   ReportAgentUpdatedParams,
+  ReportConversationStatusChangedParams,
   ReportPluginImportedParams,
   ReportExecutionCompleteParams,
   ReportRoundCompleteParams,
@@ -133,6 +134,22 @@ export class AnalyticsService {
     } catch (error) {
       // Do not fail the request if telemetry fails
       this.logger.debug('Failed to report AgentUpdated telemetry event', { error });
+    }
+  }
+
+  /**
+   * Reports a change to the `status` of a conversation whose template defines one, after the
+   * write has landed. Never throws.
+   */
+  reportConversationStatusChanged(params: ReportConversationStatusChangedParams): void {
+    try {
+      this.analytics.reportEvent<ReportConversationStatusChangedParams>(
+        AGENT_BUILDER_EVENT_TYPES.ConversationStatusChanged,
+        params
+      );
+    } catch (error) {
+      // Do not fail the write if telemetry fails
+      this.logger.debug('Failed to report ConversationStatusChanged telemetry event', { error });
     }
   }
 
