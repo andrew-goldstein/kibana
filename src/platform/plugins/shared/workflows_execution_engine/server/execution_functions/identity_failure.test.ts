@@ -7,6 +7,9 @@
  * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
+import { type AnalyticsClient, createAnalytics } from '@elastic/ebt/client';
+import Boom from '@hapi/boom';
+import { loggerMock } from '@kbn/logging-mocks';
 import { usageApiPluginMock } from '@kbn/usage-api-plugin/server/mocks';
 import { ExecutionStatus } from '@kbn/workflows';
 import type { EsWorkflowExecution, EsWorkflowStepExecution } from '@kbn/workflows';
@@ -22,6 +25,8 @@ import { resumeWorkflow } from './resume_workflow';
 import { runWorkflow } from './run_workflow';
 import { setupDependencies } from './setup_dependencies';
 import { drainConcurrencyQueueSlots } from '../concurrency/concurrency_queue_drainer';
+import { WorkflowExecutionTelemetryEventTypes } from '../lib/telemetry/events/workflows_execution/types';
+import { WorkflowExecutionTelemetryClient } from '../lib/telemetry/workflow_execution_telemetry_client';
 import { WorkflowsMeteringService } from '../metering';
 import { workflowsExecutionEngineMock } from '../mocks';
 import { isBulkUpdaterItem } from '../repositories/data_access_layer';
@@ -344,6 +349,399 @@ describe.each([
     setTestRun();
     await expect(execute(params)).rejects.toThrow('Binding changed');
     expect(params.workflowsExecutionEngine.triggerEvents.emitEvent).not.toHaveBeenCalled();
+  });
+
+  describe('run telemetry', () => {
+    let analytics: AnalyticsClient;
+
+    beforeEach(() => {
+      analytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+      WorkflowExecutionTelemetryClient.setup(analytics);
+      jest.spyOn(analytics, 'reportEvent');
+    });
+
+    afterEach(() => {
+      analytics.shutdown();
+    });
+
+    /** Runs with the dev-mode analytics client, which throws on any payload the schema rejects. */
+    const withDevAnalytics = (
+      params: Parameters<typeof runWorkflow>[0]
+    ): Parameters<typeof runWorkflow>[0] => ({
+      ...params,
+      dependencies: {
+        ...params.dependencies,
+        coreStart: { ...params.dependencies.coreStart, analytics },
+      },
+    });
+
+    /** Telemetry is fired and forgotten after cleanup, so let it settle before asserting. */
+    const flushTelemetry = () => new Promise((resolve) => setImmediate(resolve));
+
+    const executeAndFlush = async (params: Parameters<typeof runWorkflow>[0]) => {
+      try {
+        return await execute(withDevAnalytics(params));
+      } finally {
+        await flushTelemetry();
+      }
+    };
+
+    const reportedEvents = () => jest.mocked(analytics.reportEvent).mock.calls;
+
+    const expectSchemaAccepted = (params: ReturnType<typeof setup>['params']) => {
+      expect(params.logger.error).not.toHaveBeenCalledWith(
+        expect.stringContaining('Error reporting event')
+      );
+      expect(params.logger.debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('identity-failure telemetry')
+      );
+    };
+
+    it('reports one failed-run event with the fixed class and the composition fields', async () => {
+      const { params } = setup();
+      await params.workflowExecutionRepository.updateWorkflowExecution({
+        id: 'child',
+        triggeredBy: 'workflow-step',
+        context: {
+          parentDepth: 0,
+          parentWorkflowExecutionId: 'parent',
+          parentWorkflowId: 'parent-workflow',
+          parentWorkflowInvocation: 'sync',
+        },
+      });
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed,
+          expect.objectContaining({
+            compositionDepth: 1,
+            errorHandled: false,
+            errorMessage: 'other_service_account_error',
+            errorType: 'ServiceAccountExecutionError',
+            executedStepCount: 0,
+            parentWorkflowId: 'parent-workflow',
+            parentWorkflowInvocation: 'sync',
+            triggerType: 'workflow-step',
+            workflowExecutionId: 'child',
+            workflowId: 'workflow',
+          }),
+        ],
+      ]);
+      expectSchemaAccepted(params);
+    });
+
+    it.each([
+      [
+        'service_account_binding_missing',
+        () => Boom.notFound('No service account is bound to workload [workflow/workflow].'),
+      ],
+      [
+        'service_account_binding_refused',
+        () =>
+          Boom.forbidden(
+            'The workload binding does not match the expected service account alertzero_secret.'
+          ),
+      ],
+      [
+        'service_account_token_exchange_rejected',
+        // The security plugin's wrap of a deleted or recreated account's exchange failure.
+        () =>
+          Object.assign(
+            new Error('Error occurred during service account token exchange.', {
+              cause: new Error(
+                'Service account token exchange failed for [elastic/alertzero_secret].'
+              ),
+            }),
+            { name: 'ServiceAccountTokenExchangeError', retryable: false, retryAfterMs: 0 }
+          ),
+      ],
+      [
+        'service_account_token_exchange_unavailable',
+        // The security plugin's wrap of an exchange the cluster couldn't serve.
+        () =>
+          Object.assign(
+            new Error('Error occurred during service account token exchange.', {
+              cause: new Error(
+                'Service account token exchange failed for [elastic/alertzero_secret].'
+              ),
+            }),
+            { name: 'ServiceAccountTokenExchangeError', retryable: true, retryAfterMs: 0 }
+          ),
+      ],
+      [
+        'other_service_account_error',
+        () => new Error('Service accounts are not enabled for alertzero_secret'),
+      ],
+    ])('reports the %s reason without the raw message', async (reason, createError) => {
+      const { params, accounts } = setup();
+      const error = createError();
+      jest.mocked(accounts.withScopedRequestForWorkload).mockRejectedValueOnce(error);
+
+      await expect(executeAndFlush(params)).rejects.toThrow(error.message);
+
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed,
+          expect.objectContaining({
+            errorMessage: reason,
+            errorType: 'ServiceAccountExecutionError',
+          }),
+        ],
+      ]);
+      const reported = JSON.stringify(reportedEvents());
+      expect(reported).not.toContain(error.message);
+      expect(reported).not.toContain('alertzero_secret');
+      expect(
+        (await params.workflowExecutionRepository.getWorkflowExecutionById('child', 'default'))
+          ?.error
+      ).toEqual({ type: 'ServiceAccountExecutionError', message: error.message });
+      expectSchemaAccepted(params);
+    });
+
+    it('reports the service_accounts_disabled reason when service account execution is off', async () => {
+      const { params, accounts } = setup();
+      jest.mocked(accounts.isEnabled).mockReturnValue(false);
+
+      await expect(executeAndFlush(params)).rejects.toThrow(
+        'Service account execution is disabled.'
+      );
+
+      expect(accounts.withScopedRequestForWorkload).not.toHaveBeenCalled();
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed,
+          expect.objectContaining({ errorMessage: 'service_accounts_disabled' }),
+        ],
+      ]);
+      expectSchemaAccepted(params);
+    });
+
+    it('reports the stored steps of a run that ran steps before it waited', async () => {
+      const { params } = setup();
+      const steps: EsWorkflowStepExecution[] = [
+        {
+          id: 'lookup-execution',
+          stepId: 'lookup',
+          stepType: 'elasticsearch.search',
+          workflowRunId: 'child',
+          workflowId: 'workflow',
+          spaceId: 'default',
+          status: ExecutionStatus.COMPLETED,
+          scopeStack: [],
+          startedAt: '2026-09-22T00:00:01Z',
+          finishedAt: '2026-09-22T00:00:03Z',
+          executionTimeMs: 2000,
+          topologicalIndex: 0,
+          globalExecutionIndex: 0,
+          stepExecutionIndex: 0,
+        },
+        {
+          id: 'approval-execution',
+          stepId: 'approval',
+          stepType: 'waitForInput',
+          workflowRunId: 'child',
+          workflowId: 'workflow',
+          spaceId: 'default',
+          status: ExecutionStatus.WAITING_FOR_INPUT,
+          scopeStack: [],
+          startedAt: '2026-09-22T00:00:04Z',
+          topologicalIndex: 1,
+          globalExecutionIndex: 1,
+          stepExecutionIndex: 0,
+        },
+      ];
+      await params.workflowExecutionRepository.updateWorkflowExecution({
+        id: 'child',
+        stepExecutionIds: steps.map(({ id }) => id),
+      });
+      const stepClient = createMockStepDataClient();
+      stepClient.getByIds.mockImplementation(async (ids) =>
+        createMockGetExecutionsByIdsResponse(steps.filter(({ id }) => ids.includes(id)))
+      );
+      stepClient.bulk.mockImplementation(async ({ items }) => {
+        for (const item of items) {
+          if (isBulkUpdaterItem(item)) {
+            throw new Error('identity_failure test mock does not apply updater items');
+          }
+          Object.assign(steps.find(({ id }) => id === item.document.id) ?? {}, item.document);
+        }
+        return { errors: false, items: [] };
+      });
+
+      await expect(
+        executeAndFlush({
+          ...params,
+          stepExecutionRepository: new StepExecutionRepository(stepClient),
+        })
+      ).rejects.toThrow('Binding changed');
+
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed,
+          expect.objectContaining({
+            // Known issue: the engine's existing heuristic reads a failed step in a failed run as handled.
+            errorHandled: true,
+            executedStepCount: 2,
+            failedStepId: 'approval',
+            failedStepType: 'waitForInput',
+            stepDurations: [{ duration: 2000, stepId: 'lookup', stepType: 'elasticsearch.search' }],
+            successfulStepCount: 1,
+            uniqueStepIdsExecuted: 2,
+          }),
+        ],
+      ]);
+      expect(stepClient.getByIds).toHaveBeenLastCalledWith(
+        ['lookup-execution', 'approval-execution'],
+        expect.objectContaining({ sourceIncludes: expect.arrayContaining(['stepId', 'status']) })
+      );
+      expectSchemaAccepted(params);
+    });
+
+    it('still reports, without steps, when reading the stored steps fails', async () => {
+      const { params } = setup();
+      await params.workflowExecutionRepository.updateWorkflowExecution({
+        id: 'child',
+        stepExecutionIds: ['lookup-execution'],
+      });
+      params.stepExecutionRepository.getStepExecutionsByIds.mockRejectedValue(
+        new Error('Step index unavailable')
+      );
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed,
+          expect.objectContaining({ executedStepCount: 0 }),
+        ],
+      ]);
+      expect(params.logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('Step index unavailable')
+      );
+    });
+
+    it('reports one cancelled-run event when a cancellation wins', async () => {
+      const { params, accounts } = setup();
+      jest.mocked(accounts.withScopedRequestForWorkload).mockImplementationOnce(async () => {
+        await params.workflowExecutionRepository.updateWorkflowExecution({
+          id: 'child',
+          cancelRequested: true,
+          cancellationReason: 'Cancelled by user',
+          cancelledAt: '2026-09-22T00:00:05Z',
+          cancelledBy: 'system',
+        });
+        throw new Error('Binding changed for alertzero_secret');
+      });
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(reportedEvents()).toEqual([
+        [
+          WorkflowExecutionTelemetryEventTypes.WorkflowExecutionCancelled,
+          expect.objectContaining({
+            cancellationReason: 'Cancelled by user',
+            cancelledAt: '2026-09-22T00:00:05Z',
+            workflowExecutionId: 'child',
+          }),
+        ],
+      ]);
+      expect(JSON.stringify(reportedEvents())).not.toContain('alertzero_secret');
+      expectSchemaAccepted(params);
+    });
+
+    it('does not report when the execution was already terminal', async () => {
+      const { params } = setup();
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+      await executeAndFlush(params);
+      expect(reportedEvents()).toHaveLength(1);
+    });
+
+    it('does not report when another invocation finalized the execution first', async () => {
+      const { params, accounts, setStatus } = setup();
+      jest.mocked(accounts.withScopedRequestForWorkload).mockImplementationOnce(async () => {
+        setStatus(ExecutionStatus.FAILED);
+        throw new Error('Binding changed');
+      });
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(reportedEvents()).toHaveLength(0);
+    });
+
+    it('reports only after the trigger event and the cleanup', async () => {
+      const { params } = setup();
+      const order: string[] = [];
+      params.workflowsExecutionEngine.triggerEvents.emitEvent.mockImplementation(async () => {
+        order.push('workflows.failed');
+      });
+      params.internalResumeWorkflowExecution.mockImplementation(async () => {
+        order.push('cleanup');
+      });
+      jest.mocked(analytics.reportEvent).mockImplementation(() => {
+        order.push('telemetry');
+      });
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(order).toEqual(['workflows.failed', 'cleanup', 'telemetry']);
+    });
+
+    it('does not wait for telemetry before it rethrows', async () => {
+      const { params } = setup();
+      await params.workflowExecutionRepository.updateWorkflowExecution({
+        id: 'child',
+        stepExecutionIds: ['lookup-execution'],
+      });
+      params.stepExecutionRepository.getStepExecutionsByIds.mockReturnValue(new Promise(() => {}));
+
+      await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+
+      expect(params.workflowsExecutionEngine.triggerEvents.emitEvent).toHaveBeenCalledTimes(1);
+      expect(params.internalResumeWorkflowExecution).toHaveBeenCalledTimes(1);
+      expect(drainConcurrencyQueueSlots).toHaveBeenCalledTimes(1);
+      expect(reportedEvents()).toHaveLength(0);
+    });
+
+    it('still reports once when cleanup throws', async () => {
+      const { params } = setup();
+      jest.mocked(drainConcurrencyQueueSlots).mockRejectedValueOnce(new Error('ES unavailable'));
+
+      await expect(executeAndFlush(params)).rejects.toThrow('queue cleanup is still pending');
+      await executeAndFlush(params);
+
+      expect(reportedEvents()).toEqual([
+        [WorkflowExecutionTelemetryEventTypes.WorkflowExecutionFailed, expect.anything()],
+      ]);
+    });
+
+    it('does not change failure handling when the telemetry client throws', async () => {
+      const { params } = setup();
+      const reportSpy = jest
+        .spyOn(WorkflowExecutionTelemetryClient.prototype, 'reportWorkflowExecutionTerminated')
+        .mockImplementation(() => {
+          throw new Error('Telemetry unavailable');
+        });
+
+      try {
+        await expect(executeAndFlush(params)).rejects.toThrow('Binding changed');
+        expect(reportSpy).toHaveBeenCalledTimes(1);
+        expect(params.logger.debug).toHaveBeenCalledWith(
+          expect.stringContaining('Telemetry unavailable')
+        );
+        expect(
+          (await params.workflowExecutionRepository.getWorkflowExecutionById('child', 'default'))
+            ?.status
+        ).toBe(ExecutionStatus.FAILED);
+        expect(params.workflowsExecutionEngine.triggerEvents.emitEvent).toHaveBeenCalledTimes(1);
+        expect(params.internalResumeWorkflowExecution).toHaveBeenCalledTimes(1);
+        expect(drainConcurrencyQueueSlots).toHaveBeenCalledTimes(1);
+        expect(params.meteringService.reportWorkflowExecution).toHaveBeenCalledTimes(1);
+      } finally {
+        reportSpy.mockRestore();
+      }
+    });
   });
 
   it('retries parent and queue cleanup after a transient post-execution read failure', async () => {

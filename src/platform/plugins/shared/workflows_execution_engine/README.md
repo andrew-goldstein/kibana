@@ -302,6 +302,8 @@ Errors are captured at step boundaries, propagated through the scope stack, and 
 
 See [On-Failure Configuration](server/step/on_failure/README.md) for recovery patterns, which errors to retry, and graceful degradation (fallback + continue).
 
+A run whose service account can't be used before its first step ends before the runtime starts. See [Run telemetry for runs that fail on their service account](./docs/service_account_failure_telemetry.md) for how it is still reported.
+
 ---
 
 ## Public API
