@@ -17,11 +17,13 @@ import { isWorkflowGraphSetupError } from './workflow_graph_setup_error';
 import type { WorkflowsExecutionEngineConfig } from '../config';
 import { emitWorkflowExecutionFailedEventIfFailed } from '../lib/emit_workflow_execution_failed_event';
 import { emitWorkflowIdentityFailureEvent } from '../lib/emit_workflow_identity_failure_event';
+import { reportWorkflowIdentityFailureTelemetry } from '../lib/report_workflow_identity_failure_telemetry';
 import type { WorkflowsMeteringService } from '../metering';
 import type { StepExecutionRepository } from '../repositories/step_execution_repository';
 import type { WorkflowExecutionRepository } from '../repositories/workflow_execution_repository';
 import {
   getExecutionServiceAccountId,
+  SERVICE_ACCOUNT_EXECUTION_ERROR_TYPE,
   withWorkflowExecutionIdentity,
 } from '../service_account_execution';
 import type {
@@ -220,7 +222,7 @@ export const resumeWorkflow = async (
   } catch (error) {
     if (!enteredExecution && getExecutionServiceAccountId(execution)) {
       const executionError = {
-        type: 'ServiceAccountExecutionError',
+        type: SERVICE_ACCOUNT_EXECUTION_ERROR_TYPE,
         message: error instanceof Error ? error.message : String(error),
       };
       const failedExecution = await finalizeWorkflowIdentityFailure({
@@ -228,20 +230,31 @@ export const resumeWorkflow = async (
         error: executionError,
       });
       if (!failedExecution) throw error;
-      if (failedExecution.status === ExecutionStatus.FAILED) {
-        await emitWorkflowIdentityFailureEvent({
+      try {
+        if (failedExecution.status === ExecutionStatus.FAILED) {
+          await emitWorkflowIdentityFailureEvent({
+            execution: failedExecution,
+            request: params.fakeRequest,
+            emitEvent: params.workflowsExecutionEngine.triggerEvents.emitEvent,
+            logger: params.logger,
+            maxEventChainDepth: params.config.eventDriven.maxChainDepth,
+          });
+        }
+        await completeIdentityFailureCleanup(failedExecution, {
+          ...params,
+          workflowTaskManager: new WorkflowTaskManager(params.dependencies.taskManager),
+          cloudSetup: params.dependencies.cloudSetup,
+        });
+      } finally {
+        // Only this invocation ended the run, so it reports even if cleanup threw, without waiting.
+        void reportWorkflowIdentityFailureTelemetry({
+          core: params.dependencies.coreStart,
+          error,
           execution: failedExecution,
-          request: params.fakeRequest,
-          emitEvent: params.workflowsExecutionEngine.triggerEvents.emitEvent,
           logger: params.logger,
-          maxEventChainDepth: params.config.eventDriven.maxChainDepth,
+          stepExecutionRepository: params.stepExecutionRepository,
         });
       }
-      await completeIdentityFailureCleanup(failedExecution, {
-        ...params,
-        workflowTaskManager: new WorkflowTaskManager(params.dependencies.taskManager),
-        cloudSetup: params.dependencies.cloudSetup,
-      });
     }
     throw error;
   }
