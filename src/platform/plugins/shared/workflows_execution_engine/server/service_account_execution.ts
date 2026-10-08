@@ -13,6 +13,8 @@ import { visitNestedSteps, WorkflowExecuteStepInputSchema } from '@kbn/workflows
 import type { EsWorkflowExecution, WorkflowExecutionEngineModel } from '@kbn/workflows';
 
 export const WORKFLOW_SERVICE_ACCOUNT_TYPE = 'workflow';
+/** Error type stored on an execution whose service account could not be used before its first step. */
+export const SERVICE_ACCOUNT_EXECUTION_ERROR_TYPE = 'ServiceAccountExecutionError';
 type IdentityExecution = Pick<
   EsWorkflowExecution,
   'id' | 'workflowId' | 'spaceId' | 'workflowDefinition' | 'effectiveIdentity' | 'managed'
