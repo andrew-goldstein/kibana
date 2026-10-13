@@ -207,7 +207,8 @@ describe('proposals routes', () => {
     expect(revise).toHaveBeenCalledWith(
       { id: 'proposal-1', comment: 'Tightened the match', confidence: 'high' },
       'default',
-      request
+      request,
+      { revisionSource: 'http_api' }
     );
     expect(response.ok).toHaveBeenCalledWith({
       body: { proposalId: 'proposal-2', revision: 2, status: 'pending' },

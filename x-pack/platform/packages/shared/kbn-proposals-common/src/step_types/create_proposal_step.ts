@@ -54,6 +54,9 @@ export const createProposalStepInputSchema = z.object({
   proposalId: optionalStepInput(z.uuid()).describe(
     'The id to create the proposal under, instead of a random one, for a caller that derives it from what it is proposing. An id that already exists fails the step with a conflict and creates nothing. Omit for a proposal that is always new.'
   ),
+  autoApprove: optionalStepInput(z.boolean()).describe(
+    'Whether the caller asked for auto-approval. For reporting only; the gating workflow decides whether to gate.'
+  ),
 });
 
 export const createProposalStepOutputSchema = z.object({

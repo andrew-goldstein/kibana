@@ -8,6 +8,7 @@
 import { createServerStepDefinition } from '@kbn/workflows-extensions/server';
 import { updateProposalStepCommonDefinition } from '@kbn/proposals-common';
 import type { ProposalsService } from '../services/proposals_service';
+import { EXTERNAL_SETTLED_BY } from '../storage/proposal_provenance';
 import type { ResolveProposalUser } from '../services/resolve_proposal_user';
 import type { ProposalPrivilegesChecker } from '../services/check_proposal_privileges';
 import { parseStepInput } from './parse_step_input';
@@ -54,6 +55,11 @@ export const getUpdateProposalStepDefinition = ({
             dismissReason: input.dismissReason,
             rationale: input.rationale,
             executionError: input.executionError,
+            decisionSource: input.decisionSource,
+            // The gate expires a proposal only through `proposals.settleIncompleteProposal`, so
+            // an expiry written here came from outside it. Set here rather than taken from an
+            // input, and stored only if this write is the one that settles the proposal.
+            settledBy: input.status === 'expired' ? EXTERNAL_SETTLED_BY : undefined,
           },
           spaceId
         );

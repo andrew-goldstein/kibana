@@ -75,7 +75,8 @@ describe('reviseProposalTool', () => {
     expect(revise).toHaveBeenCalledWith(
       { id: 'proposal-1', comment: 'Tightened the match' },
       'default',
-      requestMock
+      requestMock,
+      { revisionSource: 'agent' }
     );
   });
 
@@ -93,7 +94,8 @@ describe('reviseProposalTool', () => {
     expect(revise).toHaveBeenCalledWith(
       { id: 'proposal-2', impact: 'critical' },
       'default',
-      requestMock
+      requestMock,
+      { revisionSource: 'agent' }
     );
     expect(result.results[0].data).toMatchObject({
       proposalId: 'proposal-3',
