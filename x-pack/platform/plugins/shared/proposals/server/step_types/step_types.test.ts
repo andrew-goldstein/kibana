@@ -207,6 +207,7 @@ describe('proposals.updateProposal input schema', () => {
       dismissReason: blank,
       rationale: blank,
       executionError: blank,
+      decisionSource: blank,
     });
 
     // Every field is optional, so a call that only annotates is valid.
@@ -241,6 +242,20 @@ describe('proposals.updateProposal input schema', () => {
   it('should refuse a decision outside the vocabulary', () => {
     expect(
       updateProposalStepInputSchema.safeParse({ proposalId: 'proposal-1', decision: 'maybe' })
+        .success
+    ).toBe(false);
+  });
+
+  it.each(['human', 'autonomy'])('should accept %s as a decision source', (decisionSource) => {
+    expect(
+      updateProposalStepInputSchema.parse({ proposalId: 'proposal-1', decisionSource })
+        .decisionSource
+    ).toBe(decisionSource);
+  });
+
+  it('should refuse a decision source outside the vocabulary', () => {
+    expect(
+      updateProposalStepInputSchema.safeParse({ proposalId: 'proposal-1', decisionSource: 'agent' })
         .success
     ).toBe(false);
   });
@@ -602,6 +617,67 @@ describe('proposals.updateProposal step', () => {
     expect(result.output?.decision).toBe('dismissed');
   });
 
+  it('should pass the decision source through with the decision', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'no_action' });
+
+    await updateDefinition(update).handler(
+      createContext({
+        proposalId: 'proposal-1',
+        decision: 'dismissed',
+        decisionSource: 'human',
+        status: 'no_action',
+      })
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'dismissed', decisionSource: 'human' }),
+      SPACE_ID
+    );
+  });
+
+  it('should report an expiry it writes as settled from outside the gate', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'expired' });
+
+    await updateDefinition(update).handler(
+      createContext({ proposalId: 'proposal-1', status: 'expired', rationale: 'Rule changed' })
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ settlePath: 'external', status: 'expired' }),
+      SPACE_ID
+    );
+  });
+
+  it('should not take the settle path from its input', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'expired' });
+
+    // Not a declared input, so parsing strips it: the step sets `external` itself.
+    await updateDefinition(update).handler(
+      createContext({ proposalId: 'proposal-1', settlePath: 'gate', status: 'expired' })
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ settlePath: 'external' }),
+      SPACE_ID
+    );
+  });
+
+  it.each(['executing', 'succeeded', 'failed', 'no_action', undefined])(
+    'should record no settle path for a %s write',
+    async (status) => {
+      const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: status ?? 'pending' });
+
+      await updateDefinition(update).handler(
+        createContext({ proposalId: 'proposal-1', rationale: 'Noted', status })
+      );
+
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ settlePath: undefined }),
+        SPACE_ID
+      );
+    }
+  );
+
   it('should pass the failure detail through', async () => {
     const update = jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'failed' });
 
@@ -638,10 +714,18 @@ describe('proposals.checkDecidePrivileges step', () => {
     jest.clearAllMocks();
   });
 
+  const reportResumeRejected = jest.fn().mockResolvedValue(undefined);
+
+  const checkDefinition = (
+    privileges: ProposalPrivilegesChecker,
+    getProposalsService: () => ProposalsService = () =>
+      ({ reportResumeRejected } as unknown as ProposalsService)
+  ) => getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges });
+
   it('should report a refusal without failing the step', async () => {
     const privileges = allowAll();
     privileges.canManage.mockResolvedValue(false);
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // Failing here would spend the gate and strand the proposal, leaving no
     // way for a privileged approver to retry.
@@ -652,7 +736,7 @@ describe('proposals.checkDecidePrivileges step', () => {
   });
 
   it('should report an allowance', async () => {
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges: allowAll() });
+    const definition = checkDefinition(allowAll());
 
     const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
 
@@ -662,18 +746,19 @@ describe('proposals.checkDecidePrivileges step', () => {
   it('should fail the step when the privilege check itself errors', async () => {
     const privileges = allowAll();
     privileges.canManage.mockRejectedValue(new Error('privilege service unavailable'));
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // A service fault must stay distinguishable from a refusal, or the loop
     // would re-park forever on an outage.
     await expect(
       definition.handler(createContext({ proposalId: 'proposal-1' }))
     ).rejects.toMatchObject({ type: 'ApiError' });
+    expect(reportResumeRejected).not.toHaveBeenCalled();
   });
 
   it('should refuse an external resume without consulting the privilege service', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     // An external resume carries no request, so the execution wakes under the
     // workflow runner's key — which always holds `manage_proposals`, having
@@ -689,7 +774,7 @@ describe('proposals.checkDecidePrivileges step', () => {
 
   it('should still check a named responder normally', async () => {
     const privileges = allowAll();
-    const definition = getCheckDecidePrivilegesStepDefinition({ privileges });
+    const definition = checkDefinition(privileges);
 
     const result = await definition.handler(
       createContext({ proposalId: 'proposal-1', respondedBy: 'analyst' })
@@ -697,6 +782,63 @@ describe('proposals.checkDecidePrivileges step', () => {
 
     expect(result.output).toEqual({ canDecide: true });
     expect(privileges.canManage).toHaveBeenCalledWith(FAKE_REQUEST);
+  });
+
+  describe('telemetry', () => {
+    it('should report an unprivileged resumer as a rejected resume', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+
+      await checkDefinition(privileges).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'unprivileged',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report an external resume as a rejected resume', async () => {
+      await checkDefinition(allowAll()).handler(
+        createContext({ proposalId: 'proposal-1', respondedBy: 'external_resume:step-exec-1' })
+      );
+
+      expect(reportResumeRejected).toHaveBeenCalledWith({
+        id: 'proposal-1',
+        reason: 'external_principal',
+        spaceId: SPACE_ID,
+      });
+    });
+
+    it('should report nothing for an allowance', async () => {
+      await checkDefinition(allowAll()).handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(reportResumeRejected).not.toHaveBeenCalled();
+    });
+
+    it('should still refuse when the service cannot report', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      const definition = checkDefinition(privileges, () => {
+        throw new Error('proposals service not started');
+      });
+
+      const result = await definition.handler(createContext({ proposalId: 'proposal-1' }));
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
+
+    it('should still refuse when reporting rejects', async () => {
+      const privileges = allowAll();
+      privileges.canManage.mockResolvedValue(false);
+      reportResumeRejected.mockRejectedValueOnce(new Error('unexpected'));
+
+      const result = await checkDefinition(privileges).handler(
+        createContext({ proposalId: 'proposal-1' })
+      );
+
+      expect(result.output).toEqual({ canDecide: false });
+    });
   });
 });
 
@@ -944,6 +1086,24 @@ describe('proposals.settleIncompleteProposal step', () => {
 
     expect(service.update).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed' }),
+      SPACE_ID
+    );
+  });
+
+  it('should report its write as a gate settle', async () => {
+    const service = {
+      getLatestRevision: jest.fn().mockResolvedValue({ proposalId: 'proposal-1', revision: 1 }),
+      get: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'pending' }),
+      update: jest.fn().mockResolvedValue({ id: 'proposal-1', status: 'expired' }),
+    };
+
+    await settleDefinition(service).handler(
+      createContext({ proposalId: 'proposal-1', status: 'expired' })
+    );
+
+    // Never taken from an input: the service derives the expiry reason from it and the deadline.
+    expect(service.update).toHaveBeenCalledWith(
+      expect.objectContaining({ settlePath: 'gate' }),
       SPACE_ID
     );
   });

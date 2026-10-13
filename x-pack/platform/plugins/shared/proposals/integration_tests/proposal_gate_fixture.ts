@@ -5,15 +5,21 @@
  * 2.0.
  */
 
+import { createAnalytics } from '@elastic/ebt/client';
 import { httpServerMock } from '@kbn/core-http-server-mocks';
 import { loggerMock } from '@kbn/logging-mocks';
 import { ExecutionStatus } from '@kbn/workflows';
 import { CREATE_PROPOSAL_WORKFLOW_ID, getManagedWorkflowDefinition } from '@kbn/workflows/managed';
 import { WorkflowRunFixture } from '@kbn/workflows-execution-engine/test_helpers';
-import type { Proposal, ProposalOrigin } from '@kbn/proposals-common';
+import type { ProposalOrigin } from '@kbn/proposals-common';
 import type { ProposalDocument, ProposalsStorageClient } from '../server/storage/proposals_storage';
 import { ProposalsService } from '../server/services/proposals_service';
 import type { ProposalPrivilegesChecker } from '../server/services/check_proposal_privileges';
+import type { ProposalsTelemetryEvent } from '../server/telemetry';
+import {
+  createProposalsTelemetryReporter,
+  registerProposalsTelemetryEvents,
+} from '../server/telemetry';
 import { registerStepDefinitionsForTest } from './register_step_definitions_for_test';
 
 /**
@@ -115,15 +121,29 @@ const GATE_TIMEOUT_MS = 72 * 60 * 60 * 1000;
 /** Required of every caller, but the gate never branches on it, so any member does. */
 const FIXTURE_ORIGIN = 'alertzero' satisfies ProposalOrigin;
 
+/** The id the engine fixture gives the one execution it runs: the gate run every event names. */
+export const GATE_EXECUTION_ID = 'fake_workflow_execution_id';
+
+/** The raw stored document, as the service writes it. */
+export type StoredProposal = ProposalDocument & { id: string };
+
+export interface ProposalGateStartOptions {
+  /**
+   * Replaces the loop's `max-iterations` limit, so the budget can be spent
+   * without answering the gate two hundred times. Everything else runs as shipped.
+   */
+  maxIterations?: number;
+}
+
 export interface ProposalGateFixture {
   engine: WorkflowRunFixture;
   /** The service the gate writes through, to read and decide as the routes do. */
   service: ProposalsService;
   attachedProposalIds: () => string[];
-  /** Every proposal written so far, in insertion order. */
-  proposals: () => Array<Proposal & { id: string }>;
+  /** Every proposal written so far, in insertion order, as stored. */
+  proposals: () => StoredProposal[];
   /** The only proposal, asserting there is exactly one. */
-  onlyProposal: () => Proposal & { id: string };
+  onlyProposal: () => StoredProposal;
   executionStatus: () => ExecutionStatus | undefined;
   /**
    * Step executions for a step id, oldest first. Pass `stepType` to exclude the
@@ -154,7 +174,7 @@ export interface ProposalGateFixture {
    */
   seedProposal: (params: { id?: string }) => Promise<{ id: string }>;
   /** Runs the workflow to its first park (or to completion). */
-  start: (inputs?: Record<string, unknown>) => Promise<void>;
+  start: (inputs?: Record<string, unknown>, options?: ProposalGateStartOptions) => Promise<void>;
   /** Answers the parked gate as a human would through a resume surface. */
   resume: (approved: boolean, respondedBy?: string) => Promise<void>;
   /**
@@ -189,19 +209,36 @@ export interface ProposalGateFixture {
   setActionMetadata: (actionMetadata: Record<string, unknown>) => void;
   /** Makes the action workflow unreadable, as a transient API failure would. */
   failActionLookup: () => void;
+  /** Makes the action workflow a managed one, installed from the given definition id. */
+  setManagedAction: (originManagedWorkflowId: string) => void;
+  /** Makes `proposals.checkDecidePrivileges` throw, failing the whole run. */
+  failPrivilegeCheck: () => void;
+  /** How many workflow executions the proposals plugin has read so far. */
+  executionReads: () => number;
+  /** Every proposals telemetry event reported so far, in order. */
+  reportedEvents: () => ProposalsTelemetryEvent[];
+  /**
+   * The errors the dev-mode analytics client threw, one per report whose
+   * payload its registered schema rejected. Empty when every payload conformed.
+   */
+  rejectedReports: () => unknown[];
 }
 
 export const createProposalGateFixture = (): ProposalGateFixture => {
   const engine = new WorkflowRunFixture();
   const { documents, client } = createInMemoryStorage();
   let canDecide = true;
+  let privilegeCheckFails = false;
+
+  const actionDefinition = {
+    consts: { actionMetadata: { name: 'Create rule', category: 'tune' } },
+  };
 
   const workflowsApi = {
     // Supplies the action metadata `create` and `get` resolve. No `triggers`,
-    // so the best-effort action-input validation is skipped.
-    getWorkflow: jest.fn().mockResolvedValue({
-      definition: { consts: { actionMetadata: { name: 'Create rule', category: 'tune' } } },
-    }),
+    // so the best-effort action-input validation is skipped. Unmanaged, like
+    // a workflow a customer wrote.
+    getWorkflow: jest.fn().mockResolvedValue({ definition: actionDefinition }),
     // Both report the fixture engine's own executions, so a read or a decision
     // settles a proposal only when its gate really ended.
     getWorkflowExecution: jest.fn(async (id: string) => {
@@ -220,9 +257,18 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
   };
 
   const attachedProposalIds: string[] = [];
+  // A real client in dev mode rather than a bare mock, so every payload the
+  // gate produces is validated against the registered schemas.
+  const analytics = createAnalytics({ isDev: true, logger: loggerMock.create() });
+  registerProposalsTelemetryEvents(analytics);
+  const reportEvent = jest.spyOn(analytics, 'reportEvent');
+
   const service = new ProposalsService({
     storage: client,
     logger: loggerMock.create(),
+    // The spy replaced `reportEvent` on the client itself, so passing the
+    // client reports through it.
+    telemetry: createProposalsTelemetryReporter({ analytics, logger: loggerMock.create() }),
     getWorkflowsApi: () => workflowsApi as never,
     // The gate's behaviour does not depend on the conversation card, so the
     // attachment write is stubbed rather than simulated.
@@ -237,7 +283,12 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
   const privileges: ProposalPrivilegesChecker = {
     assertCanManage: async () => undefined,
     assertCanRead: async () => undefined,
-    canManage: async () => canDecide,
+    canManage: async () => {
+      if (privilegeCheckFails) {
+        throw new Error('security unavailable');
+      }
+      return canDecide;
+    },
   };
 
   registerStepDefinitionsForTest({
@@ -246,10 +297,8 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
     privileges,
   });
 
-  const proposals = () =>
-    [...documents.entries()].map(
-      ([id, { document }]) => ({ id, ...document } as Proposal & { id: string })
-    );
+  const proposals = (): StoredProposal[] =>
+    [...documents.entries()].map(([id, { document }]) => ({ id, ...document }));
 
   /** Stages the payload `waitForApproval` reduces a resume to, without waking the run. */
   const stageResume = (approved: boolean, respondedBy: string) => {
@@ -304,9 +353,17 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
       );
       return { id: created.id };
     },
-    start: async (inputs = {}) => {
+    start: async (inputs = {}, { maxIterations } = {}) => {
+      const shipped = gateWorkflowYaml();
+      const workflowYaml =
+        maxIterations === undefined
+          ? shipped
+          : shipped.replace(/(max-iterations:\s*\n\s*limit:) \d+/, `$1 ${maxIterations}`);
+      if (workflowYaml === shipped && maxIterations !== undefined) {
+        throw new Error('createProposalGateFixture: the max-iterations limit was not found');
+      }
       await engine.runWorkflow({
-        workflowYaml: gateWorkflowYaml(),
+        workflowYaml,
         inputs: {
           conversationId: 'conv-1',
           comment: 'Tune the noisy rule',
@@ -368,5 +425,24 @@ export const createProposalGateFixture = (): ProposalGateFixture => {
     failActionLookup: () => {
       workflowsApi.getWorkflow.mockRejectedValue(new Error('workflows API unavailable'));
     },
+    setManagedAction: (originManagedWorkflowId) => {
+      workflowsApi.getWorkflow.mockResolvedValue({
+        definition: actionDefinition,
+        managed: true,
+        originManagedWorkflowId,
+      });
+    },
+    failPrivilegeCheck: () => {
+      privilegeCheckFails = true;
+    },
+    executionReads: () =>
+      workflowsApi.getWorkflowExecution.mock.calls.length +
+      workflowsApi.getWorkflowExecutionStatuses.mock.calls.length,
+    reportedEvents: () =>
+      reportEvent.mock.calls.map(
+        ([eventType, payload]) => ({ eventType, payload } as ProposalsTelemetryEvent)
+      ),
+    rejectedReports: () =>
+      reportEvent.mock.results.filter(({ type }) => type === 'throw').map(({ value }) => value),
   };
 };

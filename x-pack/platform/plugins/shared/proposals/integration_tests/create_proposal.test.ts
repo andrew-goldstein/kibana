@@ -8,7 +8,7 @@
 import { httpServerMock } from '@kbn/core-http-server-mocks';
 import { ExecutionStatus } from '@kbn/workflows';
 import type { ProposalGateFixture } from './proposal_gate_fixture';
-import { createProposalGateFixture } from './proposal_gate_fixture';
+import { createProposalGateFixture, GATE_EXECUTION_ID } from './proposal_gate_fixture';
 
 const ACTION_WORKFLOW_ID = 'system-alertzero-action-create-rule';
 
@@ -37,6 +37,13 @@ describe('create-investigation-proposal workflow execution', () => {
   beforeEach(() => {
     fixture = createProposalGateFixture();
   });
+
+  /** The payloads of every reported event of one type, in order. */
+  const reportedPayloads = (eventType: string) =>
+    fixture
+      .reportedEvents()
+      .filter((event) => event.eventType === eventType)
+      .map(({ payload }) => payload);
 
   describe('parking on the gate', () => {
     it('should create an undecided proposal and wait for a human', async () => {
@@ -588,6 +595,492 @@ describe('create-investigation-proposal workflow execution', () => {
       // Declaring the policy explicitly must behave like declaring nothing;
       // only `always-gate` overrides the caller.
       expect(fixture.proposals()[0].decision).toBe('approved');
+    });
+  });
+
+  describe('the gate execution', () => {
+    it('should name the gate run on every event, for a join to the run that asked', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      // Created, decided, two status changes, the action and the retry: the retry continues the
+      // same parked gate execution, so it names the same run.
+      expect(
+        fixture
+          .reportedEvents()
+          .map(({ payload }) =>
+            'workflow_execution_id' in payload ? payload.workflow_execution_id : undefined
+          )
+      ).toEqual(Array(6).fill(GATE_EXECUTION_ID));
+    });
+
+    it('should read no execution to describe the caller', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(fixture.executionReads()).toBe(0);
+    });
+  });
+
+  describe('decision source', () => {
+    /** The decision source of every decided event, in order. */
+    const decisionSources = () =>
+      reportedPayloads('proposals_proposal_decided').map((payload) =>
+        'decision_source' in payload ? payload.decision_source : undefined
+      );
+
+    it('should attribute a dismissal to a human', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(decisionSources()).toEqual(['human']);
+    });
+
+    it('should attribute an approval through the gate to a human', async () => {
+      await fixture.start();
+
+      await fixture.resume(true);
+
+      expect(decisionSources()).toEqual(['human']);
+    });
+
+    it('should attribute an approval the caller authorised to autonomy', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      expect(decisionSources()[0]).toBe('autonomy');
+    });
+
+    it('should attribute the gated retry of an autonomous approval to a human', async () => {
+      // The autonomy pass leaves `decision_source` set; the gated pass after
+      // the failed action must report its own rather than inherit it.
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      await fixture.resume(false);
+
+      expect(decisionSources()).toEqual(['autonomy', 'human']);
+    });
+  });
+
+  describe('settle path', () => {
+    /** The status changes reported so far, as `[to_status, expiry_reason, failure_source]`. */
+    const settledStatusChanges = () =>
+      reportedPayloads('proposals_proposal_status_changed').map((payload) => [
+        'to_status' in payload ? payload.to_status : undefined,
+        'expiry_reason' in payload ? payload.expiry_reason : undefined,
+        'failure_source' in payload ? payload.failure_source : undefined,
+      ]);
+
+    it('should report a timed-out gate as settled by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(settledStatusChanges()).toEqual([['expired', 'deadline', undefined]]);
+    });
+
+    it('should report a spent attempt budget as settled early', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([['expired', 'settled_early', undefined]]);
+    });
+
+    it('should report a failed run before the deadline as settled early', async () => {
+      // The gate run's own engine event (`_failed`) is what tells it from a spent budget.
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([['expired', 'settled_early', undefined]]);
+    });
+
+    it('should report no settle path for an outcome the loop wrote itself', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(settledStatusChanges()).toEqual([['no_action', undefined, undefined]]);
+    });
+
+    it('should attribute an action failure the loop recorded to the action', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(settledStatusChanges()).toEqual([
+        ['executing', undefined, undefined],
+        ['failed', undefined, 'action'],
+      ]);
+    });
+  });
+
+  describe('telemetry', () => {
+    const EXTERNAL_PRINCIPAL = 'external_resume:step-exec-1';
+
+    /** The engine fixture runs one gate execution in a non-default space. */
+    const COMMON = {
+      is_default_space: false,
+      origin: 'alertzero',
+      workflow_execution_id: GATE_EXECUTION_ID,
+    };
+
+    const eventTypes = () => fixture.reportedEvents().map(({ eventType }) => eventType);
+
+    /** The conversation the fixture starts every gate in. */
+    const CONVERSATION_ID = 'conv-1';
+
+    /** The id fields of the `index`-th proposal written; every chain here is rooted at the first. */
+    const idFieldsOf = (index = 0) => {
+      const all = fixture.proposals();
+      return {
+        conversation_id: CONVERSATION_ID,
+        proposal_id: all[index].id,
+        root_proposal_id: all[0].id,
+      };
+    };
+
+    const payloadOf = (eventType: string) =>
+      fixture.reportedEvents().find((event) => event.eventType === eventType)?.payload;
+
+    afterEach(() => {
+      // Every payload the gate produced passed the dev-mode schema validation.
+      expect(fixture.rejectedReports()).toEqual([]);
+    });
+
+    it('should report a human approval, its failed action and the retry', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_decided',
+        'proposals_proposal_status_changed',
+        'proposals_proposal_status_changed',
+        'proposals_action_executed',
+        'proposals_proposal_retried',
+      ]);
+      expect(payloadOf('proposals_proposal_decided')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(0),
+        decided_after_deadline: false,
+        decision: 'approved',
+        decision_source: 'human',
+        time_to_decision_ms: expect.any(Number),
+      });
+      expect(
+        fixture
+          .reportedEvents()
+          .filter(({ eventType }) => eventType === 'proposals_proposal_status_changed')
+          .map(({ payload }) => payload)
+      ).toEqual([
+        { ...COMMON, ...idFieldsOf(0), from_status: 'pending', to_status: 'executing' },
+        {
+          ...COMMON,
+          ...idFieldsOf(0),
+          failure_source: 'action',
+          from_status: 'executing',
+          to_status: 'failed',
+        },
+      ]);
+      expect(payloadOf('proposals_action_executed')).toEqual(
+        expect.objectContaining({ ...idFieldsOf(0), outcome: 'failed' })
+      );
+      // The action is named once, on the created event the chain joins to.
+      expect(payloadOf('proposals_action_executed')).not.toHaveProperty('action_id');
+      // The clone's own id, with the chain root it inherited from the original.
+      expect(payloadOf('proposals_proposal_retried')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(1),
+      });
+    });
+
+    it("should carry each proposal's own id and its chain root on every event", async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const [original, clone] = fixture.proposals();
+      expect(clone.id).not.toBe(original.id);
+      expect(
+        fixture
+          .reportedEvents()
+          .map(({ eventType, payload }) => [
+            eventType,
+            'proposal_id' in payload ? payload.proposal_id : undefined,
+            'root_proposal_id' in payload ? payload.root_proposal_id : undefined,
+          ])
+      ).toEqual([
+        ['proposals_proposal_created', original.id, original.id],
+        ['proposals_proposal_decided', original.id, original.id],
+        ['proposals_proposal_status_changed', original.id, original.id],
+        ['proposals_proposal_status_changed', original.id, original.id],
+        ['proposals_action_executed', original.id, original.id],
+        ['proposals_proposal_retried', clone.id, original.id],
+      ]);
+    });
+
+    it('should carry the conversation the proposal belongs to on every event, through a retry', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true);
+
+      const conversationIds = fixture
+        .reportedEvents()
+        .map(({ payload }) => ('conversation_id' in payload ? payload.conversation_id : undefined));
+      expect(conversationIds).toHaveLength(6);
+      expect(new Set(conversationIds)).toEqual(new Set([CONVERSATION_ID]));
+    });
+
+    it("should report a managed action's origin definition id as the action id", async () => {
+      fixture.setManagedAction('alertzero-action-create-rule');
+
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      await fixture.resume(true);
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ action_id: 'alertzero-action-create-rule' })
+      );
+    });
+
+    it('should report a custom action as custom, never by its workflow id', async () => {
+      await fixture.start({ actionWorkflowId: 'secret-customer-workflow' });
+      await fixture.resume(true);
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ action_id: 'custom' })
+      );
+      expect(JSON.stringify(fixture.reportedEvents())).not.toContain('secret-customer-workflow');
+    });
+
+    it('should report the created proposal', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      expect(fixture.reportedEvents()).toEqual([
+        {
+          eventType: 'proposals_proposal_created',
+          payload: {
+            ...COMMON,
+            ...idFieldsOf(0),
+            action_id: 'custom',
+            // The fixture's action declares `tune`, outside the known vocabulary.
+            category: 'other',
+            confidence_bucket: 'medium',
+            expires_in_bucket: 'le_72h',
+            has_action: true,
+            impact_class: 'low',
+          },
+        },
+      ]);
+    });
+
+    it('should report a dismissal', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(false);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_decided',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_decided')).toEqual(
+        expect.objectContaining({ decision: 'dismissed', decision_source: 'human' })
+      );
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(0),
+        from_status: 'pending',
+        to_status: 'no_action',
+      });
+    });
+
+    it('should report an autonomy approval without a time to decision', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, autoApprove: true });
+
+      const decided = payloadOf('proposals_proposal_decided');
+      expect(decided).toEqual(expect.objectContaining({ decision_source: 'autonomy' }));
+      expect(decided).not.toHaveProperty('time_to_decision_ms');
+    });
+
+    it('should report a late decision through the generic resume', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resumeAfterDeadline(true);
+
+      expect(payloadOf('proposals_proposal_decided')).toEqual(
+        expect.objectContaining({ decided_after_deadline: true, decision_source: 'human' })
+      );
+    });
+
+    it('should report an unanswered gate as expired by the deadline', async () => {
+      await fixture.start();
+      await fixture.timeOutGate();
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(0),
+        expiry_reason: 'deadline',
+        from_status: 'pending',
+        to_status: 'expired',
+      });
+    });
+
+    it('should report a spent attempt budget as expired early', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID }, { maxIterations: 1 });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual(
+        expect.objectContaining({ expiry_reason: 'settled_early', to_status: 'expired' })
+      );
+    });
+
+    it('should report a failed run before the deadline as expired early', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.failPrivilegeCheck();
+
+      await fixture.resume(true);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual(
+        expect.objectContaining({ expiry_reason: 'settled_early', to_status: 'expired' })
+      );
+    });
+
+    it('should report a cancelled gate settled on the next read as expired by the ended gate', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.cancelGate();
+
+      await fixture.service.get(
+        fixture.onlyProposal().id,
+        'fake_space_id',
+        httpServerMock.createKibanaRequest()
+      );
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+      ]);
+      expect(payloadOf('proposals_proposal_status_changed')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(0),
+        expiry_reason: 'gate_ended',
+        from_status: 'pending',
+        to_status: 'expired',
+      });
+    });
+
+    it('should report a decision on a cancelled gate as its settle, then a not_waiting refusal', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.cancelGate();
+
+      await expect(
+        fixture.service.releaseGate(fixture.onlyProposal().id, {
+          approved: true,
+          spaceId: 'fake_space_id',
+          request: httpServerMock.createKibanaRequest(),
+        })
+      ).rejects.toThrow(/can no longer be decided/);
+
+      expect(eventTypes()).toEqual([
+        'proposals_proposal_created',
+        'proposals_proposal_status_changed',
+        'proposals_proposal_resume_rejected',
+      ]);
+      expect(payloadOf('proposals_proposal_resume_rejected')).toEqual({
+        ...COMMON,
+        ...idFieldsOf(0),
+        reason: 'not_waiting',
+      });
+    });
+
+    it('should report an unprivileged resumer as a rejected resume, and nothing else', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+      fixture.setCanDecide(false);
+
+      await fixture.resume(true);
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_resume_rejected',
+          payload: { ...COMMON, ...idFieldsOf(0), reason: 'unprivileged' },
+        },
+      ]);
+    });
+
+    it('should report an external resume as a rejected resume', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.resume(true, EXTERNAL_PRINCIPAL);
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_resume_rejected',
+          payload: { ...COMMON, ...idFieldsOf(0), reason: 'external_principal' },
+        },
+      ]);
+    });
+
+    it('should report a revision, and no status change for the superseded predecessor', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID });
+
+      await fixture.revise({ comment: 'Tune the noisier rule' });
+
+      expect(fixture.reportedEvents().slice(1)).toEqual([
+        {
+          eventType: 'proposals_proposal_revised',
+          // The new revision's own id, with the chain root it inherited.
+          payload: {
+            ...COMMON,
+            ...idFieldsOf(1),
+            action_input_changed: false,
+            comment_changed: true,
+            confidence_changed: false,
+            impact_changed: false,
+            revision: 2,
+            // The fixture calls the service in-process, with no source.
+            revision_source: 'server_api',
+          },
+        },
+      ]);
+    });
+
+    it('should report the origin the caller declares', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, origin: 'nightshift' });
+
+      expect(payloadOf('proposals_proposal_created')).toEqual(
+        expect.objectContaining({ origin: 'nightshift', workflow_execution_id: GATE_EXECUTION_ID })
+      );
+    });
+
+    it('should never report the title or the error a retry re-offers', async () => {
+      await fixture.start({ actionWorkflowId: ACTION_WORKFLOW_ID, title: 'Secret host name' });
+
+      await fixture.resume(true);
+
+      const [, clone] = fixture.proposals();
+      // The failed action's error, which the retry stores for the queue.
+      expect(clone.previousExecutionError).toEqual(expect.any(String));
+      const shipped = JSON.stringify(fixture.reportedEvents());
+      expect(
+        ['Secret host name', clone.previousExecutionError].filter(
+          (text) => text !== undefined && shipped.includes(text)
+        )
+      ).toEqual([]);
     });
   });
 });

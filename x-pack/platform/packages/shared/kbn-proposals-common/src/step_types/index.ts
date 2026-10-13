@@ -50,8 +50,10 @@ export {
 } from './settle_incomplete_proposal_step';
 
 export {
+  proposalDecisionSourceSchema,
   UpdateProposalStepId,
   updateProposalStepCommonDefinition,
   updateProposalStepInputSchema,
   updateProposalStepOutputSchema,
 } from './update_proposal_step';
+export type { ProposalDecisionSource } from './update_proposal_step';

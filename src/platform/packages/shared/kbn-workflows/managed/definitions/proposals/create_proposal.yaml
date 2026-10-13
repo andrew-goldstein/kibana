@@ -274,6 +274,7 @@ steps:
               # Someone answered, so there is a resumer to authorize. False on
               # a timeout, where the only principal is the workflow runner.
               gate_answered: '${{ steps.await_decision.error == blank }}'
+              decision_source: human
 
         else:
           # No human here: the caller's autonomy policy already decided, so the
@@ -289,6 +290,7 @@ steps:
               gate_error: ''
               # Nobody was asked, so there is nobody to authorize.
               gate_answered: false
+              decision_source: autonomy
 
       # Keyed on `gate_answered` rather than `needs_gate`, which skips both the
       # autonomy path and a timed-out gate. Neither has a decider: the only
@@ -383,6 +385,8 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: dismissed
               decidedBy: '{{ variables.decided_by }}'
+              # Autonomy only ever approves.
+              decisionSource: human
               # The dismiss reason and rationale are written by the route
               # before it releases the gate, because `waitForApproval` reduces
               # its resume payload to a bare boolean.
@@ -415,6 +419,7 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: approved
               decidedBy: '{{ variables.decided_by }}'
+              decisionSource: '{{ variables.decision_source }}'
               status: no_action
           - name: complete_no_action
             type: data.set
@@ -435,6 +440,7 @@ steps:
               proposalId: '{{ variables.current_proposal_id }}'
               decision: approved
               decidedBy: '{{ variables.decided_by }}'
+              decisionSource: '{{ variables.decision_source }}'
               status: executing
 
           - name: execute_action
