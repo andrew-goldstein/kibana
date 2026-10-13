@@ -21,6 +21,8 @@ export {
   RESUME_REJECTED_REASONS,
   REVISION_SOURCES,
   SERVER_API_REVISION_SOURCE,
+  SETTLED_REASONS,
+  SETTLED_STATUSES,
   TELEMETRY_CATEGORIES,
   UNKNOWN_DECISION_SOURCE,
 } from './constants';
@@ -33,11 +35,13 @@ export type {
   ProposalReportedDecisionSource,
   ProposalResumeRejectedReason,
   ProposalRevisionSource,
+  ProposalSettledReason,
   ProposalTelemetryCategory,
   ProposalsTelemetryEventType,
 } from './constants';
 export { PROPOSALS_TELEMETRY_EVENT_TYPES } from './event_types';
 export type {
+  ProposalSettledStatus,
   ProposalsActionExecutedPayload,
   ProposalsCallerFields,
   ProposalsProposalCreatedPayload,
@@ -47,6 +51,9 @@ export type {
   ProposalsProposalRetriedPayload,
   ProposalsProposalRevisedPayload,
   ProposalsProposalStatusChangedPayload,
+  ProposalsSnapshotAgeBucketCount,
+  ProposalsSnapshotPayload,
+  ProposalsSnapshotSettledCount,
   ProposalsTelemetryEventPayloads,
 } from './event_types';
 export { readTelemetryOptIn } from './read_telemetry_opt_in';
@@ -69,6 +76,8 @@ export { buildRevisedPayload } from './build_revised_payload';
 export { buildUpdateEvents } from './build_update_events';
 export { bucketExpiresIn } from './bucket_expires_in';
 export { toResumeRejectedReason } from './to_resume_rejected_reason';
+export { toSettledReason } from './to_settled_reason';
+export { toSnapshotDay } from './to_snapshot_day';
 export { toTelemetryActionId } from './to_telemetry_action_id';
 export { toTelemetryCategory } from './to_telemetry_category';
 export { toTelemetryRecord } from './to_telemetry_record';

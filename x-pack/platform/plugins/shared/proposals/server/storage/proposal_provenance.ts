@@ -77,10 +77,9 @@ export interface ProposalProvenance {
    * The settle path that moved the proposal to a terminal status without the
    * loop recording an outcome itself: the gate's `settledBy` input, or
    * `external` for an expiry written through `proposals.updateProposal`.
-   * Absent when the loop settled it. Stored,
-   * rather than passed to telemetry as write-time context, so that a later
-   * read, such as a daily count of settled proposals, can tell why each one
-   * settled.
+   * Absent when the loop settled it. Stored, rather than passed to telemetry
+   * as write-time context, because the daily snapshot counts settled
+   * proposals by it.
    */
   settledBy?: ProposalStoredSettledBy;
 }
@@ -92,3 +91,13 @@ export interface ProposalProvenanceField {
 
 /** What the gate knows about its caller when it creates a proposal. */
 export type ProposalCallerProvenance = Pick<ProposalProvenance, 'callerManaged' | 'callerRunId'>;
+
+/** The snapshot's search path to the stored settle path. */
+export const SETTLED_BY_FIELD = 'provenance.settledBy' as const;
+
+/**
+ * The snapshot's search path to a field every proposal written since provenance existed has
+ * (`create()`, `clone()` and `revise()` always write an attempt), so a head without it predates
+ * any stored settle path.
+ */
+export const PROVENANCE_ATTEMPT_FIELD = 'provenance.attempt' as const;
