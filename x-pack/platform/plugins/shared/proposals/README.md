@@ -17,6 +17,7 @@ This plugin owns the record, the decision, and the guarantee that an approved ac
 server/
   plugin.ts config.ts types.ts constants.ts features.ts
   routes/ services/ storage/ step_types/ attachments/ managed_workflows/ tools/
+  telemetry/
 public/
   plugin.ts index.ts types.ts
   hooks/ components/ attachments/ step_types/
@@ -467,6 +468,7 @@ What follows from settling on read:
 - **The derived ranks live under `ranks.*`.** `ranks.impact` and `ranks.confidence` are computed from the snapshotted enums, not authored, and nesting them says so in the document shape. It also keeps `stripRanks` a single deletion however many ranks are added.
 - **`actionInput` is validated at creation**, against the schema the action declares on its manual trigger, so a proposal that could never run never reaches a human. Best-effort: the JSON Schema to zod conversion does not cover every keyword.
 - **The queue's order lives in Elasticsearch.** `impact` and `confidence` are keywords, which sort alphabetically, so each is mirrored by a numeric rank written at creation. That is what makes the list pageable rather than capped at one fetch; the ranks are stripped before a proposal leaves the service.
+- **Nothing is stored for telemetry.** The events ([telemetry README](server/telemetry/README.md)) are built from the stored record plus what only the write in progress knows: `create()` passes the `actionId` it resolves from the action read it already makes, `update()` passes the decision source and the settle path, and `revise()` passes the revision source, as write-time context (`toTelemetryRecord`). The one reporting-only step input is `decisionSource` on `proposals.updateProposal`, which the gate sets on each decision path and nothing branches on; any workflow calling that step can assert it. The settle path is never an input: `proposals.settleIncompleteProposal` and `proposals.updateProposal` set it themselves. Who asked for a proposal is not recorded either: its events carry the stored gate `workflowExecutionId`, which joins to the Workflows engine's run events.
 - **`category` is an arbitrary keyword this plugin does not own.** Each solution defines the vocabulary its own actions declare and its own queries group by — AlertZero's set is not NightShift's — so there is no shared enum and no default to fall back on. Resolved as `params.category ?? metadata.category`, the same precedence as `impact` and for the same reason; a caller-supplied value is also the *only* way a proposal carrying no action gets one, since there is no action metadata to read it from. That matters because consumers group the queue by category and drop what has none, so an uncategorised non-action proposal would have nowhere to appear. Nothing sorts on it, and which category leads is a UI decision rather than a stored rank.
 
 ## Managed workflows

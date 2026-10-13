@@ -47,7 +47,8 @@ export const registerReviseProposalRoute = ({
           const { proposalId, revision } = await getProposalsService().revise(
             { id: request.params.proposalId, ...request.body },
             getSpaceId(request),
-            request
+            request,
+            { revisionSource: 'http_api' }
           );
 
           return response.ok({ body: { proposalId, revision, status: 'pending' } });

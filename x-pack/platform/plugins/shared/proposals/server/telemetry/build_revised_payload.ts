@@ -1,0 +1,35 @@
+/*
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
+ */
+
+import { isEqual } from 'lodash';
+import { buildCommonFields } from './build_common_fields';
+import { buildProposalIdFields } from './build_proposal_id_fields';
+import { SERVER_API_REVISION_SOURCE } from './constants';
+import type { ProposalsProposalRevisedPayload } from './event_types';
+import type { ProposalTelemetryRecord } from './types';
+
+/**
+ * Describes which parts of a proposal a revision changed, never the values themselves, and which
+ * surface asked for it. A revision written without a source came from an in-process server
+ * caller, so it reads as `server_api`.
+ */
+export const buildRevisedPayload = ({
+  original,
+  revision,
+}: {
+  original: ProposalTelemetryRecord;
+  revision: ProposalTelemetryRecord;
+}): ProposalsProposalRevisedPayload => ({
+  ...buildCommonFields(revision),
+  ...buildProposalIdFields(revision),
+  action_input_changed: !isEqual(original.actionInput, revision.actionInput),
+  comment_changed: original.comment !== revision.comment,
+  confidence_changed: original.confidence !== revision.confidence,
+  impact_changed: original.impact !== revision.impact,
+  revision: revision.revision,
+  revision_source: revision.revisionSource ?? SERVER_API_REVISION_SOURCE,
+});

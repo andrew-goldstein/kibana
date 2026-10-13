@@ -37,6 +37,7 @@ import type {
   ProposalChartsSummaryQuery,
   ProposalChartsSummaryResponse,
   ProposalDecision,
+  ProposalDecisionSource,
   ProposalFilters,
   ProposalStatus,
   ProposalUser,
@@ -52,6 +53,24 @@ import {
 import type { ChartsWindow } from './esql';
 import type { ProposalDocument, ProposalsStorageClient } from '../storage/proposals_storage';
 import { CONFIDENCE_RANK_FIELD, IMPACT_RANK_FIELD, toSortRanks } from '../storage/sort_ranks';
+import type {
+  ProposalResumeRejectedReason,
+  ProposalRevisionSource,
+  ProposalSettlePath,
+  ProposalsTelemetryEvent,
+  ProposalsTelemetryReporter,
+} from '../telemetry';
+import {
+  buildCreatedPayload,
+  buildResumeRejectedPayload,
+  buildRetriedPayload,
+  buildRevisedPayload,
+  buildUpdateEvents,
+  PROPOSALS_TELEMETRY_EVENTS,
+  toResumeRejectedReason,
+  toTelemetryActionId,
+  toTelemetryRecord,
+} from '../telemetry';
 import {
   ProposalAlreadyExistsError,
   ProposalConflictError,
@@ -65,6 +84,20 @@ type WorkflowsManagementApi = WorkflowsServerPluginSetup['management'];
 interface ActionWorkflowDefinition {
   consts?: { actionMetadata?: unknown };
   triggers?: Array<{ type?: string; inputs?: { properties?: Record<string, unknown> } }>;
+}
+
+/** The parts of an action workflow this service reads: its definition, and whether it is managed. */
+interface ActionWorkflow {
+  definition?: ActionWorkflowDefinition | null;
+  managed?: boolean;
+  originManagedWorkflowId?: string | null;
+}
+
+/** What the creation path learns from its one read of the action workflow. */
+interface ResolvedAction {
+  /** The action as telemetry may name it: its managed definition id, or `custom`. Not stored. */
+  actionId: string;
+  metadata: ActionMetadata | undefined;
 }
 
 /**
@@ -92,6 +125,15 @@ export interface UpdateProposalParams {
   dismissReason?: DismissReason;
   rationale?: string;
   executionError?: string;
+  /** Who made the decision, for reporting only. Not stored: nothing reads it back. */
+  decisionSource?: ProposalDecisionSource;
+  /**
+   * Which write is settling the proposal outside the decision loop, for reporting only and never
+   * stored: `gate` from `proposals.settleIncompleteProposal`, `external` for an expiry
+   * `proposals.updateProposal` writes, `gate_ended` when a read or a decision finds the gate
+   * execution ended. None is a step input.
+   */
+  settlePath?: ProposalSettlePath;
 }
 
 export interface ProposalsServiceDeps {
@@ -99,6 +141,13 @@ export interface ProposalsServiceDeps {
   logger: Logger;
   getWorkflowsApi: () => WorkflowsManagementApi;
   getAttachmentsClient: (request: KibanaRequest) => Promise<AttachmentPublicClient>;
+  /** Reports the proposals EBT events. Optional, so a service without it simply reports nothing. */
+  telemetry?: ProposalsTelemetryReporter;
+  /**
+   * Whether telemetry is opted in right now, so a read made only for telemetry can be skipped.
+   * Optional: without it every such read runs, and core analytics still applies the opt-in.
+   */
+  isTelemetryOptedIn?: () => Promise<boolean>;
 }
 
 const gateEndedError = (status: ExecutionStatus): string =>
@@ -161,13 +210,15 @@ export class ProposalsService {
     // proposal look action-bearing when it is not.
     const actionWorkflowId = blankToUndefined(params.actionWorkflowId);
 
-    // A single fetch of the action definition serves three purposes: the queue
+    // A single fetch of the action definition serves four purposes: the queue
     // grouping, the impact (intrinsic to the action rather than to the situation
-    // that produced it), and rejecting an `actionInput` the action could not
-    // accept — before an analyst is asked to approve something that cannot run.
-    const metadata = actionWorkflowId
+    // that produced it), rejecting an `actionInput` the action could not
+    // accept — before an analyst is asked to approve something that cannot run —
+    // and the action id telemetry may name the action by.
+    const action = actionWorkflowId
       ? await this.resolveAndValidateAction(actionWorkflowId, params.actionInput, spaceId, request)
       : undefined;
+    const metadata = action?.metadata;
 
     // Caller first in both: it knows the situation the proposal came out of,
     // which the action's own metadata cannot. A category can end up absent —
@@ -219,6 +270,18 @@ export class ProposalsService {
       }
       throw error;
     }
+
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalCreated,
+        // The action id is reported once, here: retries and revisions keep the same action, so
+        // later events join to this one by `root_proposal_id`. Unknown when the action could not
+        // be read, rather than a guess.
+        payload: buildCreatedPayload(
+          toTelemetryRecord({ id, ...document }, { actionId: action?.actionId })
+        ),
+      },
+    ]);
 
     await this.attachToConversation(id, params.conversationId, document.title, request);
 
@@ -448,46 +511,129 @@ export class ProposalsService {
   ): Promise<Proposal> {
     const { proposal, seqNo, primaryTerm } = await this.load(id, spaceId);
 
-    // Every refusal comes first, so a rejected release never leaves an
-    // annotation behind. Ordering matters more than it looks: an annotation
-    // written ahead of a conflict would leave a dismiss reason on a proposal
-    // that was never dismissed, and a later approval would land on top of it.
-    this.assertDecidable(proposal);
+    try {
+      // Every refusal comes first, so a rejected release never leaves an
+      // annotation behind. Ordering matters more than it looks: an annotation
+      // written ahead of a conflict would leave a dismiss reason on a proposal
+      // that was never dismissed, and a later approval would land on top of it.
+      this.assertDecidable(proposal);
 
-    // Refused without settling: the live gate expires the proposal itself at the
-    // deadline, and settling here could race a decision released just before it.
-    if (isPastDeadline(proposal, Date.now())) {
-      throw new ProposalConflictError(`Proposal [${id}] passed its decision deadline`);
+      // Refused without settling: the live gate expires the proposal itself at the
+      // deadline, and settling here could race a decision released just before it.
+      if (isPastDeadline(proposal, Date.now())) {
+        throw new ProposalConflictError(`Proposal [${id}] passed its decision deadline`, {
+          reason: 'past_deadline',
+        });
+      }
+
+      if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
+        throw new ProposalConflictError(
+          `Proposal [${id}] was modified since it was rendered; re-read it before approving`,
+          { reason: 'input_changed' }
+        );
+      }
+
+      const execution = await this.getGateExecution(proposal, spaceId, request);
+      if (isTerminalStatus(execution.status)) {
+        await this.settleOrphan(id, execution.status, spaceId);
+        // The gate is not waiting, which is how this refusal read before an ended
+        // gate could be settled here; the settle reports its own status change.
+        throw new ProposalConflictError(
+          `Proposal [${id}] can no longer be decided: ${gateEndedError(execution.status)}`,
+          { reason: 'not_waiting' }
+        );
+      }
+      if (execution.status !== ExecutionStatus.WAITING_FOR_INPUT || execution.finishedAt) {
+        throw new ProposalConflictError(
+          `Execution [${execution.id}] is not waiting for input (status: ${execution.status})`,
+          { reason: 'not_waiting' }
+        );
+      }
+
+      const annotated = await this.annotate(
+        proposal,
+        { dismissReason, rationale },
+        { seqNo, primaryTerm }
+      );
+
+      await this.resumeGate(execution, { spaceId, request, approved });
+
+      return stripRanks(annotated);
+    } catch (error) {
+      // Only a typed refusal is reported: a lost annotation race or a failing
+      // resume API is not a decision attempt that was turned away.
+      const reason = toResumeRejectedReason(error);
+      if (reason !== undefined) {
+        this.reportResumeRejectedFor(proposal, reason);
+      }
+      throw error;
     }
+  }
 
-    if (approved && actionInput !== undefined && !sameInput(actionInput, proposal.actionInput)) {
-      throw new ProposalConflictError(
-        `Proposal [${id}] was modified since it was rendered; re-read it before approving`
+  /**
+   * Reports a decision attempt the gate workflow refused behind the gate, where
+   * the service never sees the refusal itself. Never throws, including when the
+   * proposal cannot be read. Reads nothing on an opted-out cluster, since the
+   * read exists only to build the event.
+   */
+  async reportResumeRejected({
+    id,
+    reason,
+    spaceId,
+  }: {
+    id: string;
+    reason: ProposalResumeRejectedReason;
+    spaceId: string;
+  }): Promise<void> {
+    const { isTelemetryOptedIn, telemetry } = this.deps;
+    if (!telemetry || (isTelemetryOptedIn && !(await isTelemetryOptedIn()))) {
+      return;
+    }
+    try {
+      const { proposal } = await this.load(id, spaceId);
+      this.reportResumeRejectedFor(proposal, reason);
+    } catch (error) {
+      this.deps.logger.debug(
+        () =>
+          `Did not report a rejected resume of proposal [${id}]: ${
+            error instanceof Error ? error.message : String(error)
+          }`
       );
     }
+  }
 
-    const execution = await this.getGateExecution(proposal, spaceId, request);
-    if (isTerminalStatus(execution.status)) {
-      await this.settleOrphan(id, execution.status, spaceId);
-      throw new ProposalConflictError(
-        `Proposal [${id}] can no longer be decided: ${gateEndedError(execution.status)}`
+  private reportResumeRejectedFor(
+    proposal: StoredProposalRecord,
+    reason: ProposalResumeRejectedReason
+  ): void {
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalResumeRejected,
+        payload: buildResumeRejectedPayload(toTelemetryRecord(proposal), reason),
+      },
+    ]);
+  }
+
+  /**
+   * Reports the events a write produced, after it resolved. Never throws:
+   * building a payload runs inside the guard too, so telemetry cannot fail the
+   * write it follows.
+   */
+  private report(buildEvents: () => ProposalsTelemetryEvent[]): void {
+    const { logger, telemetry } = this.deps;
+    if (!telemetry) {
+      return;
+    }
+    try {
+      buildEvents().forEach(({ eventType, payload }) => telemetry(eventType, payload));
+    } catch (error) {
+      logger.debug(
+        () =>
+          `Failed to build proposals telemetry: ${
+            error instanceof Error ? error.message : String(error)
+          }`
       );
     }
-    if (execution.status !== ExecutionStatus.WAITING_FOR_INPUT || execution.finishedAt) {
-      throw new ProposalConflictError(
-        `Execution [${execution.id}] is not waiting for input (status: ${execution.status})`
-      );
-    }
-
-    const annotated = await this.annotate(
-      proposal,
-      { dismissReason, rationale },
-      { seqNo, primaryTerm }
-    );
-
-    await this.resumeGate(execution, { spaceId, request, approved });
-
-    return stripRanks(annotated);
   }
 
   /**
@@ -593,6 +739,12 @@ export class ProposalsService {
       proposal.decidedAt ??
       (params.decision !== undefined || isTerminal(status) ? new Date().toISOString() : undefined);
 
+    // Only the write that actually settles the proposal says which path did.
+    // The failure handler re-writes `failed` onto a record whose action already
+    // failed, and that must not reattribute an outcome the loop recorded.
+    const settlePath =
+      isTerminal(status) && !isTerminal(proposal.status) ? params.settlePath : undefined;
+
     const updated: StoredProposalRecord = {
       ...proposal,
       status,
@@ -608,6 +760,21 @@ export class ProposalsService {
     const { id: _id, ...document } = updated;
 
     await this.writeDocument(id, document, { seqNo, primaryTerm });
+
+    // Diffed against the loaded record rather than the params, because a
+    // same-status rewrite is allowed and must report nothing. The decision
+    // source and the settle path are only known to this write, so they travel
+    // as context.
+    this.report(() =>
+      buildUpdateEvents({
+        after: toTelemetryRecord(updated, {
+          ...(params.decision !== undefined ? { decisionSource: params.decisionSource } : {}),
+          settlePath,
+        }),
+        before: toTelemetryRecord(proposal),
+        now: Date.now(),
+      })
+    );
 
     return stripRanks(updated);
   }
@@ -690,6 +857,13 @@ export class ProposalsService {
 
     await this.writeDocument(id, superseded, { seqNo, primaryTerm });
 
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRetried,
+        payload: buildRetriedPayload(toTelemetryRecord({ id: cloneId, ...document })),
+      },
+    ]);
+
     await this.attachToConversation(cloneId, document.conversationId, document.title, request);
 
     return cloneId;
@@ -702,11 +876,16 @@ export class ProposalsService {
    * `createdAt`, `expiresAt` and `workflowExecutionId` are inherited rather than
    * restarted — the deadline and the gate execution belong to the chain, not to
    * any single revision — mirroring `clone()`'s inheritance of the same fields.
+   *
+   * `revisionSource` names the surface that asked for the revision, for
+   * reporting only: the HTTP route and the agent tool pass theirs, and an
+   * in-process caller that passes none (the Hunt Worker) reads as `server_api`.
    */
   async revise(
     { id, title, comment, actionInput, impact, confidence }: ReviseProposalParams,
     spaceId: string,
-    request: KibanaRequest
+    request: KibanaRequest,
+    { revisionSource }: ReviseProposalOptions = {}
   ): Promise<{ proposalId: string; revision: number }> {
     const { proposal, seqNo, primaryTerm } = await this.load(id, spaceId);
 
@@ -815,6 +994,18 @@ export class ProposalsService {
       }
       throw error;
     }
+
+    // Only once both writes landed. The predecessor's move to `superseded` is
+    // part of the revision, not a status change of its own.
+    this.report(() => [
+      {
+        eventType: PROPOSALS_TELEMETRY_EVENTS.ProposalRevised,
+        payload: buildRevisedPayload({
+          original: toTelemetryRecord(proposal),
+          revision: toTelemetryRecord({ id: revisionId, ...document }, { revisionSource }),
+        }),
+      },
+    ]);
 
     await this.attachToConversation(revisionId, document.conversationId, document.title, request);
 
@@ -990,28 +1181,38 @@ export class ProposalsService {
     spaceId: string,
     request: KibanaRequest
   ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    return definition && this.readActionMetadata(actionWorkflowId, definition);
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    const definition = workflow?.definition;
+    return definition ? this.readActionMetadata(actionWorkflowId, definition) : undefined;
   }
 
   /**
-   * The creation path: one fetch, then both the metadata and the input check.
-   * An invalid input throws, because a proposal whose action can never run has
-   * no business sitting in a human's queue.
+   * The creation path: one fetch, then the metadata, the input check and the
+   * action id. An invalid input throws, because a proposal whose action can
+   * never run has no business sitting in a human's queue. `undefined` when the
+   * action could not be read at all.
    */
   private async resolveAndValidateAction(
     actionWorkflowId: string,
     actionInput: Record<string, unknown> | undefined,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionMetadata | undefined> {
-    const definition = await this.fetchActionDefinition(actionWorkflowId, spaceId, request);
-    if (!definition) {
+  ): Promise<ResolvedAction | undefined> {
+    const workflow = await this.fetchActionWorkflow(actionWorkflowId, spaceId, request);
+    if (!workflow) {
       return undefined;
     }
 
+    // Resolved even without a definition: whether the workflow is managed is
+    // known from the workflow itself.
+    const actionId = toTelemetryActionId(workflow);
+    const { definition } = workflow;
+    if (!definition) {
+      return { actionId, metadata: undefined };
+    }
+
     this.assertActionInputValid(actionWorkflowId, definition, actionInput);
-    return this.readActionMetadata(actionWorkflowId, definition);
+    return { actionId, metadata: this.readActionMetadata(actionWorkflowId, definition) };
   }
 
   /**
@@ -1044,16 +1245,24 @@ export class ProposalsService {
     }
   }
 
-  private async fetchActionDefinition(
+  private async fetchActionWorkflow(
     actionWorkflowId: string,
     spaceId: string,
     request: KibanaRequest
-  ): Promise<ActionWorkflowDefinition | undefined> {
+  ): Promise<ActionWorkflow | undefined> {
     try {
       const workflow = await this.deps
         .getWorkflowsApi()
         .getWorkflow(actionWorkflowId, spaceId, request);
-      return workflow?.definition as ActionWorkflowDefinition | undefined;
+      if (!workflow) {
+        return undefined;
+      }
+      const { definition, managed, originManagedWorkflowId } = workflow;
+      return {
+        definition: definition as ActionWorkflowDefinition | null | undefined,
+        managed,
+        originManagedWorkflowId,
+      };
     } catch (error) {
       this.deps.logger.warn(
         `Failed to read action workflow [${actionWorkflowId}]: ${
@@ -1131,12 +1340,14 @@ export class ProposalsService {
   private assertDecidable(proposal: StoredProposalRecord): void {
     if (proposal.decision !== undefined) {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`
+        `Proposal [${proposal.id}] was already decided as ${proposal.decision}`,
+        { reason: 'already_decided' }
       );
     }
     if (proposal.status !== 'pending') {
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has settled as ${proposal.status}`
+        `Proposal [${proposal.id}] has settled as ${proposal.status}`,
+        { reason: 'settled' }
       );
     }
   }
@@ -1176,7 +1387,8 @@ export class ProposalsService {
       // written behind the gate: returning would answer the caller with a 200
       // for a record that nothing will ever decide.
       throw new ProposalConflictError(
-        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`
+        `Proposal [${proposal.id}] has no gate execution, so its decision cannot be recorded`,
+        { reason: 'no_execution' }
       );
     }
 
@@ -1185,7 +1397,8 @@ export class ProposalsService {
       .getWorkflowExecution(proposal.workflowExecutionId, spaceId, { request });
     if (!execution) {
       throw new ProposalConflictError(
-        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`
+        `Execution [${proposal.workflowExecutionId}] for proposal [${proposal.id}] not found`,
+        { reason: 'no_execution' }
       );
     }
     return execution;
@@ -1308,6 +1521,7 @@ export class ProposalsService {
         // `executing` is only ever approved, and `pending` only ever undecided.
         status: stored.proposal.status === 'executing' ? 'failed' : 'expired',
         executionError: gateEndedError(gateStatus),
+        settlePath: 'gate_ended',
       });
     } catch (error) {
       if (error instanceof ProposalConflictError) {
@@ -1391,6 +1605,12 @@ export interface CloneProposalParams {
 
 export interface ReviseProposalParams extends ReviseProposalRequest {
   id: string;
+}
+
+/** What `revise()` takes besides the revision itself. Not stored. */
+export interface ReviseProposalOptions {
+  /** The surface that asked for the revision, for reporting only. Absent reads as `server_api`. */
+  revisionSource?: ProposalRevisionSource;
 }
 
 type QueryFilterList = Array<Record<string, unknown>>;

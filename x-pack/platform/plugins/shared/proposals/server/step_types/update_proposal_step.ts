@@ -54,6 +54,11 @@ export const getUpdateProposalStepDefinition = ({
             dismissReason: input.dismissReason,
             rationale: input.rationale,
             executionError: input.executionError,
+            decisionSource: input.decisionSource,
+            // The gate expires a proposal only through `proposals.settleIncompleteProposal`, so
+            // an expiry written here came from outside it. Set here rather than taken from an
+            // input, for reporting only, and never stored.
+            settlePath: input.status === 'expired' ? 'external' : undefined,
           },
           spaceId
         );

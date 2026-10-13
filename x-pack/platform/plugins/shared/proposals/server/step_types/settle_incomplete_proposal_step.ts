@@ -53,6 +53,9 @@ export const getSettleIncompleteProposalStepDefinition = ({
             id: latest.proposalId,
             status,
             executionError: input.executionError,
+            // For reporting only: the service derives the expiry reason from it and the
+            // proposal's deadline, and stores nothing.
+            settlePath: 'gate',
           },
           spaceId
         );

@@ -43,7 +43,7 @@ export const registerStepDefinitionsForTest = ({
     getCreateProposalStepDefinition({ getProposalsService, resolveUser, privileges }),
     getUpdateProposalStepDefinition({ getProposalsService, resolveUser, privileges }),
     getSettleIncompleteProposalStepDefinition({ getProposalsService }),
-    getCheckDecidePrivilegesStepDefinition({ privileges }),
+    getCheckDecidePrivilegesStepDefinition({ getProposalsService, privileges }),
     getGetProposalStepDefinition({ getProposalsService, privileges }),
     getCloneProposalStepDefinition({ getProposalsService, privileges }),
     getGetLatestRevisionStepDefinition({ getProposalsService, privileges }),
