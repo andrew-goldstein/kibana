@@ -55,7 +55,20 @@ triggers:
           type: string
 
 steps:
-  # Ids only. Each batch's `security.attack-discovery.run` retrieves and anonymizes
+  # A batch pipeline that times out or is cancelled never reaches its own
+  # `record_failure`, so its generation would stay `started` in the generations
+  # view. When the run before this one was itself cancelled, timed out, or is
+  # still running (the runner cancels a run in progress when the next one
+  # starts), it never reached `reconcile_this_run`, so its stranded batches are
+  # reconciled here. First, so a failed retrieval cannot skip it. Neither
+  # reconcile step can fail the run.
+  - name: reconcile_previous_run
+    type: security.attack-discovery.trackGeneration
+    with:
+      phase: reconcile
+      scope: previous_run
+
+  # Ids only. Each batch's pipeline retrieves and anonymizes
   # its own slice with an ES|QL query over those ids, so the replacements its
   # markdown uses are the ones that batch persists. Anonymizing here instead would
   # hand every batch pre-anonymized alerts with no replacements, which persisted
@@ -119,42 +132,45 @@ steps:
       {{ forloop.index0 | times: inputs.batch_size }}{%- endfor -%}
       {%- endif -%}]
     steps:
+      # One sync `workflow.execute` per branch: a branch body must be a single
+      # step, and the pipeline holds the conditions a batch needs. Literal id and
+      # `run-as-mode: inherit`, so the pipeline, and every Attack Discovery
+      # workflow it starts, runs as the Worker's service account. Its output has
+      # the shape `security.attack-discovery.run` returned here before.
       - name: run_batch
-        type: security.attack-discovery.run
+        type: workflow.execute
         with:
-          # The run's own ES|QL retrieval anonymizes this batch, and persists the
-          # replacements with its discoveries. Each `retrieve_alert_ids` row is
-          # `[_id]`, so `first` is the id. The other filters already selected these
-          # alerts, so the query only names them.
-          #
-          # `_id` is not searchable in ES|QL, so `_id IN` alone cannot be pushed down
-          # to Lucene and scans the whole alerts index once per batch. A Security
-          # alert's `kibana.alert.uuid` equals its `_id`, so filtering that keyword on
-          # the same ids is pushed down; `_id IN` then keeps the match exact.
-          #
-          # Sorted because each batch used to be a slice of the `@timestamp`-sorted
-          # retrieval, so its alerts reached the model in time order.
-          alert_retrieval_mode: esql
-          esql_query: |-
-            {%- assign ids = steps.retrieve_alert_ids.output.values | slice: foreach.item, inputs.batch_size | map: 'first' | join: '", "' -%}
-            FROM .alerts-security.alerts-{{ workflow.spaceId }} METADATA _id
-              | WHERE kibana.alert.uuid IN ("{{ ids }}")
-              | WHERE _id IN ("{{ ids }}")
-              | SORT @timestamp ASC
-              | LIMIT {{ inputs.batch_size }}
-          connector_id: "{{ inputs.connector_id }}"
-          # Stated on the leaf step rather than threaded down from the Worker: the
-          # tier is a property of the call, not of the caller. Only consulted when
-          # `connector_id` is empty, and ignored when AlertZero is disabled and the
-          # tier is therefore unregistered. Keep in sync with
-          # ALERTZERO_FRONTIER_INFERENCE_FEATURE_ID in @kbn/alertzero-common.
-          feature_id: alertzero_frontier
-          # The discoveries are read back from the index below instead. They
-          # dominate this step's output, and an output above the engine's
-          # eviction threshold is dropped from in-memory state before the
-          # parallel step aggregates its branches — so returning them inline
-          # loses them. Omitting them keeps the branch output ~150 bytes.
-          include_attack_discoveries: false
+          workflow-id: system-security-attack-discovery-batch-pipeline
+          run-as-mode: inherit
+          inputs:
+            connector_id: "{{ inputs.connector_id }}"
+            # The pipeline's ES|QL retrieval anonymizes this batch, and persists the
+            # replacements with its discoveries. Each `retrieve_alert_ids` row is
+            # `[_id]`, so `first` is the id. The other filters already selected these
+            # alerts, so the query only names them.
+            #
+            # `_id` is not searchable in ES|QL, so `_id IN` alone cannot be pushed down
+            # to Lucene and scans the whole alerts index once per batch. A Security
+            # alert's `kibana.alert.uuid` equals its `_id`, so filtering that keyword on
+            # the same ids is pushed down; `_id IN` then keeps the match exact.
+            #
+            # Sorted because each batch used to be a slice of the `@timestamp`-sorted
+            # retrieval, so its alerts reached the model in time order.
+            esql_query: |-
+              {%- assign ids = steps.retrieve_alert_ids.output.values | slice: foreach.item, inputs.batch_size | map: 'first' | join: '", "' -%}
+              FROM .alerts-security.alerts-{{ workflow.spaceId }} METADATA _id
+                | WHERE kibana.alert.uuid IN ("{{ ids }}")
+                | WHERE _id IN ("{{ ids }}")
+                | SORT @timestamp ASC
+                | LIMIT {{ inputs.batch_size }}
+
+  # Marks failed each batch whose pipeline hit the branch timeout, or was
+  # cancelled, before recording its outcome.
+  - name: reconcile_this_run
+    type: security.attack-discovery.trackGeneration
+    with:
+      phase: reconcile
+      scope: this_run
 
   # A batch delivered only when the branch completed AND the run itself reports
   # `completed`. Both halves matter: the branch can be `failed`, `skipped` or
@@ -199,9 +215,9 @@ steps:
         {%- assign analyzed = analyzed | plus: batch_count -%}
         {%- endfor -%}
         {{ analyzed }}
-      # What the model produced, before persistence deduplicated it. The run step
-      # reports `discovery_count` even though `include_attack_discoveries` is
-      # false, so this survives while the discoveries themselves are read back
+      # What the model produced, before persistence deduplicated it. The pipeline
+      # reports `discovery_count` without returning the discoveries themselves,
+      # so this survives while the discoveries themselves are read back
       # from the index. It is the only count that can disagree with
       # `attack_discoveries`: a re-discovered attack is generated here and then
       # dropped by the bulk create's version conflict, so it never comes back out
@@ -224,7 +240,7 @@ steps:
 
   # Each batch persisted its own discoveries; read them back scoped to this run's
   # generation uuids. `kibana.alert.rule.execution.uuid` is the `execution_uuid`
-  # the run step returns, so this is exact — no time window, and concurrent runs
+  # the pipeline returns, so this is exact — no time window, and concurrent runs
   # cannot bleed into each other.
   #
   # It also returns only genuinely new attacks: a re-discovered attack hashes to
@@ -260,7 +276,7 @@ steps:
       batches_total: "${{ steps.generate_batches.output.total }}"
       discoveries_generated: "${{ steps.aggregate.output.discoveries_generated | plus: 0 }}"
       # One generation id per delivered batch, not one per run: batching turns the
-      # run step's single `execution_uuid` into 1:N. Each is a
+      # pipeline's single `execution_uuid` into 1:N. Each is a
       # `kibana.alert.rule.execution.uuid` on that batch's persisted discoveries,
       # so a caller can still trace a run to everything it produced. Same
       # expression `fetch_discoveries` queries by, so the two cannot drift.

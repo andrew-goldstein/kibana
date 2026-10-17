@@ -8,7 +8,13 @@
 import type { WorkflowExecutionsTracking } from '@kbn/discoveries/impl/attack_discovery/persistence/event_logging';
 import { httpServerMock, httpServiceMock } from '@kbn/core-http-server-mocks';
 
-import { getWorkflowExecutionsTracking } from '../pipeline_data/helpers/get_workflow_executions_tracking';
+import { loggingSystemMock } from '@kbn/core-logging-server-mocks';
+
+import type { ChildWorkflowExecutionsApi } from '../pipeline_data/helpers/fill_tracking_from_pipeline_children';
+import {
+  getWorkflowExecutionsTracking,
+  type EventLogData,
+} from '../pipeline_data/helpers/get_workflow_executions_tracking';
 import type { GetExecutionTrackingResponse } from './get_execution_tracking';
 
 jest.mock('../pipeline_data/helpers/get_workflow_executions_tracking');
@@ -245,6 +251,146 @@ describe('registerGetExecutionTrackingRoute principal scoping', () => {
 
     expect(response.forbidden).toHaveBeenCalled();
     expect(mockGetWorkflowExecutionsTracking).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerGetExecutionTrackingRoute pipeline-backed generation', () => {
+  const mockGetChildWorkflowExecutions = jest.fn();
+
+  const getStartServices = jest.fn().mockResolvedValue({
+    coreStart: {
+      elasticsearch: {
+        client: {
+          asScoped: () => ({
+            asCurrentUser: { search: jest.fn() },
+          }),
+        },
+      },
+      security: {
+        authc: {
+          getCurrentUser: () => ({ username: 'test-user' }),
+        },
+      },
+    },
+    pluginsStart: {
+      spaces: { spacesService: null },
+    },
+  });
+
+  const pipelineTracking: EventLogData = {
+    alertRetrieval: [
+      {
+        workflowId: 'system-attack-discovery-alert-retrieval',
+        workflowRunId: 'alert-retrieval-run-id',
+      },
+    ],
+    gate: null,
+    generation: null,
+    pipelineRunId: 'pipeline-run-id',
+    validation: null,
+  };
+
+  const registerAndGetHandler = async (
+    {
+      workflowsManagementApi,
+    }: {
+      workflowsManagementApi?: ChildWorkflowExecutionsApi;
+    } = {
+      workflowsManagementApi: { getChildWorkflowExecutions: mockGetChildWorkflowExecutions },
+    }
+  ) => {
+    const { registerGetExecutionTrackingRoute } = await import('./get_execution_tracking');
+
+    const router = httpServiceMock.createRouter();
+    const addVersionMock = jest.fn();
+    (router.versioned.get as jest.Mock).mockReturnValue({ addVersion: addVersionMock });
+
+    registerGetExecutionTrackingRoute(router, loggingSystemMock.createLogger(), {
+      getEventLogIndex: jest.fn().mockResolvedValue('.kibana-event-log-test'),
+      getStartServices,
+      workflowsManagementApi,
+    });
+
+    return addVersionMock.mock.calls[0][1] as (
+      ctx: unknown,
+      req: unknown,
+      res: unknown
+    ) => Promise<unknown>;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (assertWorkflowsEnabled as jest.Mock).mockResolvedValue(null);
+  });
+
+  it("links a running generation child of the pipeline, read with the viewer's request", async () => {
+    mockGetWorkflowExecutionsTracking.mockResolvedValue(pipelineTracking);
+    mockGetChildWorkflowExecutions.mockResolvedValue([
+      {
+        executionId: 'generation-run-id',
+        parentStepExecutionId: 'parent-step-id',
+        status: 'running',
+        stepExecutions: [],
+        workflowId: 'system-attack-discovery-generation',
+        workflowName: 'Attack discovery generation',
+      },
+    ]);
+
+    const handler = await registerAndGetHandler();
+    const request = httpServerMock.createKibanaRequest({ params: { execution_id: 'test-id' } });
+    const response = httpServerMock.createResponseFactory();
+
+    await handler({}, request, response);
+
+    expect(mockGetChildWorkflowExecutions).toHaveBeenCalledWith(
+      'pipeline-run-id',
+      'default',
+      request
+    );
+    expect(response.ok).toHaveBeenCalledWith({
+      body: {
+        alert_retrieval: [
+          {
+            workflow_id: 'system-attack-discovery-alert-retrieval',
+            workflow_run_id: 'alert-retrieval-run-id',
+          },
+        ],
+        gate: null,
+        generation: {
+          workflow_id: 'system-attack-discovery-generation',
+          workflow_run_id: 'generation-run-id',
+        },
+        validation: null,
+      },
+    });
+  });
+
+  it('does not read child executions for an orchestrator-run generation', async () => {
+    mockGetWorkflowExecutionsTracking.mockResolvedValue({
+      ...pipelineTracking,
+      pipelineRunId: undefined,
+    });
+
+    const handler = await registerAndGetHandler();
+    const request = httpServerMock.createKibanaRequest({ params: { execution_id: 'test-id' } });
+
+    await handler({}, request, httpServerMock.createResponseFactory());
+
+    expect(mockGetChildWorkflowExecutions).not.toHaveBeenCalled();
+  });
+
+  it('returns the event-log tracking when the workflows management API is not available', async () => {
+    mockGetWorkflowExecutionsTracking.mockResolvedValue(pipelineTracking);
+
+    const handler = await registerAndGetHandler({});
+    const request = httpServerMock.createKibanaRequest({ params: { execution_id: 'test-id' } });
+    const response = httpServerMock.createResponseFactory();
+
+    await handler({}, request, response);
+
+    expect(response.ok).toHaveBeenCalledWith({
+      body: expect.objectContaining({ generation: null, validation: null }),
+    });
   });
 });
 

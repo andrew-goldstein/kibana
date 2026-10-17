@@ -80,3 +80,17 @@ steps:
       replacements: ${{ inputs.replacements }}
       size: ${{ inputs.size }}
       start: ${{ inputs.start }}
+
+  # Returns the retrieval result to a `workflow.execute` caller as one object.
+  # Without it the caller gets the engine's view of the last step, which the step
+  # `timeout` above wraps in a list.
+  - name: emit_result
+    type: workflow.output
+    status: completed
+    with:
+      alerts: ${{ steps.retrieve_alerts.output.alerts }}
+      alerts_context_count: ${{ steps.retrieve_alerts.output.alerts_context_count }}
+      anonymized_alerts: ${{ steps.retrieve_alerts.output.anonymized_alerts }}
+      api_config: ${{ steps.retrieve_alerts.output.api_config }}
+      connector_name: ${{ steps.retrieve_alerts.output.connector_name }}
+      replacements: ${{ steps.retrieve_alerts.output.replacements }}

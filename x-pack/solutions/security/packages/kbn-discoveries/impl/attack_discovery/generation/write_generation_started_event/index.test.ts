@@ -19,6 +19,24 @@ describe('writeGenerationStartedEvent', () => {
     jest.clearAllMocks();
   });
 
+  it('includes the workflowRunId of the workflow that drives the generation when set', async () => {
+    await writeGenerationStartedEvent({
+      authenticatedUser: {} as never,
+      connectorId: 'test-connector-id',
+      eventLogger: {} as never,
+      eventLogIndex: '.kibana-event-log-test',
+      executionUuid: 'test-execution-uuid',
+      loadingMessage: 'loading...',
+      spaceId: 'default',
+      workflowId: 'system-security-attack-discovery-batch-pipeline',
+      workflowRunId: 'pipeline-run-id',
+    });
+
+    const [firstCallArgs] = mockWriteAttackDiscoveryEvent.mock.calls[0];
+
+    expect(firstCallArgs).toHaveProperty('workflowRunId', 'pipeline-run-id');
+  });
+
   it('does not include workflowRunId', async () => {
     await writeGenerationStartedEvent({
       authenticatedUser: {} as never,

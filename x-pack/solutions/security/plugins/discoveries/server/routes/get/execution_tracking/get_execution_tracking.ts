@@ -16,6 +16,10 @@ import { getSpaceId } from '@kbn/discoveries/impl/lib/helpers/get_space_id';
 
 import { assertWorkflowsEnabled } from '../../../lib/assert_workflows_enabled';
 import type { DiscoveriesPluginStartDeps } from '../../../types';
+import {
+  fillTrackingFromPipelineChildren,
+  type ChildWorkflowExecutionsApi,
+} from '../pipeline_data/helpers/fill_tracking_from_pipeline_children';
 import { getWorkflowExecutionsTracking } from '../pipeline_data/helpers/get_workflow_executions_tracking';
 
 const ROUTE_PATH = '/internal/attack_discovery/executions/{execution_id}/tracking';
@@ -44,12 +48,15 @@ export const registerGetExecutionTrackingRoute = (
   {
     getEventLogIndex,
     getStartServices,
+    workflowsManagementApi,
   }: {
     getEventLogIndex: () => Promise<string>;
     getStartServices: () => Promise<{
       coreStart: CoreStart;
       pluginsStart: DiscoveriesPluginStartDeps;
     }>;
+    /** Used to link still-running phases of a pipeline-backed generation */
+    workflowsManagementApi?: ChildWorkflowExecutionsApi;
   }
 ) => {
   router.versioned
@@ -104,7 +111,7 @@ export const registerGetExecutionTrackingRoute = (
             spaces: pluginsStart.spaces?.spacesService,
           });
 
-          const tracking = await getWorkflowExecutionsTracking({
+          const eventLogTracking = await getWorkflowExecutionsTracking({
             esClient,
             eventLogIndex,
             executionId,
@@ -112,11 +119,26 @@ export const registerGetExecutionTrackingRoute = (
             username,
           });
 
-          if (tracking == null) {
+          if (eventLogTracking == null) {
             return response.notFound({
               body: { message: `Execution ${executionId} not found in event log` },
             });
           }
+
+          // A pipeline-backed generation records a phase's run id only after the
+          // phase finishes, so link still-running phases from the pipeline's child
+          // executions (no-op for orchestrator-run generations).
+          const tracking =
+            workflowsManagementApi != null
+              ? await fillTrackingFromPipelineChildren({
+                  logger,
+                  pipelineRunId: eventLogTracking.pipelineRunId,
+                  request,
+                  spaceId,
+                  tracking: eventLogTracking,
+                  workflowsManagementApi,
+                })
+              : eventLogTracking;
 
           const responseBody: GetExecutionTrackingResponse = {
             alert_retrieval:

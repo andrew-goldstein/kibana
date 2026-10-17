@@ -9,6 +9,7 @@ import { createServerStepDefinition } from '@kbn/workflows-extensions/server';
 import type { Logger } from '@kbn/core/server';
 import type { IRuleDataClient } from '@kbn/rule-registry-plugin/server';
 import type { CoreStart } from '@kbn/core/server';
+import { ATTACK_DISCOVERY_WORKFLOW_GENERATION_SOURCE_PREFIX } from '@kbn/elastic-assistant-common';
 
 import { createTracedLogger } from '@kbn/discoveries/impl/lib/create_traced_logger';
 import type { DiscoveriesPluginStartDeps } from '../../../types';
@@ -17,6 +18,8 @@ import { resolveConnectorDetails } from '../../helpers/resolve_connector_details
 import { validateAttackDiscoveries } from '../../../routes/post/validate/helpers/validate_attack_discoveries';
 import { PersistDiscoveriesStepCommonDefinition } from '../../../../common/step_types/persist_discoveries_step';
 import { authenticateAndGetSpace } from '../default_validation_step/helpers/authenticate_and_get_space';
+import { getIdentityGenerationSource } from './helpers/get_identity_generation_source';
+import { isReservedGenerationSource } from './helpers/is_reserved_generation_source';
 
 export const getPersistDiscoveriesStepDefinition = ({
   adhocAttackDiscoveryDataClient,
@@ -41,12 +44,27 @@ export const getPersistDiscoveriesStepDefinition = ({
           attack_discoveries: attackDiscoveries,
           connector_name: connectorName,
           enable_field_rendering: enableFieldRendering = true,
-          generation_source: generationSource,
+          generation_source: inputGenerationSource,
           generation_uuid: generationUuid,
           replacements,
           source,
           with_replacements: withReplacements = false,
         } = context.input;
+
+        if (isReservedGenerationSource(inputGenerationSource)) {
+          throw new Error(
+            `generation_source values that start with '${ATTACK_DISCOVERY_WORKFLOW_GENERATION_SOURCE_PREFIX}' are set by Kibana and can't be passed to this step`
+          );
+        }
+
+        // An execution that inherited a service account was started by the workflow that owns the
+        // account (for example an AlertZero Worker), so that workflow is the producer.
+        const { execution, workflow } = context.contextManager.getContext();
+        const generationSource =
+          getIdentityGenerationSource({
+            effectiveIdentity: execution.effectiveIdentity,
+            spaceId: workflow.spaceId,
+          }) ?? inputGenerationSource;
 
         const tracedLogger = createTracedLogger(logger, generationUuid);
 

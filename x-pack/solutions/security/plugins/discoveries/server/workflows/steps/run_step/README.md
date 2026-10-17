@@ -37,9 +37,9 @@ with:
   connector_id: ${{ inputs.connector_id }}
 ```
 
-### The `replacements` map is never exposed
+### The `replacements` map is not in the step output
 
-The anonymization `replacements` map (which maps anonymized tokens back to real entity names) is held in memory during the pipeline but is intentionally excluded from the step output. Exposing it would leak PII/sensitive entity names into workflow state, logs, and any downstream steps.
+The anonymization `replacements` map (which maps anonymized tokens back to real entity names) is intentionally excluded from the step output, so it doesn't reach downstream steps or this workflow's state. The pipeline's own alert retrieval, generation and validation workflows still pass it between them, so it is stored in their execution records.
 
 ### Sync vs async mode
 

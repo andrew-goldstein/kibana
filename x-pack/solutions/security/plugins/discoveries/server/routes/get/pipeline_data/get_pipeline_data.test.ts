@@ -106,9 +106,12 @@ describe('registerGetPipelineDataRoute', () => {
 
   const mockGetWorkflowExecution = jest.fn();
 
+  const mockGetChildWorkflowExecutions = jest.fn();
+
   const mockGetCurrentUser = jest.fn();
 
   const mockWorkflowsManagementApi = {
+    getChildWorkflowExecutions: mockGetChildWorkflowExecutions,
     getWorkflow: jest.fn(),
     getWorkflowExecution: mockGetWorkflowExecution,
     runWorkflow: jest.fn(),
@@ -1149,6 +1152,131 @@ describe('registerGetPipelineDataRoute', () => {
       body: expect.not.objectContaining({
         diagnostics_context: expect.anything(),
       }),
+    });
+  });
+
+  describe('pipeline-backed generation', () => {
+    const pipelineTracking: EventLogData = {
+      alertRetrieval: [
+        {
+          workflowId: 'system-attack-discovery-alert-retrieval',
+          workflowRunId: 'alert-retrieval-run-id',
+        },
+      ],
+      gate: null,
+      generation: null,
+      pipelineRunId: 'pipeline-run-id',
+      validation: null,
+    };
+
+    const context = {
+      core: Promise.resolve({
+        featureFlags: { getBooleanValue: jest.fn().mockResolvedValue(true) },
+      }),
+    };
+
+    beforeEach(() => {
+      mockGetWorkflowExecution.mockResolvedValue({ stepExecutions: [] });
+      mockExtractPipelineAlertData.mockReturnValue({
+        alerts: ['alert-1'],
+        alerts_context_count: 1,
+        extraction_strategy: 'default_esql' as const,
+      });
+      mockExtractPipelineGenerationData.mockReturnValue(null);
+      mockExtractPipelineValidationData.mockReturnValue(null);
+      mockComputeCombinedAlerts.mockReturnValue({ alerts: ['alert-1'], alerts_context_count: 1 });
+    });
+
+    it("reads the pipeline's child executions with the viewer's request", async () => {
+      const handler = registerAndGetHandler();
+      const request = createRequest();
+
+      mockGetWorkflowExecutionsTracking.mockResolvedValue(pipelineTracking);
+      mockGetChildWorkflowExecutions.mockResolvedValue([]);
+
+      await handler(context, request, httpServerMock.createResponseFactory());
+
+      expect(mockGetChildWorkflowExecutions).toHaveBeenCalledWith(
+        'pipeline-run-id',
+        'default',
+        request
+      );
+    });
+
+    it('links a running generation child that the event log has not recorded yet', async () => {
+      const handler = registerAndGetHandler();
+      const request = createRequest();
+
+      mockGetWorkflowExecutionsTracking.mockResolvedValue(pipelineTracking);
+      mockGetChildWorkflowExecutions.mockResolvedValue([
+        {
+          executionId: 'generation-run-id',
+          parentStepExecutionId: 'parent-step-id',
+          status: 'running',
+          stepExecutions: [],
+          workflowId: 'system-attack-discovery-generation',
+          workflowName: 'Attack discovery generation',
+        },
+      ]);
+
+      const responseMock = httpServerMock.createResponseFactory();
+      await handler(context, request, responseMock);
+
+      expect(mockGetWorkflowExecution).toHaveBeenCalledWith('generation-run-id', 'default', {
+        includeInput: true,
+        includeOutput: true,
+        request,
+      });
+      expect(responseMock.ok).toHaveBeenCalledWith({
+        body: expect.objectContaining({
+          workflow_executions_tracking: {
+            alert_retrieval: [
+              {
+                workflow_id: 'system-attack-discovery-alert-retrieval',
+                workflow_run_id: 'alert-retrieval-run-id',
+              },
+            ],
+            gate: null,
+            generation: {
+              workflow_id: 'system-attack-discovery-generation',
+              workflow_run_id: 'generation-run-id',
+            },
+            validation: null,
+          },
+        }),
+      });
+    });
+
+    it('returns the event-log tracking unchanged when reading child executions fails', async () => {
+      const handler = registerAndGetHandler();
+
+      mockGetWorkflowExecutionsTracking.mockResolvedValue(pipelineTracking);
+      mockGetChildWorkflowExecutions.mockRejectedValue(new Error('Forbidden'));
+
+      const responseMock = httpServerMock.createResponseFactory();
+      await handler(context, createRequest(), responseMock);
+
+      expect(responseMock.ok).toHaveBeenCalledWith({
+        body: expect.objectContaining({
+          workflow_executions_tracking: expect.objectContaining({
+            generation: null,
+            validation: null,
+          }),
+        }),
+      });
+    });
+
+    it('does not read child executions for an orchestrator-run generation', async () => {
+      const handler = registerAndGetHandler();
+
+      mockGetWorkflowExecutionsTracking.mockResolvedValue({
+        ...pipelineTracking,
+        pipelineRunId: undefined,
+      });
+
+      await handler(context, createRequest(), httpServerMock.createResponseFactory());
+
+      expect(mockGetChildWorkflowExecutions).not.toHaveBeenCalled();
     });
   });
 

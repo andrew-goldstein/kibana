@@ -22,6 +22,7 @@ import {
   generateStepPublicDefinition,
   persistDiscoveriesStepPublicDefinition,
   runStepPublicDefinition,
+  trackGenerationStepPublicDefinition,
 } from './step_types';
 
 const ATTACK_DISCOVERY_WORKFLOWS_ENABLED_FEATURE_FLAG =
@@ -68,6 +69,7 @@ export class DiscoveriesPublicPlugin
       gate(persistDiscoveriesStepPublicDefinition)
     );
     plugins.workflowsExtensions.registerStepDefinition(gate(runStepPublicDefinition));
+    plugins.workflowsExtensions.registerStepDefinition(gate(trackGenerationStepPublicDefinition));
 
     return {};
   }

@@ -32,6 +32,11 @@ export const PersistDiscoveriesInputSchema = lazySchema(() =>
      * NOTE: distinct from `source` below, which is the execution/trigger type.
      * Kibana Attack Discovery omits this, which keeps its hashes byte-identical to
      * the ones already persisted.
+     *
+     * When the step runs in an execution that inherited a service account, the step
+     * sets the producer itself, to `workflow:<definition id of the workflow that owns the
+     * account>`, without the space id suffix of a per-space install.
+     * Values that start with `workflow:` are rejected as input.
      */
     generation_source: z.string().max(256).optional(),
     generation_uuid: z.string(),

@@ -2765,6 +2765,13 @@ components:
             discovery featuring only the host.name and user.name fields (when
             they are applicable), using the same syntax
           type: string
+        generation_source:
+          description: The optional producer of the attack discovery. When a workflow
+            running as an inherited service account persisted it, this is
+            `workflow:` followed by the definition ID of the managed workflow
+            that owns the account, without the space ID suffix of a per-space
+            install.
+          type: string
         generation_uuid:
           description: The generation ID of the run that created the attack discovery
           type: string

@@ -948,8 +948,8 @@ describe('Attack Discovery worker chain', () => {
 
       // kibana-d7aa: uniqueness is the persist 409 on the attack hash, not a
       // review-side lookup. A regrouped alert set, and Kibana scheduled AD vs this
-      // Worker (`ownerId` differs; `generation_source` is not passed yet), are
-      // intentional producer splits.
+      // Worker (`ownerId` and `generation_source` differ), are intentional producer
+      // splits.
       // The only step between them reads the DISCOVERY's display text, not the
       // Investigation, so there is still no Investigation lookup before the create.
       it('derives the Investigation id first, with no Investigation lookup before it', () => {

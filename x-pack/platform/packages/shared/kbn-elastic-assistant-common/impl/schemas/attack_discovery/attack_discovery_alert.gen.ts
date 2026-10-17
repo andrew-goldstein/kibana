@@ -116,6 +116,15 @@ export const AttackDiscoveryAlert = lazySchema(() =>
         'An optional, short (no more than a sentence) summary of the attack discovery featuring only the host.name and user.name fields (when they are applicable), using the same syntax'
       ),
     /**
+     * The optional producer of the attack discovery. When a workflow running as an inherited service account persisted it, this is `workflow:` followed by the definition ID of the managed workflow that owns the account, without the space ID suffix of a per-space install.
+     */
+    generationSource: z
+      .string()
+      .optional()
+      .describe(
+        'The optional producer of the attack discovery. When a workflow running as an inherited service account persisted it, this is `workflow:` followed by the definition ID of the managed workflow that owns the account, without the space ID suffix of a per-space install.'
+      ),
+    /**
      * The generation ID of the run that created the attack discovery
      */
     generationUuid: z

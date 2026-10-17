@@ -29,6 +29,7 @@ export const writeGenerationStartedEvent = async ({
   sourceMetadata,
   spaceId,
   workflowId,
+  workflowRunId,
 }: {
   authenticatedUser: AuthenticatedUser;
   connectorId: string;
@@ -41,6 +42,8 @@ export const writeGenerationStartedEvent = async ({
   sourceMetadata?: SourceMetadata;
   spaceId: string;
   workflowId: string;
+  /** The run id of the workflow that drives this generation, when it runs as a workflow. */
+  workflowRunId?: string;
 }): Promise<Date> => {
   const generationStartedAt = new Date();
 
@@ -60,6 +63,7 @@ export const writeGenerationStartedEvent = async ({
     spaceId,
     start: generationStartedAt,
     workflowId,
+    ...(workflowRunId != null ? { workflowRunId } : {}),
   });
 
   return generationStartedAt;

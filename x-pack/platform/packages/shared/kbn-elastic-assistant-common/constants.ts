@@ -135,6 +135,13 @@ export const ATTACK_DISCOVERY_DATA_GENERATOR_RULE_TYPE_ID =
   'security.attack_discovery.data_generator' as const;
 
 /**
+ * Prefix of a `kibana.alert.attack_discovery.generation_source` that the persist step derives from
+ * the workflow's inherited service account. The rest of the value is the id of the workflow that
+ * owns that account, for example an AlertZero Worker. Callers can't set a value with this prefix.
+ */
+export const ATTACK_DISCOVERY_WORKFLOW_GENERATION_SOURCE_PREFIX = 'workflow:' as const;
+
+/**
  * The common prefix for all (ad hoc and scheduled) Attack discovery alerts indices
  */
 export const ATTACK_DISCOVERY_ALERTS_COMMON_INDEX_PREFIX =

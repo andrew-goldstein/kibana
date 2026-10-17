@@ -7,6 +7,7 @@
  * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
+import ATTACK_DISCOVERY_BATCH_PIPELINE_YAML from './attack_discovery_batch_pipeline.yaml';
 import ATTACK_DISCOVERY_BATCHED_GENERATION_YAML from './attack_discovery_batched_generation.yaml';
 import ATTACK_DISCOVERY_FP_TP_ANALYSIS_YAML from './attack_discovery_fp_tp_analysis.yaml';
 import ATTACK_DISCOVERY_REVIEW_YAML from './attack_discovery_review.yaml';
@@ -30,6 +31,8 @@ export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID =
   'system-security-attack-discovery-batched-generation';
 export const ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID =
   'system-security-attack-discovery-fp-tp-analysis';
+export const ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID =
+  'system-security-attack-discovery-batch-pipeline';
 
 export const ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW = {
   billable: false,
@@ -66,18 +69,34 @@ export const ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW = {
  * uses the internal-workflow management profile: enablement is enforced rather
  * than restorable.
  *
- * The version carries the YAML's switch to a per-batch ES|QL retrieval, which lets
- * each batch persist the replacements its discoveries use. Bumped as a deliberate
- * rollout signal for that switch; the YAML change alone already rolls out through
- * `definitionHash`.
+ * Version 3 carries the YAML's switch to a per-batch ES|QL retrieval, which lets
+ * each batch persist the replacements its discoveries use. Version 4 runs each batch
+ * through the batch pipeline instead of `security.attack-discovery.run`, so the Attack
+ * Discovery workflows run as the Worker's service account. Both are deliberate
+ * rollout signals; the YAML change alone already rolls out through `definitionHash`.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW = {
   billable: false,
   id: ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
   management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
   pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
-  version: 3,
+  version: 4,
   yaml: ATTACK_DISCOVERY_BATCHED_GENERATION_YAML,
+} as const satisfies ManagedWorkflowDefinition;
+
+/**
+ * One batch's Attack Discovery generation, invoked by batched generation via
+ * `workflow.execute`. Runs the default alert retrieval, generation and validation
+ * workflows with `run-as-mode: inherit`, so they run as the Worker's service account.
+ * Owns no trigger, so it uses the internal-workflow management profile.
+ */
+export const ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW = {
+  billable: false,
+  id: ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
+  management: ALERTZERO_INTERNAL_WORKFLOW_MANAGEMENT,
+  pluginId: ALERTZERO_MANAGED_WORKFLOW_PLUGIN_ID,
+  version: 1,
+  yaml: ATTACK_DISCOVERY_BATCH_PIPELINE_YAML,
 } as const satisfies ManagedWorkflowDefinition;
 
 /**

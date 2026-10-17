@@ -13,7 +13,7 @@ import {
   SYSTEM_SECURITY_WORKER_FLOOR_ALERT_TRIAGE_ID,
   SYSTEM_SECURITY_WORKER_FLOOR_ATTACK_DISCOVERY_ID,
   SYSTEM_SECURITY_WORKER_FORENSICS_ENDPOINT_ANALYSIS_ID,
-} from '@kbn/alertzero-common';
+} from '../../constants';
 
 // Translated on each call, so server messages use the locale at the time of the request.
 const WORKER_NAMES: Record<string, () => string> = {

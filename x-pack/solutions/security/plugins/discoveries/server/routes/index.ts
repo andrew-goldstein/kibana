@@ -54,6 +54,7 @@ export const registerRoutes = (
   registerGetExecutionTrackingRoute(router, logger, {
     getEventLogIndex,
     getStartServices,
+    workflowsManagementApi,
   });
   registerGetPipelineDataRoute(router, logger, {
     getEventLogIndex,

@@ -10,6 +10,8 @@
 import { parse } from 'yaml';
 
 import {
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW,
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
 } from '.';
@@ -43,6 +45,15 @@ const parsed = parse(ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW.yaml
 const inputs = (): Record<string, Record<string, unknown>> =>
   (parsed.triggers?.find((trigger) => trigger.type === 'manual')?.inputs?.properties ??
     {}) as Record<string, Record<string, unknown>>;
+
+const pipelineOutput = (): ParsedStep => {
+  const pipeline = parse(ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW.yaml) as ParsedWorkflow;
+  const found = pipeline.steps?.find((candidate) => candidate.type === 'workflow.output');
+  if (!found) {
+    throw new Error('No workflow.output step in the batch pipeline workflow');
+  }
+  return found;
+};
 
 const step = (name: string): ParsedStep => {
   const found = parsed.steps?.find((candidate) => candidate.name === name);
@@ -211,13 +222,24 @@ describe('ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW', () => {
       expect(fanOut().steps?.[0].timeout).toBeUndefined();
     });
 
-    it('runs the full Attack Discovery pipeline per batch', () => {
-      expect(fanOut().steps?.[0].type).toBe('security.attack-discovery.run');
+    const batchInputs = () =>
+      (fanOut().steps?.[0].with as { inputs?: Record<string, unknown> } | undefined)?.inputs;
+
+    // A literal id with `run-as-mode: inherit` is what lets the pipeline, and the
+    // Attack Discovery workflows it starts, run as the Worker's service account.
+    it('runs the batch pipeline per batch, as the Worker', () => {
+      expect(fanOut().steps?.[0]).toMatchObject({
+        type: 'workflow.execute',
+        with: {
+          'run-as-mode': 'inherit',
+          'workflow-id': ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
+        },
+      });
     });
 
     it('has each batch retrieve its own alerts rather than take pre-built alert strings', () => {
-      expect(fanOut().steps?.[0].with?.alert_retrieval_mode).toBe('esql');
-      expect(fanOut().steps?.[0].with).not.toHaveProperty('alerts');
+      expect(batchInputs()).toHaveProperty('esql_query');
+      expect(batchInputs()).not.toHaveProperty('alerts');
     });
 
     // The offsets and the per-branch slice are a matched pair — an off-by-one
@@ -238,7 +260,7 @@ describe('ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW', () => {
       });
 
       const renderQuery = (context: ReturnType<typeof getContext>, item: number) =>
-        engine.parseAndRender(String(fanOut().steps?.[0].with?.esql_query), {
+        engine.parseAndRender(String(batchInputs()?.esql_query), {
           ...context,
           foreach: { item },
         });
@@ -316,15 +338,52 @@ describe('ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW', () => {
 
     // A branch output above the engine's eviction threshold is dropped from
     // in-memory state before the parallel step aggregates, so the discoveries
-    // are read back from the index instead.
-    it('opts out of inline discoveries so the branch output stays small', () => {
-      expect(fanOut().steps?.[0].with?.include_attack_discoveries).toBe(false);
+    // are read back from the index instead. The pipeline's output carries counts
+    // and the generation id, not the discoveries.
+    it('keeps the branch output small', () => {
+      expect(Object.keys(pipelineOutput().with ?? {}).sort()).toEqual([
+        'alerts_context_count',
+        'discovery_count',
+        'execution_uuid',
+        'status',
+      ]);
     });
 
     // Step IO is keyed by step id and returns the latest execution, so two
     // concurrent branches running the same step name would race.
     it('keeps the branch body to a single step', () => {
       expect(fanOut().steps).toHaveLength(1);
+    });
+  });
+
+  // A batch pipeline that times out or is cancelled never reaches its own
+  // `record_failure`, so its generation would stay `started` forever.
+  describe('reconciliation', () => {
+    const names = () => parsed.steps?.map(({ name }) => name) ?? [];
+
+    it('sweeps the batches of a stranded previous run before anything else', () => {
+      expect({ first: names()[0], step: step('reconcile_previous_run') }).toEqual({
+        first: 'reconcile_previous_run',
+        step: {
+          name: 'reconcile_previous_run',
+          type: 'security.attack-discovery.trackGeneration',
+          with: { phase: 'reconcile', scope: 'previous_run' },
+        },
+      });
+    });
+
+    it('reconciles the batches of this run right after the fan-out', () => {
+      expect({
+        position: names().indexOf('reconcile_this_run') - names().indexOf('generate_batches'),
+        step: step('reconcile_this_run'),
+      }).toEqual({
+        position: 1,
+        step: {
+          name: 'reconcile_this_run',
+          type: 'security.attack-discovery.trackGeneration',
+          with: { phase: 'reconcile', scope: 'this_run' },
+        },
+      });
     });
   });
 

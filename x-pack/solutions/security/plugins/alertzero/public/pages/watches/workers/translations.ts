@@ -102,4 +102,4 @@ export const WORKER_DESCRIPTIONS: Record<string, string> = {
 export const workerDescription = (workerId: string): string | undefined =>
   WORKER_DESCRIPTIONS[workerId];
 
-export { workerName } from '../../../../common/worker_names';
+export { workerName } from '@kbn/alertzero-common';

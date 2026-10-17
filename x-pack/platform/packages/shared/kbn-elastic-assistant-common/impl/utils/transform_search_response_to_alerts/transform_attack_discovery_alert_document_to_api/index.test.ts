@@ -29,6 +29,7 @@ import {
   ALERT_ATTACK_DISCOVERY_DETAILS_MARKDOWN_WITH_REPLACEMENTS,
   ALERT_ATTACK_DISCOVERY_ENTITY_SUMMARY_MARKDOWN,
   ALERT_ATTACK_DISCOVERY_ENTITY_SUMMARY_MARKDOWN_WITH_REPLACEMENTS,
+  ALERT_ATTACK_DISCOVERY_GENERATION_SOURCE,
   ALERT_ATTACK_DISCOVERY_MITRE_ATTACK_TACTICS,
   ALERT_ATTACK_DISCOVERY_REPLACEMENTS,
   ALERT_ATTACK_DISCOVERY_SUMMARY_MARKDOWN,
@@ -447,6 +448,36 @@ describe('transformAttackDiscoveryAlertDocumentToApi', () => {
       });
 
       expect(result.alert_workflow_reason).toBeUndefined();
+    });
+  });
+
+  describe('generation_source', () => {
+    it('maps kibana.alert.attack_discovery.generation_source from the document', () => {
+      const result: AttackDiscoveryApiAlert = transformAttackDiscoveryAlertDocumentToApi({
+        attackDiscoveryAlertDocument: {
+          ...mockDocument,
+          [ALERT_ATTACK_DISCOVERY_GENERATION_SOURCE]:
+            'workflow:system-security-floor-attack-discovery-default',
+        },
+        enableFieldRendering: true,
+        id,
+        withReplacements: false,
+      });
+
+      expect(result.generation_source).toEqual(
+        'workflow:system-security-floor-attack-discovery-default'
+      );
+    });
+
+    it('returns undefined when the document has no generation_source', () => {
+      const result: AttackDiscoveryApiAlert = transformAttackDiscoveryAlertDocumentToApi({
+        attackDiscoveryAlertDocument: mockDocument,
+        enableFieldRendering: true,
+        id,
+        withReplacements: false,
+      });
+
+      expect(result.generation_source).toBeUndefined();
     });
   });
 });

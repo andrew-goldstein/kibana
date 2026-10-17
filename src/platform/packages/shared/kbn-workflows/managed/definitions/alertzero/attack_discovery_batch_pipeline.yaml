@@ -1,0 +1,181 @@
+version: "1"
+name: Attack Discovery Batch Pipeline
+description: |
+  Runs one Attack Discovery generation over one batch of alerts for the AD
+  Worker: alert retrieval, generation and validation. Each phase is a default
+  Attack Discovery workflow started with `workflow.execute` and
+  `run-as-mode: inherit`, so every phase runs as the Worker's service account.
+  The validation workflow's persist step then records the Worker as the
+  producer of the attacks it saves.
+
+  `security.attack-discovery.trackGeneration` records the run in the Attack
+  Discovery generations view, with the same events the
+  `security.attack-discovery.run` step writes.
+
+  Enabled because it is invoked via `workflow.execute` and owns no trigger: the
+  opt-in gate is the AD Worker, which ships disabled.
+
+  Emits to the caller the fields `security.attack-discovery.run` returns with
+  `include_attack_discoveries: false`: execution_uuid, status,
+  alerts_context_count and discovery_count.
+enabled: true
+tags:
+  - watch
+  - watch-floor
+  - attack-discovery
+
+settings:
+  # Fallbacks run after ordinary step errors, not after a workflow timeout or
+  # cancellation. Each child workflow puts a step `timeout` on its long step, so
+  # a slow phase fails its child, and the `workflow.execute` step that called it,
+  # where this fallback records it. Batched generation's 30m `branch-timeout`, or
+  # a cancelled parent, can still end this run before any of those timeouts; its
+  # `reconcile` steps record the failure for those runs instead.
+  on-failure:
+    # The step reads the failure detail from the child run that failed.
+    fallback:
+      - name: record_failure
+        type: security.attack-discovery.trackGeneration
+        with:
+          phase: failed
+          api_config: ${{ steps.start_generation.output.api_config }}
+          execution_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+
+triggers:
+  - type: manual
+    inputs:
+      additionalProperties: false
+      properties:
+        connector_id:
+          description: >
+            LLM connector. Omit to use the alertzero_frontier tier, then the
+            configured default AI connector.
+          maxLength: 1024
+          type: string
+        esql_query:
+          description: >
+            The ES|QL query that retrieves this batch's alerts.
+          # Room for the largest batch: 1,000 64-character alert ids in each of
+          # the query's two `IN` lists is about 136,000 characters.
+          maxLength: 200000
+          type: string
+        size:
+          default: 100
+          description: Maximum alerts the batch analyzes.
+          maximum: 1000
+          minimum: 1
+          type: integer
+      required:
+        - esql_query
+
+consts:
+  # The template language has no empty-list literal. An empty list lets the
+  # alert retrieval step load the space's anonymization fields itself.
+  no_anonymization_fields: []
+
+steps:
+  # Checks that Attack Discovery workflows are enabled and authorized in the
+  # space, resolves the connector, and writes `generation-started`. The only
+  # tracking step that can fail the run.
+  - name: start_generation
+    type: security.attack-discovery.trackGeneration
+    with:
+      phase: started
+      alert_retrieval_mode: esql
+      connector_id: "{{ inputs.connector_id }}"
+      # Stated on the leaf step rather than threaded down from the Worker: the
+      # tier is a property of the call, not of the caller. Only consulted when
+      # `connector_id` is empty. Keep in sync with
+      # ALERTZERO_FRONTIER_INFERENCE_FEATURE_ID in @kbn/alertzero-common.
+      feature_id: alertzero_frontier
+      size: ${{ inputs.size }}
+
+  # Every child id below is a literal, and every call inherits: the engine only
+  # lets a managed child run as this run's service account for a literal
+  # `workflow-id`.
+  - name: retrieve_alerts
+    type: workflow.execute
+    with:
+      workflow-id: system-attack-discovery-alert-retrieval
+      run-as-mode: inherit
+      inputs:
+        anonymization_fields: ${{ consts.no_anonymization_fields }}
+        api_config: ${{ steps.start_generation.output.api_config }}
+        esql_query: ${{ inputs.esql_query }}
+        size: ${{ inputs.size }}
+
+  - name: record_retrieval
+    type: security.attack-discovery.trackGeneration
+    with:
+      phase: retrieval_completed
+      api_config: ${{ steps.start_generation.output.api_config }}
+      execution_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+
+  # The generation step requires at least one alert, so a batch whose alerts were
+  # all closed since they were selected skips generation and validation, as the
+  # `security.attack-discovery.run` step does.
+  - name: generate_when_alerts_found
+    type: if
+    condition: "${{ steps.retrieve_alerts.output.alerts_context_count > 0 }}"
+    steps:
+      - name: generate_discoveries
+        type: workflow.execute
+        with:
+          workflow-id: system-attack-discovery-generation
+          run-as-mode: inherit
+          inputs:
+            additional_alerts: ${{ steps.retrieve_alerts.output.alerts }}
+            api_config: ${{ steps.start_generation.output.api_config }}
+            connector_name: "{{ steps.retrieve_alerts.output.connector_name | default: steps.start_generation.output.connector_name }}"
+            replacements: ${{ steps.retrieve_alerts.output.replacements }}
+
+      - name: record_generation
+        type: security.attack-discovery.trackGeneration
+        with:
+          phase: generation_completed
+          api_config: ${{ steps.start_generation.output.api_config }}
+          execution_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+
+      # The validation workflow requires an array of discoveries, and generation
+      # returns null when the model found none.
+      - name: validate_when_discoveries_found
+        type: if
+        condition: "${{ steps.generate_discoveries.output.attack_discoveries.size > 0 }}"
+        steps:
+          - name: validate_discoveries
+            type: workflow.execute
+            with:
+              workflow-id: system-attack-discovery-validate
+              run-as-mode: inherit
+              inputs:
+                alerts_context_count: ${{ steps.retrieve_alerts.output.alerts_context_count }}
+                anonymized_alerts: ${{ steps.retrieve_alerts.output.anonymized_alerts }}
+                api_config: ${{ steps.start_generation.output.api_config }}
+                attack_discoveries: ${{ steps.generate_discoveries.output.attack_discoveries }}
+                connector_name: "{{ steps.retrieve_alerts.output.connector_name | default: steps.start_generation.output.connector_name }}"
+                enable_field_rendering: true
+                # The persisted attacks carry this as `kibana.alert.rule.execution.uuid`,
+                # which is how batched generation reads them back.
+                generation_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+                replacements: ${{ steps.generate_discoveries.output.replacements }}
+                with_replacements: true
+
+  - name: record_success
+    type: security.attack-discovery.trackGeneration
+    with:
+      phase: succeeded
+      alert_retrieval_mode: esql
+      api_config: ${{ steps.start_generation.output.api_config }}
+      execution_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+      size: ${{ inputs.size }}
+
+  # `discovery_count` is what the model produced, before validation and
+  # de-duplication, as the `security.attack-discovery.run` step reports it.
+  - name: emit_result
+    type: workflow.output
+    status: completed
+    with:
+      alerts_context_count: "${{ steps.retrieve_alerts.output.alerts_context_count | default: 0 }}"
+      discovery_count: "${{ steps.generate_discoveries.output.attack_discoveries | size }}"
+      execution_uuid: "{{ steps.start_generation.output.execution_uuid }}"
+      status: completed

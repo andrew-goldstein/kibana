@@ -55,6 +55,7 @@ Attack Discovery registers **five** workflow step types. Each step is a server-s
 | `security.attack-discovery.defaultValidation` | Kibana | Implemented |
 | `security.attack-discovery.persistDiscoveries` | Kibana | Implemented |
 | `security.attack-discovery.run` | AI | Implemented |
+| `security.attack-discovery.trackGeneration` | AI | Implemented |
 
 ## Anonymization-boundary contract per step
 

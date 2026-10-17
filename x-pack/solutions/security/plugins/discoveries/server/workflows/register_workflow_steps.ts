@@ -18,6 +18,7 @@ import { getDefaultValidationStepDefinition } from './steps/default_validation_s
 import { getGenerateStepDefinition } from './steps/generate_step';
 import { getPersistDiscoveriesStepDefinition } from './steps/persist_discoveries_step';
 import { getRunStepDefinition } from './steps/run_step';
+import { getTrackGenerationStepDefinition } from './steps/track_generation_step';
 import { withWorkflowsEnabledGuard } from './with_workflows_enabled_guard';
 
 export interface StepRegistrationResult {
@@ -199,12 +200,34 @@ export const registerWorkflowSteps = (
     workflowsExtensions,
   });
 
+  const trackGenerationStepDef = withWorkflowsEnabledGuard(
+    getTrackGenerationStepDefinition({
+      analytics,
+      getEventLogIndex,
+      getEventLogger,
+      getStartServices,
+      logger,
+      workflowsManagementApi,
+    }),
+    getStartServices
+  );
+  logger.debug(
+    () => `Registering trackGenerationStepDefinition with id: ${trackGenerationStepDef.id}`
+  );
+  const trackGenerationOutcome = tryRegisterStep({
+    getStartServices,
+    logger,
+    stepDefinition: trackGenerationStepDef,
+    workflowsExtensions,
+  });
+
   const outcomes = [
     defaultAlertRetrievalOutcome,
     defaultValidationOutcome,
     generateOutcome,
     persistDiscoveriesOutcome,
     runOutcome,
+    trackGenerationOutcome,
   ];
 
   const registeredSteps = outcomes

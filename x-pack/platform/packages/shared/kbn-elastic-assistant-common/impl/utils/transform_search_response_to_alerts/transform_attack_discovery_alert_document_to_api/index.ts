@@ -31,6 +31,7 @@ import {
   ALERT_ATTACK_DISCOVERY_DETAILS_MARKDOWN_WITH_REPLACEMENTS,
   ALERT_ATTACK_DISCOVERY_ENTITY_SUMMARY_MARKDOWN,
   ALERT_ATTACK_DISCOVERY_ENTITY_SUMMARY_MARKDOWN_WITH_REPLACEMENTS,
+  ALERT_ATTACK_DISCOVERY_GENERATION_SOURCE,
   ALERT_ATTACK_DISCOVERY_MITRE_ATTACK_TACTICS,
   ALERT_ATTACK_DISCOVERY_REPLACEMENTS,
   ALERT_ATTACK_DISCOVERY_SUMMARY_MARKDOWN,
@@ -128,6 +129,7 @@ export const transformAttackDiscoveryAlertDocumentToApi = ({
       normalField: ALERT_ATTACK_DISCOVERY_ENTITY_SUMMARY_MARKDOWN,
       defaultValue: undefined,
     }),
+    generation_source: attackDiscoveryAlertDocument[ALERT_ATTACK_DISCOVERY_GENERATION_SOURCE],
     generation_uuid: attackDiscoveryAlertDocument[ALERT_RULE_EXECUTION_UUID] ?? '', // required field
     id, // required field
     mitre_attack_tactics: Array.isArray(

@@ -54,6 +54,10 @@ jest.mock('../../../../../common/components/user_profiles/use_bulk_get_user_prof
   useBulkGetUserProfiles: jest.fn(),
 }));
 
+jest.mock('../../../../../common/hooks/use_space_id', () => ({
+  useSpaceId: jest.fn(() => 'default'),
+}));
+
 jest.mock('../../../../../attack_discovery/helpers', () => ({
   getOriginalAlertIds: jest.fn((alertIds: string[]) => alertIds),
 }));
@@ -219,6 +223,55 @@ describe('Subtitle', () => {
     const { getByTestId } = render(<Subtitle attack={manualAttack} />);
 
     expect(getByTestId('attack-run-by-avatar')).toHaveTextContent('?');
+  });
+
+  it('should render the Worker as "Run by" when an AlertZero Worker produced the attack', () => {
+    (useBulkGetUserProfiles as jest.Mock).mockReturnValue({ data: undefined });
+    const workerAttack = {
+      ...mockAttack,
+      alertRuleUuid: ATTACK_DISCOVERY_AD_HOC_RULE_ID,
+      generationSource: 'workflow:system-security-floor-attack-discovery-default',
+      userId: undefined,
+      userName: 'kibana/alertzero_attack_discovery',
+    };
+    const { getByTestId } = render(<Subtitle attack={workerAttack} />);
+
+    expect(getByTestId('attack-subtitle')).toHaveTextContent('Run by:');
+    expect(getByTestId('attack-run-by-avatar')).toHaveAttribute(
+      'aria-label',
+      'Attack Discovery Worker'
+    );
+  });
+
+  it('should render the Worker as "Run by" for a generation source without a space suffix', () => {
+    (useBulkGetUserProfiles as jest.Mock).mockReturnValue({ data: undefined });
+    const workerAttack = {
+      ...mockAttack,
+      alertRuleUuid: ATTACK_DISCOVERY_AD_HOC_RULE_ID,
+      generationSource: 'workflow:system-security-floor-attack-discovery',
+      userId: undefined,
+      userName: 'kibana/alertzero_attack_discovery',
+    };
+    const { getByTestId } = render(<Subtitle attack={workerAttack} />);
+
+    expect(getByTestId('attack-run-by-avatar')).toHaveAttribute(
+      'aria-label',
+      'Attack Discovery Worker'
+    );
+  });
+
+  it('should render the user as "Run by" when the generation source is not a Worker', () => {
+    (useBulkGetUserProfiles as jest.Mock).mockReturnValue({ data: undefined });
+    const attack = {
+      ...mockAttack,
+      alertRuleUuid: ATTACK_DISCOVERY_AD_HOC_RULE_ID,
+      generationSource: 'workflow:my-custom-workflow',
+      userId: undefined,
+      userName: 'test_user',
+    };
+    const { getByTestId } = render(<Subtitle attack={attack} />);
+
+    expect(getByTestId('attack-run-by-avatar')).toHaveAttribute('aria-label', 'test_user');
   });
 
   it('should pass originalAlertIds to AttackDiscoveryMarkdownFormatter', () => {

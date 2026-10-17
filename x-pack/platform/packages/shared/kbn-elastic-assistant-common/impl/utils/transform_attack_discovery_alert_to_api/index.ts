@@ -24,6 +24,7 @@ export const transformAttackDiscoveryAlertToApi = (
   alert_workflow_status_updated_at: attackDiscoveryAlert.alertWorkflowStatusUpdatedAt,
   details_markdown: attackDiscoveryAlert.detailsMarkdown,
   entity_summary_markdown: attackDiscoveryAlert.entitySummaryMarkdown,
+  generation_source: attackDiscoveryAlert.generationSource,
   generation_uuid: attackDiscoveryAlert.generationUuid,
   id: attackDiscoveryAlert.id,
   mitre_attack_tactics: attackDiscoveryAlert.mitreAttackTactics,

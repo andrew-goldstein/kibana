@@ -306,6 +306,84 @@ describe('getPersistDiscoveriesStepDefinition', () => {
 
         expect(Object.keys(validateRequestBody)).not.toContain('generation_source');
       });
+
+      describe('when the execution inherited a service account', () => {
+        const inheritedContext = {
+          ...mockContext,
+          contextManager: {
+            ...mockContext.contextManager,
+            getContext: jest.fn().mockReturnValue({
+              execution: {
+                effectiveIdentity: {
+                  id: 'kibana/alertzero_attack_discovery',
+                  inheritedFrom: { workloadId: 'system-security-floor-attack-discovery-default' },
+                  type: 'service_account',
+                },
+                id: 'workflow-run-1',
+              },
+              workflow: { id: 'workflow-1', spaceId: 'default' },
+            }),
+          },
+        };
+
+        it('forwards the workflow that owns the account as the generation source', async () => {
+          const stepDefinition = getPersistDiscoveriesStepDefinition({
+            adhocAttackDiscoveryDataClient: mockAdhocAttackDiscoveryDataClient,
+            getStartServices: mockGetStartServices,
+            logger: mockLogger,
+          });
+
+          await stepDefinition.handler(inheritedContext as never);
+
+          expect(mockValidateAttackDiscoveries).toHaveBeenCalledWith(
+            expect.objectContaining({
+              generationSource: 'workflow:system-security-floor-attack-discovery',
+            })
+          );
+        });
+
+        it('uses the identity instead of a generation_source step input', async () => {
+          const stepDefinition = getPersistDiscoveriesStepDefinition({
+            adhocAttackDiscoveryDataClient: mockAdhocAttackDiscoveryDataClient,
+            getStartServices: mockGetStartServices,
+            logger: mockLogger,
+          });
+
+          await stepDefinition.handler({
+            ...inheritedContext,
+            input: { ...mockContext.input, generation_source: TEST_GENERATION_SOURCE },
+          } as never);
+
+          expect(mockValidateAttackDiscoveries).toHaveBeenCalledWith(
+            expect.objectContaining({
+              generationSource: 'workflow:system-security-floor-attack-discovery',
+            })
+          );
+        });
+      });
+
+      describe('when the step input uses the reserved workflow: prefix', () => {
+        it('returns an error without persisting', async () => {
+          const stepDefinition = getPersistDiscoveriesStepDefinition({
+            adhocAttackDiscoveryDataClient: mockAdhocAttackDiscoveryDataClient,
+            getStartServices: mockGetStartServices,
+            logger: mockLogger,
+          });
+
+          const result = await stepDefinition.handler({
+            ...mockContext,
+            input: {
+              ...mockContext.input,
+              generation_source: 'workflow:system-security-floor-attack-discovery-default',
+            },
+          } as never);
+
+          expect(result.error?.message).toBe(
+            "generation_source values that start with 'workflow:' are set by Kibana and can't be passed to this step"
+          );
+          expect(mockValidateAttackDiscoveries).not.toHaveBeenCalled();
+        });
+      });
     });
 
     it('logs a success message', async () => {

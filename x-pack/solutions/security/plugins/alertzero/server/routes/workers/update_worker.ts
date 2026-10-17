@@ -16,9 +16,9 @@ import {
   ALERTZERO_WORKER_URL_TEMPLATE,
   SYSTEM_SECURITY_WORKER_CATALOG,
   UpdateWorkerRequestBody,
+  workerName,
 } from '@kbn/alertzero-common';
 import { ALERTZERO_API_PRIVILEGE_WRITE } from '../../../common/constants';
-import { workerName } from '../../../common/worker_names';
 import type { RouteDependencies } from '../register_routes';
 import type { WorkerEnableBlockedReason } from '../../services/workers/workers_service';
 import { withAlertZeroEnabled } from '../with_alertzero_enabled';

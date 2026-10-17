@@ -835,6 +835,115 @@ describe('getWorkflowExecutionsTracking', () => {
     });
   });
 
+  describe('pipelineRunId', () => {
+    it('returns the event.id of the generation-started event of a pipeline-backed generation', async () => {
+      mockSearch.mockResolvedValue({
+        hits: {
+          hits: [
+            { _source: { event: { reference: JSON.stringify(validTracking) } } },
+            {
+              _source: {
+                event: {
+                  action: 'generation-started',
+                  id: 'pipeline-run-id',
+                  module: 'alertzero-pipeline-workflow',
+                },
+              },
+            },
+          ],
+          total: { value: 2 },
+        },
+      });
+
+      const result = await getWorkflowExecutionsTracking({
+        esClient,
+        eventLogIndex,
+        executionId,
+        spaceId,
+        username,
+      });
+
+      expect(result).toEqual({ ...validTracking, pipelineRunId: 'pipeline-run-id' });
+    });
+
+    it('does not include pipelineRunId when the generation-started event has no event.id', async () => {
+      mockSearch.mockResolvedValue({
+        hits: {
+          hits: [
+            { _source: { event: { reference: JSON.stringify(validTracking) } } },
+            { _source: { event: { action: 'generation-started' } } },
+          ],
+          total: { value: 2 },
+        },
+      });
+
+      const result = await getWorkflowExecutionsTracking({
+        esClient,
+        eventLogIndex,
+        executionId,
+        spaceId,
+        username,
+      });
+
+      expect(result).not.toHaveProperty('pipelineRunId');
+    });
+
+    it('returns empty tracking with the pipelineRunId before any event carries a reference', async () => {
+      mockSearch.mockResolvedValue({
+        hits: {
+          hits: [{ _source: { event: { action: 'generation-started', id: 'pipeline-run-id' } } }],
+          total: { value: 1 },
+        },
+      });
+
+      const result = await getWorkflowExecutionsTracking({
+        esClient,
+        eventLogIndex,
+        executionId,
+        spaceId,
+        username,
+      });
+
+      expect(result).toEqual({
+        alertRetrieval: null,
+        gate: null,
+        generation: null,
+        pipelineRunId: 'pipeline-run-id',
+        validation: null,
+      });
+    });
+
+    it('keeps the owner and space filters when looking up a pipeline-backed generation', async () => {
+      mockSearch.mockResolvedValue({
+        hits: {
+          hits: [{ _source: { event: { action: 'generation-started', id: 'pipeline-run-id' } } }],
+          total: { value: 1 },
+        },
+      });
+
+      await getWorkflowExecutionsTracking({
+        esClient,
+        eventLogIndex,
+        executionId,
+        spaceId,
+        username,
+      });
+
+      expect(mockSearch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.objectContaining({
+            bool: expect.objectContaining({
+              filter: expect.arrayContaining([
+                { term: { 'kibana.space_ids': spaceId } },
+                ownerFilter,
+              ]),
+            }),
+          }),
+        })
+      );
+    });
+  });
+
   it('skips events whose reference was dropped by the index, without failing the lookup', async () => {
     // A hit with no `event.reference` at all: previously excluded by the query, now
     // reduced over and skipped, so one unusable event cannot hide a whole execution.

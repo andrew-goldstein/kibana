@@ -17,8 +17,16 @@ import {
   getAttackDiscoveryEventOwnerFilter,
 } from '@kbn/discoveries/impl/attack_discovery/persistence/event_logging';
 
+import { getPipelineRunId } from './helpers/get_pipeline_run_id';
+
 export type EventLogData = WorkflowExecutionsTracking & {
   diagnosticsContext?: DiagnosticsContext;
+  /**
+   * The workflow execution id of the AlertZero pipeline workflow that ran this
+   * generation (the `event.id` of its `generation-started` event). Only present for
+   * pipeline-backed generations; the default workflows run as its child executions.
+   */
+  pipelineRunId?: string;
   /**
    * Pre-provided alert strings stored in the generate-step-started event reference.
    * Available during the running state (before step.input is populated by the engine).
@@ -36,6 +44,10 @@ export type EventLogData = WorkflowExecutionsTracking & {
  * merge their `alertRetrieval` arrays to capture every workflow (including
  * failed ones). `generation` and `validation` are taken from the most recent
  * event that contains them (hits are sorted descending by timestamp).
+ *
+ * A pipeline-backed generation also returns its `pipelineRunId`, and is found
+ * even before any event carries a tracking reference, so the caller can fill
+ * in still-running phases from the pipeline's child executions.
  *
  * @returns The parsed WorkflowExecutionsTracking, or null if not found.
  */
@@ -201,7 +213,9 @@ export const getWorkflowExecutionsTracking = async ({
     }
   );
 
-  if (!foundAnyValidEvent) {
+  const pipelineRunId = getPipelineRunId(hits);
+
+  if (!foundAnyValidEvent && pipelineRunId == null) {
     return null;
   }
 
@@ -213,13 +227,10 @@ export const getWorkflowExecutionsTracking = async ({
     validation,
   };
 
-  if (diagnosticsContext != null || providedAlerts != null) {
-    return {
-      ...base,
-      ...(diagnosticsContext != null ? { diagnosticsContext } : {}),
-      ...(providedAlerts != null ? { providedAlerts } : {}),
-    };
-  }
-
-  return base;
+  return {
+    ...base,
+    ...(diagnosticsContext != null ? { diagnosticsContext } : {}),
+    ...(pipelineRunId != null ? { pipelineRunId } : {}),
+    ...(providedAlerts != null ? { providedAlerts } : {}),
+  };
 };

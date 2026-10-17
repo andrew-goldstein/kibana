@@ -143,4 +143,28 @@ describe('transformAttackDiscoveryAlertFromApi', () => {
       expect(roundTripped.alert_workflow_reason).toEqual('false_positive');
     });
   });
+
+  describe('generation_source', () => {
+    it('maps generation_source to generationSource', () => {
+      expect(
+        transformAttackDiscoveryAlertFromApi({
+          ...fullApiMock,
+          generation_source: 'workflow:system-security-floor-attack-discovery-default',
+        }).generationSource
+      ).toEqual('workflow:system-security-floor-attack-discovery-default');
+    });
+
+    it('survives a full API -> internal -> API round trip', () => {
+      const roundTripped = transformAttackDiscoveryAlertToApi(
+        transformAttackDiscoveryAlertFromApi({
+          ...fullApiMock,
+          generation_source: 'workflow:system-security-floor-attack-discovery-default',
+        })
+      );
+
+      expect(roundTripped.generation_source).toEqual(
+        'workflow:system-security-floor-attack-discovery-default'
+      );
+    });
+  });
 });

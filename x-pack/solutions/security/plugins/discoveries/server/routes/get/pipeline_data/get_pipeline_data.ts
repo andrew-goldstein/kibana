@@ -32,6 +32,10 @@ import {
   type PipelineGenerationData,
 } from './helpers/extract_pipeline_generation_data';
 import { extractPipelineValidationData } from './helpers/extract_pipeline_validation_data';
+import {
+  fillTrackingFromPipelineChildren,
+  type ChildWorkflowExecutionsApi,
+} from './helpers/fill_tracking_from_pipeline_children';
 import { getWorkflowExecutionsTracking } from './helpers/get_workflow_executions_tracking';
 
 const ROUTE_PATH = '/internal/attack_discovery/workflow/{workflow_id}/execution/{execution_id}';
@@ -138,7 +142,7 @@ export const registerGetPipelineDataRoute = (
       coreStart: CoreStart;
       pluginsStart: DiscoveriesPluginStartDeps;
     }>;
-    workflowsManagementApi?: WorkflowsManagementApi;
+    workflowsManagementApi?: WorkflowsManagementApi & ChildWorkflowExecutionsApi;
   }
 ) => {
   router.versioned
@@ -196,7 +200,7 @@ export const registerGetPipelineDataRoute = (
           });
 
           // Step 1: Reconstruct WorkflowExecutionsTracking from event log
-          const tracking = await getWorkflowExecutionsTracking({
+          const eventLogTracking = await getWorkflowExecutionsTracking({
             esClient,
             eventLogIndex,
             executionId,
@@ -204,7 +208,7 @@ export const registerGetPipelineDataRoute = (
             username,
           });
 
-          if (tracking == null) {
+          if (eventLogTracking == null) {
             return response.notFound({
               body: { message: `Execution ${executionId} not found in event log` },
             });
@@ -216,6 +220,18 @@ export const registerGetPipelineDataRoute = (
               statusCode: 503,
             });
           }
+
+          // Step 1b: A pipeline-backed generation records a phase's run id only after
+          // the phase finishes, so link still-running phases from the pipeline's
+          // child executions (no-op for orchestrator-run generations).
+          const tracking = await fillTrackingFromPipelineChildren({
+            logger,
+            pipelineRunId: eventLogTracking.pipelineRunId,
+            request,
+            spaceId,
+            tracking: eventLogTracking,
+            workflowsManagementApi,
+          });
 
           // Step 2: Extract alert retrieval data
           const alertRetrievalEntries =

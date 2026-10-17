@@ -417,7 +417,7 @@ const hasPersistStep = ({ execution }: { execution: WorkflowExecutionDto }): boo
 /**
  * Extracts the validation result from the workflow execution.
  */
-const extractValidationResult = ({
+export const extractValidationResult = ({
   generatedCount,
   execution,
   logger,
@@ -555,7 +555,7 @@ const deduplicateScheduledResult = async ({
 /**
  * Writes the validation started event to the event log.
  */
-const writeValidationStartedEvent = async ({
+export const writeValidationStartedEvent = async ({
   authenticatedUser,
   connectorId,
   eventLogger,
@@ -611,7 +611,7 @@ const writeValidationStartedEvent = async ({
 /**
  * Writes the validation succeeded event to the event log.
  */
-const writeValidationSucceededEvent = async ({
+export const writeValidationSucceededEvent = async ({
   authenticatedUser,
   connectorId,
   endTime,
@@ -675,7 +675,7 @@ const writeValidationSucceededEvent = async ({
 /**
  * Writes the validation failed event to the event log.
  */
-const writeValidationFailedEvent = async ({
+export const writeValidationFailedEvent = async ({
   authenticatedUser,
   connectorId,
   endTime,

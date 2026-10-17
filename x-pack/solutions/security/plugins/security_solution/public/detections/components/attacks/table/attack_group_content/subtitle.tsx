@@ -17,7 +17,10 @@ import { i18n } from '@kbn/i18n';
 import { TableId } from '@kbn/securitysolution-data-table';
 
 import { UserAvatar } from '@kbn/user-profile-components';
+import { workerName } from '@kbn/alertzero-common';
 import { useBulkGetUserProfiles } from '../../../../../common/components/user_profiles/use_bulk_get_user_profiles';
+import { useSpaceId } from '../../../../../common/hooks/use_space_id';
+import { getGenerationSourceWorkerId } from './helpers/get_generation_source_worker_id';
 import { getOriginalAlertIds } from '../../../../../attack_discovery/helpers';
 import {
   AttackDetectedOn,
@@ -33,6 +36,12 @@ export const RUN_BY_LABEL = i18n.translate(
     defaultMessage: 'Run by:',
   }
 );
+
+export const RUN_BY_WORKER_LABEL = (name: string) =>
+  i18n.translate('xpack.securitySolution.detectionEngine.attacks.group.subtitle.runByWorkerLabel', {
+    defaultMessage: '{name} Worker',
+    values: { name },
+  });
 
 export const UNKNOWN_USER_LABEL = i18n.translate(
   'xpack.securitySolution.detectionEngine.attacks.group.subtitle.unknownUserLabel',
@@ -79,6 +88,12 @@ export const Subtitle = React.memo<SubtitleProps>(({ attack, showAnonymized = fa
     [attack.alertIds, attack.replacements]
   );
 
+  const spaceId = useSpaceId();
+  const runByWorkerId = useMemo(
+    () => getGenerationSourceWorkerId({ generationSource: attack.generationSource, spaceId }),
+    [attack.generationSource, spaceId]
+  );
+
   const uids = useMemo(() => new Set(attack.userId ? [attack.userId] : []), [attack.userId]);
   const { data: userProfiles } = useBulkGetUserProfiles({ uids });
   const runByProfile = userProfiles?.[0];
@@ -114,7 +129,13 @@ export const Subtitle = React.memo<SubtitleProps>(({ attack, showAnonymized = fa
                 </EuiText>
               </EuiFlexItem>
               <EuiFlexItem grow={false}>
-                {attack.userId ? (
+                {runByWorkerId != null ? (
+                  <EuiAvatar
+                    size="s"
+                    name={RUN_BY_WORKER_LABEL(workerName(runByWorkerId))}
+                    data-test-subj="attack-run-by-avatar"
+                  />
+                ) : attack.userId ? (
                   <UserAvatar
                     // Fall back to a synthetic user object when the profile is still loading
                     // or the UID has no matching profile, so initials are shown instead of "?".

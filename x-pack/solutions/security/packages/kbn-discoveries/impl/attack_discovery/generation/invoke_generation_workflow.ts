@@ -218,7 +218,7 @@ const parseReplacements = (value: unknown): Record<string, string> => {
 /**
  * Extracts the generation workflow result from the workflow execution.
  */
-const extractGenerationWorkflowResult = ({
+export const extractGenerationWorkflowResult = ({
   execution,
   executionUuid,
 }: {
@@ -298,7 +298,7 @@ const extractGenerationWorkflowResult = ({
 /**
  * Writes the generation succeeded event to the event log.
  */
-const writeGenerationSucceededEvent = async ({
+export const writeGenerationSucceededEvent = async ({
   alertsContextCount,
   authenticatedUser,
   connectorId,
@@ -364,7 +364,7 @@ const writeGenerationSucceededEvent = async ({
 /**
  * Writes the generate step started event to the event log.
  */
-const writeGenerateStepStartedEvent = async ({
+export const writeGenerateStepStartedEvent = async ({
   alertsContextCount,
   authenticatedUser,
   connectorId,
@@ -431,7 +431,7 @@ const writeGenerateStepStartedEvent = async ({
 /**
  * Writes the generate step succeeded event to the event log.
  */
-const writeGenerateStepSucceededEvent = async ({
+export const writeGenerateStepSucceededEvent = async ({
   alertsContextCount,
   authenticatedUser,
   connectorId,
@@ -494,7 +494,7 @@ const writeGenerateStepSucceededEvent = async ({
 /**
  * Writes the generate step failed event to the event log.
  */
-const writeGenerateStepFailedEvent = async ({
+export const writeGenerateStepFailedEvent = async ({
   alertsContextCount,
   authenticatedUser,
   connectorId,

@@ -183,6 +183,7 @@ export {
 } from './impl/schemas';
 
 export { isWorkerEnableBlocked } from './impl/workers/blocking_reasons';
+export { workerName } from './impl/workers/worker_names';
 
 export {
   compareWatchesForDisplay,

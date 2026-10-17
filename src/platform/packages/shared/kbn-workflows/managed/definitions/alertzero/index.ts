@@ -22,6 +22,7 @@ import {
 } from './actions/defend';
 import { ALERTZERO_ACTION_SET_ASSET_CRITICALITY_WORKFLOW_ID } from './actions/identity';
 import {
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
@@ -116,6 +117,8 @@ export {
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW,
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW,
@@ -208,13 +211,14 @@ export const ALERTZERO_RULE_WORKFLOW_IDS = [
 /**
  * Attack Discovery worker chain: the global workflow that runs generation and fans
  * out per attack, the batched generation workflow it delegates generation to, the
- * per-attack review workflow it launches, and the FP/TP analysis that review calls
- * for its verdict. Installed globally so the per-space Watch Floor worker can
- * dispatch to them.
+ * per-batch pipeline that runs the Attack Discovery workflows, the per-attack review
+ * workflow it launches, and the FP/TP analysis that review calls for its verdict.
+ * Installed globally so the per-space Watch Floor worker can dispatch to them.
  */
 export const ALERTZERO_ATTACK_DISCOVERY_WORKFLOW_IDS = [
   ALERTZERO_ATTACK_DISCOVERY_WORKER_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_BATCHED_GENERATION_WORKFLOW_ID,
+  ALERTZERO_ATTACK_DISCOVERY_BATCH_PIPELINE_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_REVIEW_WORKFLOW_ID,
   ALERTZERO_ATTACK_DISCOVERY_FP_TP_ANALYSIS_WORKFLOW_ID,
   ALERTZERO_JOURNAL_NOTE_WORKFLOW_ID,

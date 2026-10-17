@@ -24,6 +24,11 @@ export {
 
 export { RunStepCommonDefinition, RunStepTypeId } from './run_step';
 
+export {
+  TrackGenerationStepCommonDefinition,
+  TrackGenerationStepTypeId,
+} from './track_generation_step';
+
 export { AnonymizedAlertSchema, ApiConfigSchema, AttackDiscoverySchema } from './shared_schemas';
 
 export type { AnonymizedAlert, ApiConfig, AttackDiscovery } from './shared_schemas';

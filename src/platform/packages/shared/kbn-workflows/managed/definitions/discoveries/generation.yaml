@@ -120,3 +120,14 @@ steps:
       replacements: ${{ inputs.replacements }}
   # Validation is handled outside this workflow by the _generate endpoint,
   # which invokes the alert retrieval, generation, and validation workflows sequentially.
+
+  # Returns the generation result to a `workflow.execute` caller as one object.
+  # Without it the caller gets the engine's view of the last step, which the step
+  # `timeout` above wraps in a list.
+  - name: emit_result
+    type: workflow.output
+    status: completed
+    with:
+      attack_discoveries: ${{ steps.generate_discoveries.output.attack_discoveries }}
+      execution_uuid: ${{ steps.generate_discoveries.output.execution_uuid }}
+      replacements: ${{ steps.generate_discoveries.output.replacements }}

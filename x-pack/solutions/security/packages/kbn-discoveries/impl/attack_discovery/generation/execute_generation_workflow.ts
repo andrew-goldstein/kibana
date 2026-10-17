@@ -75,7 +75,7 @@ const CHECK_TO_MISCONFIGURATION_TYPE: Record<string, MisconfigurationType> = {
   workflowsManagementApi: 'default_workflows_resolution_failed',
 };
 
-const reportPreExecutionMisconfigurations = ({
+export const reportPreExecutionMisconfigurations = ({
   analytics,
   issues,
   logger,
@@ -107,7 +107,7 @@ const reportPreExecutionMisconfigurations = ({
  * Writes a generation-failed event to the event log so the UI can display the
  * failure status instead of remaining stuck in "loading" state forever.
  */
-const writeGenerationFailedEvent = async ({
+export const writeGenerationFailedEvent = async ({
   authenticatedUser,
   connectorId,
   endTime,
@@ -202,7 +202,7 @@ const getTimeRangeDuration = ({
  * Assembles the DiagnosticsContext written to the generation-started event from
  * pre-execution checks, workflow integrity, and a config summary.
  */
-const buildDiagnosticsContext = ({
+export const buildDiagnosticsContext = ({
   integrityResult,
   parsedApiConfig,
   preExecutionResult,
